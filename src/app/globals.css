@@ -1,14 +1,16 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
-@import './toast.css';
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./toast.css";
 
 @plugin 'tailwindcss-react-aria-components';
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: var(--font-geist-mono), 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', '"Liberation Mono"', '"Courier New"', 'monospace';
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: var(--font-geist-mono), "ui-monospace", "SFMono-Regular", "Menlo",
+    "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace";
 
   --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   --font-mono--font-feature-settings: "ss02", "zero";
@@ -89,7 +91,7 @@
   --warning: oklch(0.828 0.189 84.429);
   --warning-fg: oklch(0.279 0.077 45.635);
 
-  --danger: oklch(0.577 0.245 27.325);
+  --danger: oklch(60.001% 0.19136 22.732);
   --danger-fg: oklch(0.971 0.013 17.38);
 
   --border: oklch(0.911 0.006 286.286);
@@ -125,7 +127,7 @@
 }
 
 .dark {
-  --bg: oklch(0.091 0.005 285.823);
+  --bg: oklch(15.224% 0.00655 300.73);
   --fg: oklch(0.985 0 0);
 
   --primary: oklch(0.546 0.245 262.881);
@@ -140,7 +142,7 @@
   --muted: oklch(0.21 0.006 285.885);
   --muted-fg: oklch(0.705 0.015 286.067);
 
-  --overlay: oklch(0.180 0.006 285.885);
+  --overlay: oklch(0.18 0.006 285.885);
   --overlay-fg: oklch(0.985 0 0);
 
   --success: oklch(0.596 0.145 163.225);
@@ -149,17 +151,17 @@
   --warning: oklch(0.828 0.189 84.429);
   --warning-fg: oklch(0.279 0.077 45.635);
 
-  --danger: oklch(0.577 0.245 27.325);
+  --danger: oklch(48.716% 0.18064 25.371);
   --danger-fg: oklch(0.971 0.013 17.38);
 
-  --border: oklch(0.270 0.013 285.805);
-  --input: oklch(0.320 0.013 285.805);
+  --border: oklch(0.27 0.013 285.805);
+  --input: oklch(0.32 0.013 285.805);
   --ring: oklch(0.546 0.245 262.881);
 
-  --navbar: oklch(0.190 0.006 285.885);
+  --navbar: oklch(0.19 0.006 285.885);
   --navbar-fg: oklch(0.985 0 0);
 
-  --sidebar: oklch(0.180 0.006 285.885);
+  --sidebar: oklch(0.18 0.006 285.885);
   --sidebar-fg: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.546 0.245 262.881);
   --sidebar-primary-fg: oklch(1 0 0);
@@ -176,7 +178,11 @@
 }
 
 @layer base {
-  *, ::after, ::before, ::backdrop, ::file-selector-button {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
     border-color: var(--border, currentColor);
   }
 
