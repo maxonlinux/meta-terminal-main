@@ -375,6 +375,23 @@ class TriggerMonitor {
 
 ## 12. LINEAR и маржа
 
+### 12.0 Правило позиций (КРИТИЧНО!)
+
+**Position.size ВСЕГДА положительный!** Side определяет направление:
+
+```go
+// ПРАВИЛЬНО:
+position.Size = 10   // всегда положительный
+position.Side = 0    // 0 = LONG, 1 = SHORT
+
+position.Size = 5    // размер позиции
+position.Side = 1    // SHORT
+
+// НЕПРАВИЛЬНО:
+position.Size = -10  // ЗАПРЕЩЕНО!
+position.Side = 0
+```
+
 ### 12.1 Плечо (привязано к позиции, не к пользователю!)
 
 - **По умолчанию**: leverage = 2 для новой позиции

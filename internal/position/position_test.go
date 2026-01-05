@@ -33,8 +33,11 @@ func TestUpdatePositionOpenShort(t *testing.T) {
 
 	pos, pnl := UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_SELL)
 
-	if pos.Size != -10 {
-		t.Errorf("expected size -10, got %d", pos.Size)
+	if pos.Size != 10 {
+		t.Errorf("expected size 10, got %d", pos.Size)
+	}
+	if pos.Side != constants.ORDER_SIDE_SELL {
+		t.Errorf("expected side SELL (1), got %d", pos.Side)
 	}
 	if pos.EntryPrice != 100 {
 		t.Errorf("expected entry price 100, got %d", pos.EntryPrice)

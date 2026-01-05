@@ -14,6 +14,7 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 			UserID:     userID,
 			Symbol:     symbol,
 			Size:       0,
+			Side:       -1,
 			EntryPrice: 0,
 			Leverage:   1,
 			Version:    0,
@@ -21,34 +22,42 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 		us.Positions[symbol] = pos
 	}
 
-	deltaSize := filledQty
-	if side == constants.ORDER_SIDE_SELL {
-		deltaSize = -filledQty
-	}
-
 	var realizedPnl int64
 
 	if pos.Size == 0 {
-		pos.Size = deltaSize
+		pos.Size = filledQty
+		pos.Side = side
 		pos.EntryPrice = price
-	} else if (pos.Size > 0 && deltaSize > 0) || (pos.Size < 0 && deltaSize < 0) {
-		pos.Size += deltaSize
+	} else if pos.Side == side {
+		currentSize := pos.Size
+		newSize := currentSize + filledQty
+		newEntryPrice := types.Price((int64(pos.EntryPrice)*int64(currentSize) + int64(price)*int64(filledQty)) / int64(newSize))
+		pos.EntryPrice = newEntryPrice
+		pos.Size = newSize
 	} else {
-		closingSize := min(abs(pos.Size), abs(deltaSize))
-
-		if pos.Size > 0 {
-			realizedPnl = int64(price-pos.EntryPrice) * int64(closingSize)
-		} else {
-			realizedPnl = int64(pos.EntryPrice-price) * int64(closingSize)
-		}
-
-		pos.Size += deltaSize
-
-		if pos.Size == 0 {
-			pos.EntryPrice = 0
-		} else {
+		if filledQty >= pos.Size {
+			closedSize := pos.Size
+			if pos.Side == constants.ORDER_SIDE_SELL {
+				realizedPnl = int64(pos.EntryPrice-price) * int64(closedSize)
+			} else {
+				realizedPnl = int64(price-pos.EntryPrice) * int64(closedSize)
+			}
+			pos.Size = filledQty - pos.Size
+			pos.Side = side
 			pos.EntryPrice = price
+		} else {
+			if pos.Side == constants.ORDER_SIDE_SELL {
+				realizedPnl = int64(pos.EntryPrice-price) * int64(filledQty)
+			} else {
+				realizedPnl = int64(price-pos.EntryPrice) * int64(filledQty)
+			}
+			pos.Size = pos.Size - filledQty
 		}
+	}
+
+	if pos.Size == 0 {
+		pos.Side = -1
+		pos.EntryPrice = 0
 	}
 
 	pos.Version++
@@ -78,7 +87,7 @@ func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.Symbol
 		return false
 	}
 
-	return qty <= abs(pos.Size)
+	return qty <= pos.Size
 }
 
 func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.SymbolID) {
@@ -107,11 +116,11 @@ func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.Sy
 		}
 	}
 
-	if totalReduceOnly <= abs(pos.Size) {
+	if totalReduceOnly <= pos.Size {
 		return
 	}
 
-	remainingToAdjust := totalReduceOnly - abs(pos.Size)
+	remainingToAdjust := totalReduceOnly - pos.Size
 
 	var toDelete []types.OrderID
 	ordersToModify := make(map[types.OrderID]types.Quantity)

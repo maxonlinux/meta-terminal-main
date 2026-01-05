@@ -72,6 +72,11 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *SymbolState {
 	return ss
 }
 
+func (s *State) InitSymbolCategory(symbol types.SymbolID, category int8) {
+	ss := s.GetSymbolState(symbol)
+	ss.Category = category
+}
+
 func (s *SymbolState) AddReduceOnlyOrder(userID types.UserID, orderID types.OrderID) {
 	s.UserReduceOnly[userID] = append(s.UserReduceOnly[userID], orderID)
 }
