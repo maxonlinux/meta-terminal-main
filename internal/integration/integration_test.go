@@ -270,10 +270,19 @@ func TestIntegration_LinearOpenPosition(t *testing.T) {
 	defer ts.Close()
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
-	resp := ts.PlaceOrder(1, 1, 0, 0, 0, 10, 50000)
-	if resp.OrderID != 1 {
-		t.Errorf("expected order ID 1, got %d", resp.OrderID)
+	resp1 := ts.PlaceOrder(1, 1, 0, 0, 0, 10, 50000)
+	resp2 := ts.PlaceOrder(2, 1, 1, 1, 0, 10, 0)
+
+	if resp1.OrderID != 1 {
+		t.Errorf("expected order ID 1, got %d", resp1.OrderID)
+	}
+	if resp1.Status != 0 {
+		t.Errorf("expected order 1 NEW (0), got %d", resp1.Status)
+	}
+	if resp2.Status != 2 {
+		t.Errorf("expected order 2 FILLED (2), got %d", resp2.Status)
 	}
 
 	pos := ts.GetPosition(1, 1)
@@ -289,11 +298,14 @@ func TestIntegration_TwoUsersTrade(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
+	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
+
 	resp1 := ts.PlaceOrder(1, 1, 0, 0, 0, 10, 50000)
 	resp2 := ts.PlaceOrder(2, 1, 1, 1, 0, 10, 0)
 
-	if resp1.Status != 2 {
-		t.Errorf("expected order 1 FILLED (2), got %d", resp1.Status)
+	if resp1.Status != 0 {
+		t.Errorf("expected order 1 NEW (0), got %d", resp1.Status)
 	}
 	if resp2.Status != 2 {
 		t.Errorf("expected order 2 FILLED (2), got %d", resp2.Status)
@@ -305,8 +317,8 @@ func TestIntegration_TwoUsersTrade(t *testing.T) {
 	}
 
 	pos2 := ts.GetPosition(2, 1)
-	if pos2.Size != -10 {
-		t.Errorf("user 2: expected size -10, got %d", pos2.Size)
+	if pos2.Size != 10 || pos2.Side != 1 {
+		t.Errorf("user 2: expected size 10, side SHORT (1), got %d, %d", pos2.Size, pos2.Side)
 	}
 }
 
@@ -314,7 +326,9 @@ func TestIntegration_EditLeverage(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	ts.SeedBalance(1, 1000000)
+
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
 
 	err := ts.EditLeverage(1, 1, 10)
 	if err != nil {
@@ -330,6 +344,8 @@ func TestIntegration_EditLeverage(t *testing.T) {
 func TestIntegration_ClosePosition(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
+
+	ts.SeedBalance(1, 1000000)
 
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
 
@@ -353,6 +369,8 @@ func TestIntegration_CancelOrder(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
+	ts.SeedBalance(1, 1000000)
+
 	resp := ts.PlaceOrder(1, 1, 0, 0, 0, 10, 50000)
 	if resp.OrderID != 1 {
 		t.Errorf("expected order ID 1, got %d", resp.OrderID)
@@ -365,6 +383,10 @@ func TestIntegration_MultipleOrdersSamePrice(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
+	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
+	ts.SeedBalance(3, 1000000)
+
 	ts.PlaceOrder(1, 1, 0, 0, 0, 5, 50000)
 	ts.PlaceOrder(2, 1, 0, 0, 0, 5, 50000)
 
@@ -375,8 +397,8 @@ func TestIntegration_MultipleOrdersSamePrice(t *testing.T) {
 	}
 
 	pos := ts.GetPosition(3, 1)
-	if pos.Size != -8 {
-		t.Errorf("expected size -8, got %d", pos.Size)
+	if pos.Size != 8 || pos.Side != 1 {
+		t.Errorf("expected size 8, side SHORT (1), got %d, %d", pos.Size, pos.Side)
 	}
 }
 
@@ -384,9 +406,12 @@ func TestIntegration_PartialFill(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
+	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
+
 	ts.PlaceOrder(1, 1, 0, 0, 0, 5, 50000)
 
-	resp := ts.PlaceOrder(2, 1, 1, 1, 0, 10, 0)
+	resp := ts.PlaceOrder(2, 1, 1, 1, 1, 10, 0)
 
 	if resp.Filled != 5 {
 		t.Errorf("expected filled 5, got %d", resp.Filled)
@@ -400,7 +425,9 @@ func TestIntegration_ReduceOnly(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	ts.SeedBalance(1, 1000000)
+
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
 
 	resp := ts.PlaceOrder(1, 1, 1, 1, 0, 5, 0, WithReduceOnly())
 
@@ -417,6 +444,8 @@ func TestIntegration_ReduceOnly(t *testing.T) {
 func TestIntegration_BalanceTracking(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
+
+	ts.SeedBalance(1, 1000000)
 
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
 
@@ -435,18 +464,25 @@ func TestIntegration_IOCOrder(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	resp := ts.PlaceOrder(1, 1, 1, 1, 1, 100, 0)
+	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
+
+	ts.PlaceOrder(1, 1, 0, 0, 0, 5, 50000)
+
+	resp := ts.PlaceOrder(2, 1, 1, 1, 1, 100, 0)
 
 	if resp.Status != 4 {
 		t.Errorf("expected PARTIAL_CANCELED (4), got %d", resp.Status)
 	}
-	if resp.Filled != 0 {
-		t.Errorf("expected filled 0, got %d", resp.Filled)
+	if resp.Filled != 5 {
+		t.Errorf("expected filled 5, got %d", resp.Filled)
 	}
 }
 
 func TestIntegration_SnapshotAndRecovery(t *testing.T) {
 	ts := NewTestServer(t)
+
+	ts.SeedBalance(1, 1000000)
 
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
 
@@ -461,13 +497,13 @@ func TestIntegration_SnapshotAndRecovery(t *testing.T) {
 	}
 
 	if offset != ts.w.Offset() {
-		t.Errorf("expected offset %d, got %d", ts.w.Offset(), offset)
+		ts.t.Errorf("expected offset %d, got %d", ts.w.Offset(), offset)
 	}
 
 	us := state2.GetUserState(1)
 	pos := us.Positions[1]
 	if pos == nil || pos.Size != 10 {
-		t.Errorf("expected position size 10 after recovery, got %v", pos)
+		ts.t.Errorf("expected position size 10 after recovery, got %v", pos)
 	}
 
 	ts.Close()
@@ -476,6 +512,8 @@ func TestIntegration_SnapshotAndRecovery(t *testing.T) {
 func TestIntegration_PositionSideUpdates(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
+
+	ts.SeedBalance(1, 1000000)
 
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
 	pos := ts.GetPosition(1, 1)
@@ -488,14 +526,16 @@ func TestIntegration_PositionSideUpdates(t *testing.T) {
 	if pos.Side != 1 {
 		t.Errorf("expected side 1 (SHORT), got %d", pos.Side)
 	}
-	if pos.Size != -5 {
-		t.Errorf("expected size -5, got %d", pos.Size)
+	if pos.Size != 5 {
+		t.Errorf("expected size 5, got %d", pos.Size)
 	}
 }
 
 func TestIntegration_LeverageIncreaseReleasesMargin(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
+
+	ts.SeedBalance(1, 1000000)
 
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
 

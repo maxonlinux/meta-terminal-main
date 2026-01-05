@@ -368,8 +368,8 @@ func TestPosition_SideReversed(t *testing.T) {
 	if pos.Side != 1 {
 		t.Errorf("expected side 1 (SELL/SHORT), got %d", pos.Side)
 	}
-	if pos.Size != -50 {
-		t.Errorf("expected size -50, got %d", pos.Size)
+	if pos.Size != 50 {
+		t.Errorf("expected size 50, got %d", pos.Size)
 	}
 }
 

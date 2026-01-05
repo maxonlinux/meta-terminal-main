@@ -57,6 +57,7 @@ type BalanceResponse struct {
 type PositionResponse struct {
 	Symbol      int32 `json:"symbol"`
 	Size        int64 `json:"size"`
+	Side        int8  `json:"side"`
 	EntryPrice  int64 `json:"entryPrice"`
 	Leverage    int8  `json:"leverage"`
 	RealizedPnl int64 `json:"realizedPnl"`
@@ -142,6 +143,8 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.engine.InitSymbolCategory(types.SymbolID(req.Symbol), req.Category)
+
 	input := &types.OrderInput{
 		UserID:         types.UserID(req.UserID),
 		Symbol:         types.SymbolID(req.Symbol),
@@ -159,6 +162,10 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 	result, err := s.engine.PlaceOrder(input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if result == nil || result.Order == nil {
+		http.Error(w, "order placement failed", http.StatusBadRequest)
 		return
 	}
 
@@ -264,6 +271,7 @@ func (s *Server) getPosition(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(PositionResponse{
 		Symbol:      int32(symbol),
 		Size:        int64(pos.Size),
+		Side:        pos.Side,
 		EntryPrice:  int64(pos.EntryPrice),
 		Leverage:    pos.Leverage,
 		RealizedPnl: pos.RealizedPnl,

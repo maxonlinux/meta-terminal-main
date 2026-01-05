@@ -94,11 +94,18 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 	case constants.ORDER_TYPE_MARKET:
 		filled := e.matchOrder(order)
 		order.Filled = filled
-		order.Quantity = input.Quantity
-		order.Status = constants.ORDER_STATUS_FILLED
-		result.Status = constants.ORDER_STATUS_FILLED
+		if filled == 0 {
+			order.Status = constants.ORDER_STATUS_CANCELED
+			result.Status = constants.ORDER_STATUS_CANCELED
+		} else if filled < order.Quantity {
+			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
+			result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
+		} else {
+			order.Status = constants.ORDER_STATUS_FILLED
+			result.Status = constants.ORDER_STATUS_FILLED
+		}
 		result.Filled = filled
-		result.Remaining = input.Quantity - filled
+		result.Remaining = order.Quantity - filled
 
 	case constants.ORDER_TYPE_LIMIT:
 		switch input.TIF {
@@ -125,22 +132,18 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 
 		case constants.TIF_IOC:
 			filled := e.matchOrder(order)
-			order.Filled = filled
-			order.Quantity = input.Quantity
-			if filled > 0 {
-				order.Status = constants.ORDER_STATUS_FILLED
-				result.Status = constants.ORDER_STATUS_FILLED
-			}
-			if filled > 0 && filled < input.Quantity {
-				result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
-				order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
-			}
 			if filled == 0 {
 				order.Status = constants.ORDER_STATUS_CANCELED
 				result.Status = constants.ORDER_STATUS_CANCELED
+			} else if filled < order.Quantity {
+				result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
+				order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
+			} else {
+				order.Status = constants.ORDER_STATUS_FILLED
+				result.Status = constants.ORDER_STATUS_FILLED
 			}
 			result.Filled = filled
-			result.Remaining = input.Quantity - filled
+			result.Remaining = order.Quantity - filled
 
 		case constants.TIF_FOK:
 			filled := e.matchOrder(order)
@@ -243,6 +246,11 @@ func (e *Engine) GetOrder(orderID types.OrderID) *types.Order {
 	return e.getOrderByID(orderID)
 }
 
+func (e *Engine) InitSymbolCategory(symbol types.SymbolID, category int8) {
+	ss := e.state.GetSymbolState(symbol)
+	ss.Category = category
+}
+
 func (e *Engine) GetUserOrders(userID types.UserID) []*types.Order {
 	orders := make([]*types.Order, 0, 16)
 	for _, order := range e.state.OrderByID {
@@ -298,7 +306,7 @@ func (e *Engine) ClosePosition(userID types.UserID, symbol types.SymbolID) error
 	}
 
 	closeSide := int8(constants.ORDER_SIDE_SELL)
-	if pos.Size < 0 {
+	if pos.Side == constants.ORDER_SIDE_SELL {
 		closeSide = int8(constants.ORDER_SIDE_BUY)
 	}
 
@@ -308,7 +316,7 @@ func (e *Engine) ClosePosition(userID types.UserID, symbol types.SymbolID) error
 		Side:           closeSide,
 		Type:           constants.ORDER_TYPE_MARKET,
 		TIF:            constants.TIF_IOC,
-		Quantity:       types.Quantity(abs64(int64(pos.Size))),
+		Quantity:       pos.Size,
 		CloseOnTrigger: true,
 		ReduceOnly:     true,
 	}
@@ -371,10 +379,10 @@ func (e *Engine) EditLeverage(userID types.UserID, symbol types.SymbolID, levera
 	liquidationPrice := e.calculateLiquidationPrice(pos, leverage)
 	currentPrice := e.getCurrentPrice(symbol)
 	if currentPrice > 0 && liquidationPrice > 0 {
-		if pos.Size > 0 && currentPrice <= liquidationPrice {
+		if pos.Side == constants.ORDER_SIDE_BUY && currentPrice <= liquidationPrice {
 			return ErrPositionLiquidated
 		}
-		if pos.Size < 0 && currentPrice >= liquidationPrice {
+		if pos.Side == constants.ORDER_SIDE_SELL && currentPrice >= liquidationPrice {
 			return ErrPositionLiquidated
 		}
 	}
@@ -392,7 +400,7 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 	}
 
 	tpSide := int8(constants.ORDER_SIDE_SELL)
-	if pos.Size < 0 {
+	if pos.Side == constants.ORDER_SIDE_SELL {
 		tpSide = int8(constants.ORDER_SIDE_BUY)
 	}
 
@@ -405,7 +413,7 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 			Type:           constants.ORDER_TYPE_LIMIT,
 			TIF:            constants.TIF_GTC,
 			Price:          tpPrice,
-			Quantity:       types.Quantity(abs64(int64(pos.Size))),
+			Quantity:       pos.Size,
 			Status:         constants.ORDER_STATUS_UNTRIGGERED,
 			TriggerPrice:   tpPrice,
 			StopOrderType:  constants.STOP_ORDER_TYPE_TP,
@@ -425,7 +433,7 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 			Type:           constants.ORDER_TYPE_LIMIT,
 			TIF:            constants.TIF_GTC,
 			Price:          slPrice,
-			Quantity:       types.Quantity(abs64(int64(pos.Size))),
+			Quantity:       pos.Size,
 			Status:         constants.ORDER_STATUS_UNTRIGGERED,
 			TriggerPrice:   slPrice,
 			StopOrderType:  constants.STOP_ORDER_TYPE_SL,
@@ -519,7 +527,7 @@ func (e *Engine) calculateLiquidationPrice(pos *types.Position, newLeverage int8
 	marginRatio := float64(newLeverage) / 100.0
 	liqDistance := float64(pos.EntryPrice) * marginRatio * 10
 
-	if pos.Size > 0 {
+	if pos.Side == constants.ORDER_SIDE_BUY {
 		return types.Price(float64(pos.EntryPrice) - liqDistance)
 	}
 	return types.Price(float64(pos.EntryPrice) + liqDistance)
@@ -529,19 +537,18 @@ func (e *Engine) validateReduceOnly(input *types.OrderInput) error {
 	us := e.state.GetUserState(input.UserID)
 	pos := us.Positions[input.Symbol]
 	if pos == nil || pos.Size == 0 {
+		return errors.New("reduceOnly order requires an existing position")
+	}
+
+	if input.Side == constants.ORDER_SIDE_BUY && pos.Side == constants.ORDER_SIDE_SELL {
+		return nil
+	}
+	if input.Side == constants.ORDER_SIDE_SELL && pos.Side == constants.ORDER_SIDE_BUY {
 		return nil
 	}
 
-	if input.Side == constants.ORDER_SIDE_BUY && pos.Size < 0 {
-		return nil
-	}
-	if input.Side == constants.ORDER_SIDE_SELL && pos.Size > 0 {
-		return nil
-	}
-
-	maxClose := abs64(int64(pos.Size))
-	if input.Quantity > types.Quantity(maxClose) {
-		return nil
+	if input.Quantity > pos.Size {
+		return errors.New("reduceOnly quantity exceeds position size")
 	}
 
 	return nil
@@ -589,7 +596,8 @@ func (e *Engine) removeFromOrderBook(order *types.Order) {
 
 	if level != nil {
 		delete(level.Orders, order.ID)
-		level.Quantity -= order.Quantity
+		remaining := order.Quantity - order.Filled
+		level.Quantity -= remaining
 		if level.Quantity <= 0 {
 			if order.Side == constants.ORDER_SIDE_BUY {
 				ss.Bids = level.NextPriceLevel
@@ -664,7 +672,7 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 		if maker.Filled >= maker.Quantity {
 			maker.Status = constants.ORDER_STATUS_FILLED
 			delete(level.Orders, oid)
-			level.Quantity -= maker.Quantity
+			level.Quantity -= tradeQty
 		}
 
 		if order.Filled >= order.Quantity {
@@ -673,7 +681,7 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 		}
 	}
 
-	if level.Quantity <= 0 {
+	if len(level.Orders) == 0 {
 		if order.Side == constants.ORDER_SIDE_BUY {
 			ss := e.state.GetSymbolState(order.Symbol)
 			ss.Asks = level.NextPriceLevel
@@ -755,32 +763,28 @@ func (e *Engine) updatePosition(userID types.UserID, symbol types.SymbolID, side
 		pos.EntryPrice = price
 		pos.Leverage = leverage
 		pos.Side = side
-	} else if (pos.Size > 0 && side == constants.ORDER_SIDE_BUY) || (pos.Size < 0 && side == constants.ORDER_SIDE_SELL) {
-		totalQty := abs64(int64(pos.Size)) + abs64(int64(qty))
-		newEntryPrice := types.Price((int64(pos.EntryPrice)*abs64(int64(pos.Size)) + int64(price)*int64(qty)) / totalQty)
+	} else if pos.Side == side {
+		pos.Size += qty
+		newEntryPrice := types.Price((int64(pos.EntryPrice)*int64(pos.Size-qty) + int64(price)*int64(qty)) / int64(pos.Size))
 		pos.EntryPrice = newEntryPrice
-		pos.Size = types.Quantity(int64(pos.Size) + int64(qty))
 	} else {
-		deltaSize := types.Quantity(-int64(qty))
-		if abs64(int64(deltaSize)) >= abs64(int64(pos.Size)) {
-			closedSize := abs64(int64(pos.Size))
-			pnl := int64(price-pos.EntryPrice) * closedSize
-			if pos.Size < 0 {
+		if qty >= pos.Size {
+			closedSize := pos.Size
+			pnl := int64(price-pos.EntryPrice) * int64(closedSize)
+			if pos.Side == constants.ORDER_SIDE_SELL {
 				pnl = -pnl
 			}
 			pos.RealizedPnl += pnl
-			pos.Size = deltaSize + pos.Size
-			if pos.Size != 0 {
-				pos.EntryPrice = price
-				pos.Side = side
-			}
+			pos.Size = qty - pos.Size
+			pos.Side = side
+			pos.EntryPrice = price
 		} else {
-			pnl := int64(price-pos.EntryPrice) * abs64(int64(deltaSize))
-			if pos.Size < 0 {
+			pnl := int64(price-pos.EntryPrice) * int64(qty)
+			if pos.Side == constants.ORDER_SIDE_SELL {
 				pnl = -pnl
 			}
 			pos.RealizedPnl += pnl
-			pos.Size = deltaSize + pos.Size
+			pos.Size -= qty
 		}
 	}
 
