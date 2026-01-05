@@ -87,3 +87,14 @@ func (h *Heap) less(orders map[types.OrderID]*types.Order, i, j int) bool {
 	}
 	return priceI < priceJ
 }
+
+func (h *Heap) Remove(orderID types.OrderID, orders map[types.OrderID]*types.Order) {
+	for i, oid := range h.Data {
+		if oid == orderID {
+			h.Data = append(h.Data[:i], h.Data[i+1:]...)
+			h.siftUp(orders, i)
+			h.siftDown(orders, i)
+			return
+		}
+	}
+}

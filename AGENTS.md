@@ -375,23 +375,30 @@ class TriggerMonitor {
 
 ## 12. LINEAR и маржа
 
-### 12.1 Плечо
+### 12.1 Плечо (привязано к позиции, не к пользователю!)
 
-```typescript
-userLeverage[userIdx] = 1 - 100; // 1 = 1x, 100 = 100x
-marginRatio = 1 / userLeverage;
+- **По умолчанию**: leverage = 2 для новой позиции
+- **При изменении**: устанавливается в позицию, пересчитывается маржа
+- **Пустая позиция**: size = 0, side = null (-1), leverage = установленное значение
+- **При закрытии**: size = 0, side = null (-1), leverage = сохраняется
+
+```go
+position.leverage = 2  // По умолчанию при создании
+position.leverage = 10 // После изменения через EditLeverage
 ```
 
 ### 12.2 Расчёт маржи
 
-```go
-// При открытии/увеличении
-const margin = Math.abs(deltaSize * price) * marginRatio;
-transferToMargin(userId, "USDT", margin);
+**Важно**: При увеличении плеча требуется МЕНЬШЕ маржи (больше кредитного плеча).
 
-// При закрытии/уменьшении
-const released = Math.abs(deltaSize * price) * marginRatio;
-transferFromMargin(userId, "USDT", released);
+```go
+// margin = (size * price) / leverage
+margin := int64(qty) * int64(price) / int64(leverage)
+
+// Пример: position 100 BTC @ 50000
+// leverage 2x: margin = 100 * 50000 / 2 = 2,500,000 USDT
+// leverage 10x: margin = 100 * 50000 / 10 = 500,000 USDT
+// leverage 50x: margin = 100 * 50000 / 50 = 100,000 USDT
 ```
 
 ### 12.3 Позиции
@@ -399,13 +406,35 @@ transferFromMargin(userId, "USDT", released);
 ```go
 position.size > 0  // LONG
 position.size < 0  // SHORT
-position.size = 0  // Нет позиции
+position.size = 0  // Нет позиции (side = null = -1)
 
 // realized PnL при частичном закрытии
 if (Math.sign(current.size) !== Math.sign(deltaSize)) {
   realizedPnl = calculatePnl(current, closedSize, fillPrice);
 }
 ```
+
+### 12.4 EditLeverage - изменение плеча
+
+```
+1. Проверка: leverage должен быть 1-100
+2. Расчёт: oldMargin = size * entryPrice / oldLeverage
+3. Расчёт: newMargin = size * entryPrice / newLeverage
+4. Корректировка баланса:
+   - если newMargin > oldMargin: available -= (newMargin - oldMargin)
+   - если newMargin < oldMargin: available += (oldMargin - newMargin)
+5. Проверка на ликвидацию
+6. Установка: position.leverage = newLeverage
+```
+
+### 12.5 Ответы EditLeverage
+
+| Сценарий | HTTP код | Ошибка |
+|----------|----------|--------|
+| Успех | 200 | - |
+| Недостаточно баланса | 400 | "insufficient balance for new margin requirement" |
+| Будет ликвидация | 400 | "position would be liquidated with new leverage" |
+| Невалидное плечо | 400 | "leverage must be between 1 and 100" |
 
 ---
 

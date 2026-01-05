@@ -25,7 +25,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	wal, err := wal.New(cfg.WALPath)
+	wal, err := wal.New(cfg.WALPath, cfg.WALBufferSize)
 	if err != nil {
 		log.Fatalf("Failed to initialize WAL: %v", err)
 	}
@@ -35,7 +35,7 @@ func main() {
 
 	tradingEngine := engine.New(wal, state)
 
-	outboxWorker, err := outbox.New(cfg.OutboxPath, cfg.OutboxBatchSize)
+	outboxWorker, err := outbox.New(cfg.OutboxPath, cfg.OutboxBatchSize, cfg.OutboxFlushDuration)
 	if err != nil {
 		log.Fatalf("Failed to initialize outbox: %v", err)
 	}

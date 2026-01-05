@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -43,12 +44,14 @@ type Config struct {
 	OutboxPath          string
 	OutboxBatchSize     int
 	OutboxFlushInterval int
+	OutboxFlushDuration time.Duration
 
 	MaxMarkets           int
 	MaxUsersPerMarket    int
 	MaxOpenOrdersPerUser int
 
-	WALPath string
+	WALPath       string
+	WALBufferSize int
 }
 
 func Load() (*Config, error) {
@@ -92,12 +95,14 @@ func Load() (*Config, error) {
 		OutboxPath:          getEnv("OUTBOX_PATH", "./data/outbox"),
 		OutboxBatchSize:     getEnvInt("OUTBOX_BATCH_SIZE", 100),
 		OutboxFlushInterval: getEnvInt("OUTBOX_FLUSH_INTERVAL", 5),
+		OutboxFlushDuration: time.Duration(getEnvInt("OUTBOX_FLUSH_INTERVAL", 5)) * time.Second,
 
 		MaxMarkets:           getEnvInt("MAX_MARKETS", 2000),
 		MaxUsersPerMarket:    getEnvInt("MAX_USERS_PER_MARKET", 500),
 		MaxOpenOrdersPerUser: getEnvInt("MAX_OPEN_ORDERS_PER_USER", 100),
 
-		WALPath: getEnv("WAL_PATH", "./data/wal"),
+		WALPath:       getEnv("WAL_PATH", "./data/wal"),
+		WALBufferSize: getEnvInt("WAL_BUFFER_SIZE", 64),
 	}, nil
 }
 

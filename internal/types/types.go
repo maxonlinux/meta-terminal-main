@@ -59,6 +59,7 @@ type Position struct {
 	UserID      UserID
 	Symbol      SymbolID
 	Size        Quantity
+	Side        int8 // -1 = null (нет позиции), 0 = BUY (LONG), 1 = SELL (SHORT)
 	EntryPrice  Price
 	Leverage    int8
 	RealizedPnl int64
