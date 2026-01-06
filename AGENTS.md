@@ -1,6 +1,6 @@
 # Trading Engine - Zero-Allocation Platform for $10 Server
 
-Very useful information here: https://ramendraparmar.substack.com/p/system-design-question-10-stock-trading
+Very useful information here you MUST read: https://ramendraparmar.substack.com/p/system-design-question-10-stock-trading
 
 ## Linter
 golangci-lint run
