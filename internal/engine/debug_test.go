@@ -406,8 +406,8 @@ func TestDebugFOKPartialFill(t *testing.T) {
 
 	// Check symbol state directly
 	ss := st.GetSymbolState(1)
-	t.Logf("SymbolState Asks level: Price=%d, Quantity=%d, Orders=%d",
-		ss.Asks.Price, ss.Asks.Quantity, len(ss.Asks.Orders))
+	t.Logf("SymbolState Asks level: Price=%d, Quantity=%d, FirstOrderID=%d",
+		ss.Asks.Price, ss.Asks.Quantity, ss.Asks.FirstOrderID)
 
 	// Check available quantity
 	available := e.getAvailableQuantity(1, 0, 0) // BUY side checks Asks, MARKET price=0

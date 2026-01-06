@@ -33,7 +33,9 @@ func BenchmarkPlaceOrder(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		input.UserID = types.UserID(i%100 + 1)
-		e.PlaceOrder(input)
+		input.Price = types.Price(50000 + i%1000)
+		result, _ := e.PlaceOrder(input)
+		e.CancelOrder(result.Order.ID, 0)
 	}
 }
 

@@ -1,74 +1,45 @@
 package memory
 
 import (
+	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-// OrderStore provides lock-free order storage with contiguous memory layout
-// Optimized for nanosecond-order processing on $10 server with 1000+ markets
 type OrderStore struct {
-	orders     []types.Order
-	orderCount uint64
-	freeList   []types.OrderID
-	freeCount  uint64
-	index      map[types.OrderID]uint32
-	capacity   uint32
+	slots      []*types.Order
+	freeList   []uint64
+	userOrders map[types.UserID][]types.OrderID
+	mu         sync.Mutex
+	nextID     uint64
 }
 
-const (
-	defaultOrderCapacity = 1024 * 1024 // 1M orders
-	orderAlignment       = 64          // Cache line size
-)
-
 func NewOrderStore() *OrderStore {
-	os := &OrderStore{
-		orders:     make([]types.Order, defaultOrderCapacity),
-		freeList:   make([]types.OrderID, defaultOrderCapacity/4),
-		index:      make(map[types.OrderID]uint32, defaultOrderCapacity),
-		capacity:   defaultOrderCapacity,
-		orderCount: 0,
-		freeCount:  0,
+	return &OrderStore{
+		slots:      make([]*types.Order, 1),
+		freeList:   make([]uint64, 0, 1024),
+		userOrders: make(map[types.UserID][]types.OrderID),
 	}
-
-	// Initialize free list
-	for i := types.OrderID(0); i < types.OrderID(defaultOrderCapacity/4); i++ {
-		os.freeList[i] = i + 1
-	}
-
-	return os
 }
 
 func (os *OrderStore) Add(order *types.Order) types.OrderID {
-	var orderID types.OrderID
+	var idx uint64
 
-	// Try to get from free list first (lock-free)
-	for {
-		freeCount := atomic.LoadUint64(&os.freeCount)
-		if freeCount > 0 {
-			if atomic.CompareAndSwapUint64(&os.freeCount, freeCount, freeCount-1) {
-				orderID = os.freeList[freeCount-1]
-				break
-			}
-		} else {
-			// Allocate new slot
-			orderID = types.OrderID(atomic.AddUint64(&os.orderCount, 1))
-			if uint32(orderID) >= os.capacity {
-				os.expand()
-			}
-			break
-		}
+	os.mu.Lock()
+	if len(os.freeList) > 0 {
+		idx = os.freeList[len(os.freeList)-1]
+		os.freeList = os.freeList[:len(os.freeList)-1]
+	} else {
+		idx = uint64(len(os.slots))
+		os.slots = append(os.slots, nil)
 	}
+	orderID := types.OrderID(atomic.AddUint64(&os.nextID, 1))
+	os.slots[idx] = order
+	order.ID = orderID
 
-	// Store order at index (contiguous memory for cache locality)
-	index := uint32(orderID) % os.capacity
-	os.orders[index] = *order
-	os.orders[index].ID = orderID
-
-	// Update index
-	os.index[orderID] = index
+	os.userOrders[order.UserID] = append(os.userOrders[order.UserID], orderID)
+	os.mu.Unlock()
 
 	return orderID
 }
@@ -77,59 +48,57 @@ func (os *OrderStore) Get(orderID types.OrderID) *types.Order {
 	if orderID == 0 {
 		return nil
 	}
-
-	index, exists := os.index[orderID]
-	if !exists || index == 0 {
+	idx := uint64(orderID) % uint64(len(os.slots))
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	order := os.slots[idx]
+	if order == nil || order.ID != orderID {
 		return nil
 	}
-
-	return &os.orders[index]
+	return order
 }
 
 func (os *OrderStore) Remove(orderID types.OrderID) {
 	if orderID == 0 {
 		return
 	}
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	idx := uint64(orderID) % uint64(len(os.slots))
+	if os.slots[idx] != nil && os.slots[idx].ID == orderID {
+		order := os.slots[idx]
+		os.slots[idx] = nil
+		os.freeList = append(os.freeList, idx)
 
-	index, exists := os.index[orderID]
-	if !exists || index == 0 {
-		return
+		userOrders := os.userOrders[order.UserID]
+		for i, id := range userOrders {
+			if id == orderID {
+				os.userOrders[order.UserID] = append(userOrders[:i], userOrders[i+1:]...)
+				break
+			}
+		}
 	}
-
-	// Mark as deleted
-	delete(os.index, orderID)
-
-	// Add to free list
-	freeCount := atomic.AddUint64(&os.freeCount, 1)
-	os.freeList[freeCount-1] = orderID
 }
 
-func (os *OrderStore) expand() {
-	// Double capacity (this is rare, so allocation is acceptable)
-	newCapacity := os.capacity * 2
-	newOrders := make([]types.Order, newCapacity)
-	copy(newOrders, os.orders)
-	os.orders = newOrders
-	os.capacity = newCapacity
+func (os *OrderStore) GetUserOrders(userID types.UserID) []types.OrderID {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	return os.userOrders[userID]
 }
 
 func (os *OrderStore) Count() uint64 {
-	return atomic.LoadUint64(&os.orderCount) - atomic.LoadUint64(&os.freeCount)
+	return atomic.LoadUint64(&os.nextID) - uint64(len(os.freeList))
 }
 
-func (os *OrderStore) MemoryUsage() uint64 {
-	return uint64(os.capacity) * uint64(unsafe.Sizeof(types.Order{}))
-}
-
-// GetByIndex returns order by index for iteration (caller must handle synchronization)
-func (os *OrderStore) GetByIndex(index uint32) *types.Order {
-	if index >= os.capacity {
+func (os *OrderStore) GetByIndex(idx uint32) *types.Order {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	if idx >= uint32(len(os.slots)) {
 		return nil
 	}
-	return &os.orders[index]
+	return os.slots[idx]
 }
 
-// UpdateFilled atomically updates the filled quantity
 func (os *OrderStore) UpdateFilled(orderID types.OrderID, filled types.Quantity) {
 	order := os.Get(orderID)
 	if order != nil {
@@ -137,7 +106,6 @@ func (os *OrderStore) UpdateFilled(orderID types.OrderID, filled types.Quantity)
 	}
 }
 
-// UpdateStatus updates the order status
 func (os *OrderStore) UpdateStatus(orderID types.OrderID, status int8) {
 	order := os.Get(orderID)
 	if order != nil {

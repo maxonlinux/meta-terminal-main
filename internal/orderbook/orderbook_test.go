@@ -11,7 +11,7 @@ import (
 func TestPlaceLimitOrderGTC(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	order := &types.Order{
 		ID:       1,
@@ -53,7 +53,7 @@ func TestPlaceLimitOrderGTC(t *testing.T) {
 func TestMatchLimitOrder(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	sellerOrder := &types.Order{
 		ID:       1,
@@ -120,7 +120,7 @@ func TestMatchLimitOrder(t *testing.T) {
 func TestMarketOrderMatch(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	sellerOrder := &types.Order{
 		ID:       1,
@@ -164,7 +164,7 @@ func TestMarketOrderMatch(t *testing.T) {
 func TestFOKPartialFillRejection(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	sellerOrder := &types.Order{
 		ID:       1,
@@ -218,7 +218,7 @@ func TestFOKPartialFillRejection(t *testing.T) {
 func TestIOCPartialFillAcceptance(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	sellerOrder := &types.Order{
 		ID:       1,
@@ -267,7 +267,7 @@ func TestIOCPartialFillAcceptance(t *testing.T) {
 func TestPostOnlyRejection(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	sellerOrder := &types.Order{
 		ID:       1,
@@ -313,7 +313,7 @@ func TestPostOnlyRejection(t *testing.T) {
 func TestPriceTimePriority(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	order1 := &types.Order{
 		ID:        1,
@@ -357,7 +357,7 @@ func TestPriceTimePriority(t *testing.T) {
 func TestMultipleFills(t *testing.T) {
 	s := state.New()
 	symbol := types.SymbolID(1)
-	ob := New(symbol, constants.CATEGORY_SPOT, s)
+	ob := New(symbol, constants.CATEGORY_SPOT, s, func(orderID types.OrderID) *types.Order { return nil })
 
 	seller1 := &types.Order{
 		ID:       1,

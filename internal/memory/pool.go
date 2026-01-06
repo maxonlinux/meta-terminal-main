@@ -8,21 +8,27 @@ import (
 )
 
 type OrderPool struct {
-	pool sync.Pool
+	stack []*types.Order
+	mu    sync.Mutex
+	cap   int
 }
 
 func NewOrderPool() *OrderPool {
 	return &OrderPool{
-		pool: sync.Pool{
-			New: func() interface{} {
-				return &types.Order{}
-			},
-		},
+		stack: make([]*types.Order, 0, 1024),
+		cap:   1024,
 	}
 }
 
 func (p *OrderPool) Get() *types.Order {
-	return p.pool.Get().(*types.Order)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.stack) == 0 {
+		p.grow()
+	}
+	o := p.stack[len(p.stack)-1]
+	p.stack = p.stack[:len(p.stack)-1]
+	return o
 }
 
 func (p *OrderPool) Put(o *types.Order) {
@@ -38,7 +44,18 @@ func (p *OrderPool) Put(o *types.Order) {
 	o.Status = 0
 	o.Prev = 0
 	o.Next = 0
-	p.pool.Put(o)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.stack) < p.cap {
+		p.stack = append(p.stack, o)
+	}
+}
+
+func (p *OrderPool) grow() {
+	for i := 0; i < 256; i++ {
+		p.stack = append(p.stack, &types.Order{})
+	}
+	p.cap += 256
 }
 
 type TradePool struct {
@@ -73,7 +90,6 @@ func (p *TradePool) Put(t *types.Trade) {
 	p.pool.Put(t)
 }
 
-// OrderResultPool eliminates allocation for OrderResult
 type OrderResultPool struct {
 	pool sync.Pool
 }

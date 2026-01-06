@@ -9,17 +9,19 @@ import (
 )
 
 type Dispatcher struct {
-	queues map[types.UserID]*UserQueue
-	mu     sync.RWMutex
-	state  *state.State
-	pool   *OrderPool
+	queues     map[types.UserID]*UserQueue
+	mu         sync.RWMutex
+	state      *state.State
+	pool       *OrderPool
+	orderStore *OrderStore
 }
 
-func NewDispatcher(s *state.State) *Dispatcher {
+func NewDispatcher(s *state.State, os *OrderStore) *Dispatcher {
 	return &Dispatcher{
-		queues: make(map[types.UserID]*UserQueue),
-		state:  s,
-		pool:   GetOrderPool(),
+		queues:     make(map[types.UserID]*UserQueue),
+		state:      s,
+		pool:       GetOrderPool(),
+		orderStore: os,
 	}
 }
 
@@ -75,9 +77,10 @@ func (d *Dispatcher) processQueue(q *UserQueue) {
 	for elem := q.orders.Front(); elem != nil && !q.IsClosed(); elem = elem.Next() {
 		ord := elem.Value.(*types.Order)
 
-		// Создаём OrderBook для правильного символа
 		category := d.state.GetSymbolState(ord.Symbol).Category
-		ob := orderbook.New(ord.Symbol, category, d.state)
+		ob := orderbook.New(ord.Symbol, category, d.state, func(orderID types.OrderID) *types.Order {
+			return d.orderStore.Get(orderID)
+		})
 
 		trades, _, err := ob.PlaceOrder(ord)
 		if err != nil {

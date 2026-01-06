@@ -7,8 +7,6 @@ import (
 type State struct {
 	Users       map[types.UserID]*UserState
 	Symbols     map[types.SymbolID]*SymbolState
-	OrderByID   map[types.OrderID]*types.Order
-	UsersOrders map[types.UserID]map[types.OrderID]*types.Order
 	NextOrderID types.OrderID
 }
 
@@ -21,6 +19,8 @@ type SymbolState struct {
 	Category       int8
 	Bids           *PriceLevel
 	Asks           *PriceLevel
+	BidLevels      map[types.Price]*PriceLevel
+	AskLevels      map[types.Price]*PriceLevel
 	OrderMap       map[types.OrderID]*types.Order
 	BuyTriggers    *Heap
 	SellTriggers   *Heap
@@ -30,7 +30,7 @@ type SymbolState struct {
 type PriceLevel struct {
 	Price          types.Price
 	Quantity       types.Quantity
-	Orders         map[types.OrderID]*types.Order
+	FirstOrderID   types.OrderID
 	PrevPriceLevel *PriceLevel
 	NextPriceLevel *PriceLevel
 }
@@ -39,8 +39,6 @@ func New() *State {
 	return &State{
 		Users:       make(map[types.UserID]*UserState),
 		Symbols:     make(map[types.SymbolID]*SymbolState),
-		OrderByID:   make(map[types.OrderID]*types.Order),
-		UsersOrders: make(map[types.UserID]map[types.OrderID]*types.Order),
 		NextOrderID: 1,
 	}
 }
@@ -49,7 +47,6 @@ func (s *State) GetUserState(userID types.UserID) *UserState {
 	if us, ok := s.Users[userID]; ok {
 		return us
 	}
-	// Early return - create only if not found
 	us := &UserState{
 		Balances:  make(map[string]*types.UserBalance),
 		Positions: make(map[types.SymbolID]*types.Position),
@@ -62,11 +59,12 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *SymbolState {
 	if ss, ok := s.Symbols[symbol]; ok {
 		return ss
 	}
-	// Early return - create only if not found
 	ss := &SymbolState{
 		Category:       0,
 		Bids:           nil,
 		Asks:           nil,
+		BidLevels:      make(map[types.Price]*PriceLevel),
+		AskLevels:      make(map[types.Price]*PriceLevel),
 		OrderMap:       make(map[types.OrderID]*types.Order),
 		BuyTriggers:    nil,
 		SellTriggers:   nil,
@@ -103,23 +101,4 @@ func (s *SymbolState) GetUserReduceOnlyOrders(userID types.UserID) []types.Order
 		oids = append(oids, oid)
 	}
 	return oids
-}
-
-func (s *State) AddOrder(order *types.Order) {
-	s.OrderByID[order.ID] = order
-	if s.UsersOrders[order.UserID] == nil {
-		s.UsersOrders[order.UserID] = make(map[types.OrderID]*types.Order)
-	}
-	s.UsersOrders[order.UserID][order.ID] = order
-}
-
-func (s *State) RemoveOrder(orderID types.OrderID) {
-	order, ok := s.OrderByID[orderID]
-	if !ok {
-		return
-	}
-	delete(s.OrderByID, orderID)
-	if s.UsersOrders[order.UserID] != nil {
-		delete(s.UsersOrders[order.UserID], orderID)
-	}
 }

@@ -7,20 +7,22 @@ import (
 )
 
 type OrderBook struct {
-	symbol   types.SymbolID
-	category int8
-	state    *state.State
-	bids     *PriceTree
-	asks     *PriceTree
+	symbol       types.SymbolID
+	category     int8
+	state        *state.State
+	bids         *PriceTree
+	asks         *PriceTree
+	getOrderByID func(orderID types.OrderID) *types.Order
 }
 
-func New(symbol types.SymbolID, category int8, s *state.State) *OrderBook {
+func New(symbol types.SymbolID, category int8, s *state.State, getOrderByID func(orderID types.OrderID) *types.Order) *OrderBook {
 	return &OrderBook{
-		symbol:   symbol,
-		category: category,
-		state:    s,
-		bids:     NewPriceTree(true),
-		asks:     NewPriceTree(false),
+		symbol:       symbol,
+		category:     category,
+		state:        s,
+		bids:         NewPriceTree(true),
+		asks:         NewPriceTree(false),
+		getOrderByID: getOrderByID,
 	}
 }
 
@@ -202,8 +204,8 @@ func (ob *OrderBook) wouldCrossSpread(order *types.Order) bool {
 }
 
 func (ob *OrderBook) reverseTrade(trade *types.Trade) {
-	taker := ob.state.OrderByID[trade.TakerOrderID]
-	maker := ob.state.OrderByID[trade.MakerOrderID]
+	taker := ob.getOrderByID(trade.TakerOrderID)
+	maker := ob.getOrderByID(trade.MakerOrderID)
 
 	if taker != nil {
 		taker.Filled -= trade.Quantity

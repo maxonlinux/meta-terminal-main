@@ -18,13 +18,19 @@ var (
 )
 
 type Engine struct {
-	wal     *wal.WAL
-	state   *state.State
-	monitor *trigger.Monitor
+	wal        *wal.WAL
+	state      *state.State
+	monitor    *trigger.Monitor
+	orderStore *memory.OrderStore
 }
 
 func New(w *wal.WAL, s *state.State) *Engine {
-	return &Engine{wal: w, state: s, monitor: trigger.NewMonitor(s)}
+	return &Engine{
+		wal:        w,
+		state:      s,
+		monitor:    trigger.NewMonitor(s),
+		orderStore: memory.NewOrderStore(),
+	}
 }
 
 func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error) {
@@ -63,7 +69,7 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 	order.CreatedAt = now
 	order.UpdatedAt = now
 
-	e.state.AddOrder(order)
+	e.orderStore.Add(order)
 	// Use pool for OrderResult to avoid allocation
 	result := memory.GetOrderResultPool().Get()
 	result.Order = order
@@ -195,7 +201,7 @@ func (e *Engine) CancelOrder(orderID types.OrderID, userID types.UserID) error {
 	order.Status = constants.ORDER_STATUS_CANCELED
 	order.UpdatedAt = types.NanoTime()
 	e.logOrderOp(wal.OP_CANCEL_ORDER, types.NanoTime(), order.UserID, order.Symbol, orderID)
-	// Return canceled order to pool
+	e.orderStore.Remove(orderID)
 	memory.GetOrderPool().Put(order)
 	return nil
 }
@@ -229,13 +235,13 @@ func (e *Engine) InitSymbolCategory(symbol types.SymbolID, category int8) {
 }
 
 func (e *Engine) GetUserOrders(userID types.UserID) []*types.Order {
-	userOrders := e.state.UsersOrders[userID]
-	if userOrders == nil {
-		return nil
-	}
-	orders := make([]*types.Order, 0, len(userOrders))
-	for _, o := range userOrders {
-		orders = append(orders, o)
+	orderIDs := e.orderStore.GetUserOrders(userID)
+	orders := make([]*types.Order, 0, len(orderIDs))
+	for _, orderID := range orderIDs {
+		order := e.orderStore.Get(orderID)
+		if order != nil {
+			orders = append(orders, order)
+		}
 	}
 	return orders
 }
@@ -414,7 +420,7 @@ func (e *Engine) OnTrigger(order *types.Order) {
 	newOrder.CloseOnTrigger = false
 	newOrder.CreatedAt = types.NanoTime()
 	newOrder.UpdatedAt = types.NanoTime()
-	e.state.AddOrder(newOrder)
+	e.orderStore.Add(newOrder)
 	e.lockBalanceForOrder(newOrder)
 	e.addToOrderBook(newOrder)
 	// Return triggered order to pool
@@ -422,7 +428,7 @@ func (e *Engine) OnTrigger(order *types.Order) {
 }
 
 func (e *Engine) getOrderByID(orderID types.OrderID) *types.Order {
-	return e.state.OrderByID[orderID]
+	return e.orderStore.Get(orderID)
 }
 
 func (e *Engine) getSymbolCategory(symbol types.SymbolID) int8 {
@@ -471,56 +477,68 @@ func (e *Engine) validateReduceOnly(input *types.OrderInput) error {
 func (e *Engine) addToOrderBook(order *types.Order) {
 	ss := e.state.GetSymbolState(order.Symbol)
 
-	var level **state.PriceLevel
+	var levels map[types.Price]*state.PriceLevel
+	var head **state.PriceLevel
+
 	if order.Side == constants.ORDER_SIDE_BUY {
-		level = &ss.Bids
+		levels = ss.BidLevels
+		head = &ss.Bids
 	} else {
-		level = &ss.Asks
+		levels = ss.AskLevels
+		head = &ss.Asks
 	}
 
-	// Traverse to find correct price level
-	for *level != nil && (*level).Price < order.Price {
-		level = &(*level).NextPriceLevel
+	if level, ok := levels[order.Price]; ok {
+		level.Quantity += order.Quantity
+		order.Next = level.FirstOrderID
+		level.FirstOrderID = order.ID
+		return
 	}
 
-	// Check if level exists at this price
-	if *level != nil && (*level).Price == order.Price {
-		(*level).Quantity += order.Quantity
-	} else {
-		// Create new price level - dynamic allocation
-		newLevel := &state.PriceLevel{
-			Price:    order.Price,
-			Quantity: order.Quantity,
-			Orders:   make(map[types.OrderID]*types.Order),
-		}
-		newLevel.NextPriceLevel = *level
-		*level = newLevel
+	for *head != nil && (*head).Price < order.Price {
+		head = &(*head).NextPriceLevel
 	}
-	(*level).Orders[order.ID] = order
+
+	newLevel := &state.PriceLevel{
+		Price:          order.Price,
+		Quantity:       order.Quantity,
+		FirstOrderID:   order.ID,
+		NextPriceLevel: *head,
+	}
+	order.Next = 0
+	*head = newLevel
+	levels[order.Price] = newLevel
 }
 
 func (e *Engine) removeFromOrderBook(order *types.Order) {
 	ss := e.state.GetSymbolState(order.Symbol)
-	level := ss.Bids
-	if order.Side == constants.ORDER_SIDE_SELL {
-		level = ss.Asks
+
+	var levels map[types.Price]*state.PriceLevel
+	if order.Side == constants.ORDER_SIDE_BUY {
+		levels = ss.BidLevels
+	} else {
+		levels = ss.AskLevels
 	}
 
-	for level != nil && level.Price != order.Price {
-		level = level.NextPriceLevel
+	level, ok := levels[order.Price]
+	if !ok {
+		return
 	}
 
-	if level != nil {
-		delete(level.Orders, order.ID)
-		remaining := order.Quantity - order.Filled
-		level.Quantity -= remaining
-		if level.Quantity <= 0 {
-			if order.Side == constants.ORDER_SIDE_BUY {
-				ss.Bids = level.NextPriceLevel
-			} else {
-				ss.Asks = level.NextPriceLevel
-			}
+	remaining := order.Quantity - order.Filled
+	level.Quantity -= remaining
+
+	if level.FirstOrderID == order.ID {
+		level.FirstOrderID = order.Next
+	}
+
+	if level.Quantity <= 0 || level.FirstOrderID == 0 {
+		if order.Side == constants.ORDER_SIDE_BUY {
+			ss.Bids = level.NextPriceLevel
+		} else {
+			ss.Asks = level.NextPriceLevel
 		}
+		delete(levels, order.Price)
 	}
 }
 
@@ -574,7 +592,7 @@ func (e *Engine) matchOrder(order *types.Order) types.Quantity {
 }
 
 func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types.Quantity {
-	if level == nil || len(level.Orders) == 0 {
+	if level == nil || level.FirstOrderID == 0 {
 		return 0
 	}
 
@@ -582,18 +600,18 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 	tradePrice := level.Price
 	category := e.getSymbolCategory(order.Symbol)
 	needsSideCheck := category == constants.CATEGORY_LINEAR
+	currentOID := level.FirstOrderID
 
 	for order.Quantity > filled {
-		// Get first order from map (inefficient but necessary with current structure)
-		var oid types.OrderID
-		for oid = range level.Orders {
-			break
-		}
-		if oid == 0 {
-			break
+		maker := e.orderStore.Get(currentOID)
+		if maker == nil || maker.Status == constants.ORDER_STATUS_FILLED {
+			currentOID = maker.Next
+			if currentOID == 0 {
+				break
+			}
+			continue
 		}
 
-		maker := level.Orders[oid]
 		tradeQty := min(order.Quantity-filled, maker.Quantity-maker.Filled)
 
 		if needsSideCheck {
@@ -606,26 +624,33 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 		maker.Filled += tradeQty
 		filled += tradeQty
 		order.Filled += tradeQty
+		level.Quantity -= tradeQty
 
 		if maker.Filled >= maker.Quantity {
 			maker.Status = constants.ORDER_STATUS_FILLED
-			delete(level.Orders, oid)
-			level.Quantity -= tradeQty
+			currentOID = maker.Next
 		}
 
 		if order.Filled >= order.Quantity {
 			order.Status = constants.ORDER_STATUS_FILLED
 			break
 		}
+
+		if currentOID == 0 {
+			break
+		}
 	}
 
-	// Remove empty level
-	if len(level.Orders) == 0 {
+	level.FirstOrderID = currentOID
+
+	if level.FirstOrderID == 0 {
 		ss := e.state.GetSymbolState(order.Symbol)
 		if order.Side == constants.ORDER_SIDE_BUY {
 			ss.Asks = level.NextPriceLevel
+			delete(ss.AskLevels, level.Price)
 		} else {
 			ss.Bids = level.NextPriceLevel
+			delete(ss.BidLevels, level.Price)
 		}
 	}
 
