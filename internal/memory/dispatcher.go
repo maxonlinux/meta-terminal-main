@@ -3,105 +3,68 @@ package memory
 import (
 	"sync"
 
-	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 type Dispatcher struct {
-	queues     map[types.UserID]*UserQueue
-	mu         sync.RWMutex
-	state      *state.State
-	pool       *OrderPool
-	orderStore *OrderStore
+	state  *state.State
+	queues map[types.UserID]*UserQueue
+	mu     sync.RWMutex
 }
 
-func NewDispatcher(s *state.State, os *OrderStore) *Dispatcher {
+func NewDispatcher(s *state.State) *Dispatcher {
 	return &Dispatcher{
-		queues:     make(map[types.UserID]*UserQueue),
-		state:      s,
-		pool:       GetOrderPool(),
-		orderStore: os,
+		state:  s,
+		queues: make(map[types.UserID]*UserQueue),
 	}
 }
 
 func (d *Dispatcher) GetQueue(userID types.UserID) *UserQueue {
-	d.mu.RLock()
-	q, ok := d.queues[userID]
-	d.mu.RUnlock()
-
-	if ok {
-		return q
-	}
-
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	if q, ok = d.queues[userID]; ok {
-		return q
+	q, ok := d.queues[userID]
+	if !ok {
+		q = NewUserQueue()
+		d.queues[userID] = q
 	}
-
-	q = NewUserQueue(userID)
-	d.queues[userID] = q
 	return q
 }
 
 func (d *Dispatcher) RemoveQueue(userID types.UserID) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	delete(d.queues, userID)
+	if q, ok := d.queues[userID]; ok {
+		q.Close()
+		delete(d.queues, userID)
+	}
 }
 
-func (d *Dispatcher) Dispatch(order *types.Order) *UserQueueResult {
-	q := d.GetQueue(order.UserID)
+func (d *Dispatcher) Dispatch(userID types.UserID, order *types.Order) *types.OrderResult {
+	q := d.GetQueue(userID)
+	q.Push(order.ID)
 
-	q.Push(order)
-
-	go d.processQueue(q)
-
-	return q.GetResult()
+	return d.processQueue(q, userID)
 }
 
-func (d *Dispatcher) processQueue(q *UserQueue) {
-	defer func() {
-		if r := recover(); r != nil {
-			q.ResultChan() <- &UserQueueResult{Error: r.(error)}
-		}
-		d.RemoveQueue(q.userID)
-	}()
-
-	tradeBuffer := NewTradeBuffer(GetTradePool(), 64)
-	totalFilled := types.Quantity(0)
-	var lastStatus int8
-
-	for elem := q.orders.Front(); elem != nil && !q.IsClosed(); elem = elem.Next() {
-		ord := elem.Value.(*types.Order)
-
-		category := d.state.GetSymbolState(ord.Symbol).Category
-		ob := orderbook.New(ord.Symbol, category, d.state, func(orderID types.OrderID) *types.Order {
-			return d.orderStore.Get(orderID)
-		})
-
-		trades, _, err := ob.PlaceOrder(ord)
-		if err != nil {
-			q.ResultChan() <- &UserQueueResult{Error: err}
-			return
-		}
-
-		// NESTED LOOP!!!!
-		for _, trade := range trades {
-			tradeBuffer.Add(trade)
-			totalFilled += trade.Quantity
-		}
-
-		lastStatus = ord.Status
-
-		d.pool.Put(ord)
+func (d *Dispatcher) processQueue(q *UserQueue, userID types.UserID) *types.OrderResult {
+	orderID := q.Pop()
+	if orderID == 0 {
+		return nil
 	}
 
-	q.ResultChan() <- &UserQueueResult{
-		Trades: tradeBuffer.Slice(),
-		Filled: totalFilled,
-		Status: lastStatus,
+	var order *types.Order
+	for _, ss := range d.state.Symbols {
+		if o, ok := ss.OrderMap[orderID]; ok {
+			order = o
+			break
+		}
+	}
+	if order == nil {
+		return nil
+	}
+
+	return &types.OrderResult{
+		Order: order,
 	}
 }

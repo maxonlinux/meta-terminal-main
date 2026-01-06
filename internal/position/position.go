@@ -1,12 +1,14 @@
 package position
 
 import (
+	"errors"
+
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, filledQty types.Quantity, price types.Price, side int8) (*types.Position, int64) {
+func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, filledQty types.Quantity, price types.Price, side int8, leverage int8) (*types.Position, int64) {
 	us := s.GetUserState(userID)
 	pos, ok := us.Positions[symbol]
 	if !ok {
@@ -16,10 +18,12 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 			Size:       0,
 			Side:       -1,
 			EntryPrice: 0,
-			Leverage:   1,
+			Leverage:   leverage,
 			Version:    0,
 		}
 		us.Positions[symbol] = pos
+	} else if pos.Leverage == 0 {
+		pos.Leverage = leverage
 	}
 
 	var realizedPnl int64
@@ -72,22 +76,28 @@ func GetPosition(s *state.State, userID types.UserID, symbol types.SymbolID) *ty
 	return us.Positions[symbol]
 }
 
-func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.SymbolID, qty types.Quantity, side int8) bool {
+func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.SymbolID, qty types.Quantity, side int8) error {
 	us, ok := s.Users[userID]
 	if !ok {
-		return false
+		return errors.New("reduceOnly order requires an existing position")
 	}
 
 	pos, ok := us.Positions[symbol]
 	if !ok || pos.Size == 0 {
-		return false
+		return errors.New("reduceOnly order requires an existing position")
 	}
 
-	if side == constants.ORDER_SIDE_BUY {
-		return false
+	isClosing := (side == constants.ORDER_SIDE_SELL && pos.Side == constants.ORDER_SIDE_BUY) ||
+		(side == constants.ORDER_SIDE_BUY && pos.Side == constants.ORDER_SIDE_SELL)
+	if !isClosing {
+		return errors.New("reduceOnly order must close existing position")
 	}
 
-	return qty <= pos.Size
+	if qty > pos.Size {
+		return errors.New("reduceOnly quantity exceeds position size")
+	}
+
+	return nil
 }
 
 func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.SymbolID) {
@@ -177,4 +187,24 @@ func calculatePnl(entryPrice, exitPrice types.Price, size types.Quantity, isLong
 		pnl = -pnl
 	}
 	return pnl
+}
+
+func GetLeverage(s *state.State, userID types.UserID, symbol types.SymbolID) int8 {
+	pos := s.GetUserState(userID).Positions[symbol]
+	if pos != nil && pos.Leverage > 0 {
+		return pos.Leverage
+	}
+	return 2
+}
+
+func CalculateLiquidationPrice(pos *types.Position, leverage int8) types.Price {
+	if pos.Size == 0 || leverage == 0 {
+		return 0
+	}
+	ratio := float64(leverage) / 100.0
+	distance := float64(pos.EntryPrice) * ratio * 10
+	if pos.Side == constants.ORDER_SIDE_BUY {
+		return types.Price(float64(pos.EntryPrice) - distance)
+	}
+	return types.Price(float64(pos.EntryPrice) + distance)
 }

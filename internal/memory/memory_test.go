@@ -87,22 +87,22 @@ func TestTradeBuffer(t *testing.T) {
 }
 
 func TestUserQueue(t *testing.T) {
-	q := NewUserQueue(1)
+	q := NewUserQueue()
 
 	if q.Len() != 0 {
 		t.Errorf("expected empty queue, got %d", q.Len())
 	}
 
-	order := &types.Order{ID: 1, Quantity: 10}
-	q.Push(order)
+	orderID := types.OrderID(1)
+	q.Push(orderID)
 
 	if q.Len() != 1 {
 		t.Errorf("expected queue length 1, got %d", q.Len())
 	}
 
 	popped := q.Pop()
-	if popped.ID != 1 {
-		t.Errorf("expected order ID 1, got %d", popped.ID)
+	if popped != 1 {
+		t.Errorf("expected order ID 1, got %d", popped)
 	}
 
 	if q.Len() != 0 {
@@ -111,7 +111,7 @@ func TestUserQueue(t *testing.T) {
 }
 
 func TestUserQueueClose(t *testing.T) {
-	q := NewUserQueue(1)
+	q := NewUserQueue()
 
 	if q.IsClosed() {
 		t.Error("expected queue not closed")
@@ -126,8 +126,7 @@ func TestUserQueueClose(t *testing.T) {
 
 func TestDispatcher(t *testing.T) {
 	s := state.New()
-	os := NewOrderStore()
-	d := NewDispatcher(s, os)
+	d := NewDispatcher(s)
 
 	userID := types.UserID(1)
 

@@ -30,9 +30,93 @@ type SymbolState struct {
 type PriceLevel struct {
 	Price          types.Price
 	Quantity       types.Quantity
+	Orders         *OrderHeap
 	FirstOrderID   types.OrderID
 	PrevPriceLevel *PriceLevel
 	NextPriceLevel *PriceLevel
+}
+
+type OrderHeap struct {
+	Data []types.OrderID
+}
+
+func NewOrderHeap() *OrderHeap {
+	return &OrderHeap{
+		Data: make([]types.OrderID, 0),
+	}
+}
+
+func (h *OrderHeap) Push(orderID types.OrderID) {
+	h.Data = append(h.Data, orderID)
+	h.siftUp(len(h.Data) - 1)
+}
+
+func (h *OrderHeap) Pop() types.OrderID {
+	if len(h.Data) == 0 {
+		return 0
+	}
+
+	min := h.Data[0]
+	h.Data[0] = h.Data[len(h.Data)-1]
+	h.Data = h.Data[:len(h.Data)-1]
+	if len(h.Data) > 0 {
+		h.siftDown(0)
+	}
+	return min
+}
+
+func (h *OrderHeap) Peek() types.OrderID {
+	if len(h.Data) == 0 {
+		return 0
+	}
+	return h.Data[0]
+}
+
+func (h *OrderHeap) Len() int {
+	return len(h.Data)
+}
+
+func (h *OrderHeap) siftUp(index int) {
+	for index > 0 {
+		parent := (index - 1) / 2
+		if h.Data[parent] <= h.Data[index] {
+			break
+		}
+		h.Data[parent], h.Data[index] = h.Data[index], h.Data[parent]
+		index = parent
+	}
+}
+
+func (h *OrderHeap) siftDown(index int) {
+	n := len(h.Data)
+	for index < n {
+		left := 2*index + 1
+		right := left + 1
+		smallest := index
+
+		if left < n && h.Data[left] < h.Data[smallest] {
+			smallest = left
+		}
+		if right < n && h.Data[right] < h.Data[smallest] {
+			smallest = right
+		}
+		if smallest == index {
+			break
+		}
+		h.Data[index], h.Data[smallest] = h.Data[smallest], h.Data[index]
+		index = smallest
+	}
+}
+
+func (h *OrderHeap) Remove(orderID types.OrderID) bool {
+	for i, id := range h.Data {
+		if id == orderID {
+			h.Data = append(h.Data[:i], h.Data[i+1:]...)
+			h.siftDown(i)
+			return true
+		}
+	}
+	return false
 }
 
 func New() *State {
@@ -74,31 +158,47 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *SymbolState {
 	return ss
 }
 
-func (s *State) InitSymbolCategory(symbol types.SymbolID, category int8) {
-	ss := s.GetSymbolState(symbol)
-	ss.Category = category
+func (ss *SymbolState) AddBidLevel(price types.Price) *PriceLevel {
+	if level, ok := ss.BidLevels[price]; ok {
+		return level
+	}
+	level := &PriceLevel{
+		Price:  price,
+		Orders: NewOrderHeap(),
+	}
+	ss.BidLevels[price] = level
+	level.NextPriceLevel = ss.Bids
+	ss.Bids = level
+	return level
 }
 
-func (s *SymbolState) AddReduceOnlyOrder(userID types.UserID, orderID types.OrderID) {
-	if s.UserReduceOnly[userID] == nil {
-		s.UserReduceOnly[userID] = make(map[types.OrderID]struct{})
+func (ss *SymbolState) AddAskLevel(price types.Price) *PriceLevel {
+	if level, ok := ss.AskLevels[price]; ok {
+		return level
 	}
-	s.UserReduceOnly[userID][orderID] = struct{}{}
+	level := &PriceLevel{
+		Price:  price,
+		Orders: NewOrderHeap(),
+	}
+	ss.AskLevels[price] = level
+	level.NextPriceLevel = ss.Asks
+	ss.Asks = level
+	return level
 }
 
-func (s *SymbolState) RemoveReduceOnlyOrder(userID types.UserID, orderID types.OrderID) {
-	if s.UserReduceOnly[userID] != nil {
-		delete(s.UserReduceOnly[userID], orderID)
+func (ss *SymbolState) GetUserReduceOnlyOrders(userID types.UserID) []types.OrderID {
+	if orders, ok := ss.UserReduceOnly[userID]; ok {
+		result := make([]types.OrderID, 0, len(orders))
+		for oid := range orders {
+			result = append(result, oid)
+		}
+		return result
 	}
+	return nil
 }
 
-func (s *SymbolState) GetUserReduceOnlyOrders(userID types.UserID) []types.OrderID {
-	if s.UserReduceOnly[userID] == nil {
-		return nil
+func (ss *SymbolState) RemoveReduceOnlyOrder(userID types.UserID, orderID types.OrderID) {
+	if orders, ok := ss.UserReduceOnly[userID]; ok {
+		delete(orders, orderID)
 	}
-	oids := make([]types.OrderID, 0, len(s.UserReduceOnly[userID]))
-	for oid := range s.UserReduceOnly[userID] {
-		oids = append(oids, oid)
-	}
-	return oids
 }

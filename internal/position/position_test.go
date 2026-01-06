@@ -13,7 +13,7 @@ func TestUpdatePositionOpenLong(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	pos, pnl := UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
+	pos, pnl := UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
 
 	if pos.Size != 10 {
 		t.Errorf("expected size 10, got %d", pos.Size)
@@ -31,7 +31,7 @@ func TestUpdatePositionOpenShort(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	pos, pnl := UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_SELL)
+	pos, pnl := UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_SELL, 2)
 
 	if pos.Size != 10 {
 		t.Errorf("expected size 10, got %d", pos.Size)
@@ -52,8 +52,8 @@ func TestUpdatePositionAddToLong(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
-	pos, pnl := UpdatePosition(s, userID, symbol, 5, 110, constants.ORDER_SIDE_BUY)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
+	pos, pnl := UpdatePosition(s, userID, symbol, 5, 110, constants.ORDER_SIDE_BUY, 2)
 
 	if pos.Size != 15 {
 		t.Errorf("expected size 15, got %d", pos.Size)
@@ -68,8 +68,8 @@ func TestUpdatePositionCloseLong(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
-	pos, pnl := UpdatePosition(s, userID, symbol, 5, 120, constants.ORDER_SIDE_SELL)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
+	pos, pnl := UpdatePosition(s, userID, symbol, 5, 120, constants.ORDER_SIDE_SELL, 2)
 
 	if pos.Size != 5 {
 		t.Errorf("expected size 5, got %d", pos.Size)
@@ -84,8 +84,8 @@ func TestUpdatePositionCloseFully(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
-	pos, pnl := UpdatePosition(s, userID, symbol, 10, 120, constants.ORDER_SIDE_SELL)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
+	pos, pnl := UpdatePosition(s, userID, symbol, 10, 120, constants.ORDER_SIDE_SELL, 2)
 
 	if pos.Size != 0 {
 		t.Errorf("expected size 0, got %d", pos.Size)
@@ -103,8 +103,8 @@ func TestUpdatePositionReverseShort(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_SELL)
-	pos, pnl := UpdatePosition(s, userID, symbol, 15, 90, constants.ORDER_SIDE_BUY)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_SELL, 2)
+	pos, pnl := UpdatePosition(s, userID, symbol, 15, 90, constants.ORDER_SIDE_BUY, 2)
 
 	if pos.Size != 5 {
 		t.Errorf("expected size 5, got %d", pos.Size)
@@ -124,7 +124,7 @@ func TestGetPosition(t *testing.T) {
 		t.Error("expected nil position")
 	}
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
 
 	pos = GetPosition(s, userID, symbol)
 	if pos == nil {
@@ -140,26 +140,26 @@ func TestReduceOnlyValidate(t *testing.T) {
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
-	valid := ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_SELL)
-	if valid {
-		t.Error("expected false with no position")
+	err := ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_SELL)
+	if err == nil {
+		t.Error("expected error with no position")
 	}
 
-	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY)
+	UpdatePosition(s, userID, symbol, 10, 100, constants.ORDER_SIDE_BUY, 2)
 
-	valid = ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_BUY)
-	if valid {
-		t.Error("expected false for BUY reduceOnly")
+	err = ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_BUY)
+	if err == nil {
+		t.Error("expected error for BUY reduceOnly")
 	}
 
-	valid = ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_SELL)
-	if !valid {
-		t.Error("expected true for SELL reduceOnly within position")
+	err = ReduceOnlyValidate(s, userID, symbol, 5, constants.ORDER_SIDE_SELL)
+	if err != nil {
+		t.Error("expected no error for SELL reduceOnly within position")
 	}
 
-	valid = ReduceOnlyValidate(s, userID, symbol, 15, constants.ORDER_SIDE_SELL)
-	if valid {
-		t.Error("expected false for reduceOnly exceeding position")
+	err = ReduceOnlyValidate(s, userID, symbol, 15, constants.ORDER_SIDE_SELL)
+	if err == nil {
+		t.Error("expected error for reduceOnly exceeding position")
 	}
 }
 

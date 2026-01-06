@@ -3,9 +3,12 @@ package engine
 import (
 	"errors"
 
+	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/memory"
+	"github.com/anomalyco/meta-terminal-go/internal/position"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
+	"github.com/anomalyco/meta-terminal-go/internal/trade"
 	"github.com/anomalyco/meta-terminal-go/internal/trigger"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 	"github.com/anomalyco/meta-terminal-go/internal/wal"
@@ -326,7 +329,7 @@ func (e *Engine) EditLeverage(userID types.UserID, symbol types.SymbolID, levera
 	oldMargin, newMargin := value/int64(oldLev), value/int64(leverage)
 	marginDiff := newMargin - oldMargin
 
-	bal := e.getOrCreateBalance(userID, "USDT")
+	bal := balance.GetOrCreate(e.state, userID, "USDT")
 	if marginDiff > 0 {
 		if bal.Available < marginDiff {
 			return ErrInsufficientBalance
@@ -490,8 +493,7 @@ func (e *Engine) addToOrderBook(order *types.Order) {
 
 	if level, ok := levels[order.Price]; ok {
 		level.Quantity += order.Quantity
-		order.Next = level.FirstOrderID
-		level.FirstOrderID = order.ID
+		level.Orders.Push(order.ID)
 		return
 	}
 
@@ -502,10 +504,10 @@ func (e *Engine) addToOrderBook(order *types.Order) {
 	newLevel := &state.PriceLevel{
 		Price:          order.Price,
 		Quantity:       order.Quantity,
-		FirstOrderID:   order.ID,
+		Orders:         state.NewOrderHeap(),
 		NextPriceLevel: *head,
 	}
-	order.Next = 0
+	newLevel.Orders.Push(order.ID)
 	*head = newLevel
 	levels[order.Price] = newLevel
 }
@@ -528,11 +530,10 @@ func (e *Engine) removeFromOrderBook(order *types.Order) {
 	remaining := order.Quantity - order.Filled
 	level.Quantity -= remaining
 
-	if level.FirstOrderID == order.ID {
-		level.FirstOrderID = order.Next
-	}
+	// Remove from heap
+	level.Orders.Remove(order.ID)
 
-	if level.Quantity <= 0 || level.FirstOrderID == 0 {
+	if level.Quantity <= 0 || level.Orders.Len() == 0 {
 		if order.Side == constants.ORDER_SIDE_BUY {
 			ss.Bids = level.NextPriceLevel
 		} else {
@@ -592,7 +593,7 @@ func (e *Engine) matchOrder(order *types.Order) types.Quantity {
 }
 
 func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types.Quantity {
-	if level == nil || level.FirstOrderID == 0 {
+	if level == nil || level.Orders.Len() == 0 {
 		return 0
 	}
 
@@ -600,15 +601,24 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 	tradePrice := level.Price
 	category := e.getSymbolCategory(order.Symbol)
 	needsSideCheck := category == constants.CATEGORY_LINEAR
-	currentOID := level.FirstOrderID
 
 	for order.Quantity > filled {
+		// Get first valid order
+		currentOID := level.Orders.Peek()
+		if currentOID == 0 {
+			break
+		}
+
 		maker := e.orderStore.Get(currentOID)
-		if maker == nil || maker.Status == constants.ORDER_STATUS_FILLED {
-			currentOID = maker.Next
-			if currentOID == 0 {
-				break
-			}
+		if maker == nil {
+			// This should never happen - order ID in heap but not in store
+			level.Orders.Pop()
+			continue
+		}
+		if maker.Status == constants.ORDER_STATUS_FILLED || maker.Status == constants.ORDER_STATUS_CANCELED {
+			// Skip stale order - pop it and continue
+			level.Orders.Pop()
+			level.Quantity -= maker.Quantity
 			continue
 		}
 
@@ -616,9 +626,9 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 
 		if needsSideCheck {
 			lev := e.getUserLeverage(order.UserID, order.Symbol)
-			e.executeLinearTrade(order, maker, tradePrice, tradeQty, lev)
+			trade.ExecuteLinearTrade(e.state, order, maker, tradePrice, tradeQty, lev)
 		} else {
-			e.executeSpotTrade(order, maker, tradePrice, tradeQty)
+			trade.ExecuteSpotTrade(e.state, order, maker, tradePrice, tradeQty)
 		}
 
 		maker.Filled += tradeQty
@@ -628,22 +638,18 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 
 		if maker.Filled >= maker.Quantity {
 			maker.Status = constants.ORDER_STATUS_FILLED
-			currentOID = maker.Next
+			// Pop the filled order from heap
+			level.Orders.Pop()
 		}
 
 		if order.Filled >= order.Quantity {
 			order.Status = constants.ORDER_STATUS_FILLED
 			break
 		}
-
-		if currentOID == 0 {
-			break
-		}
 	}
 
-	level.FirstOrderID = currentOID
-
-	if level.FirstOrderID == 0 {
+	// Remove empty level from book
+	if level.Orders.Len() == 0 || level.Quantity == 0 {
 		ss := e.state.GetSymbolState(order.Symbol)
 		if order.Side == constants.ORDER_SIDE_BUY {
 			ss.Asks = level.NextPriceLevel
@@ -657,103 +663,13 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 	return filled
 }
 
-func (e *Engine) executeSpotTrade(taker, maker *types.Order, price types.Price, qty types.Quantity) {
-	buyer, seller := taker, maker
-	if taker.Side == constants.ORDER_SIDE_SELL {
-		buyer, seller = maker, taker
-	}
-
-	value := int64(qty) * int64(price)
-	e.getOrCreateBalance(buyer.UserID, "USDT").Available -= value
-	e.getOrCreateBalance(seller.UserID, "USDT").Available += value
-
-	// TODO: This should use the quote asset from symbol configuration
-	// For now using BTC as quote asset - needs to be fixed per symbol
-	asset := "BTC"
-	e.getOrCreateBalance(buyer.UserID, asset).Available += int64(qty)
-	e.getOrCreateBalance(seller.UserID, asset).Available -= int64(qty)
-}
-
-func (e *Engine) executeLinearTrade(taker, maker *types.Order, price types.Price, qty types.Quantity, leverage int8) {
-	margin := int64(qty) * int64(price) * int64(100/leverage) / 100
-	e.updatePosition(taker.UserID, taker.Symbol, taker.Side, price, qty, leverage)
-	e.updatePosition(maker.UserID, maker.Symbol, maker.Side, price, qty, leverage)
-
-	tBal := e.getOrCreateBalance(taker.UserID, "USDT")
-	if taker.Side == constants.ORDER_SIDE_BUY {
-		tBal.Margin += margin
-	} else {
-		tBal.Margin -= margin
-	}
-
-	mBal := e.getOrCreateBalance(maker.UserID, "USDT")
-	if maker.Side == constants.ORDER_SIDE_BUY {
-		mBal.Margin += margin
-	} else {
-		mBal.Margin -= margin
-	}
-}
-
-func (e *Engine) updatePosition(userID types.UserID, symbol types.SymbolID, side int8, price types.Price, qty types.Quantity, leverage int8) {
-	pos := e.state.GetUserState(userID).Positions[symbol]
-	if pos == nil {
-		pos = &types.Position{UserID: userID, Symbol: symbol, Size: 0, Side: -1, Leverage: leverage}
-		e.state.GetUserState(userID).Positions[symbol] = pos
-	}
-
-	switch {
-	case pos.Size == 0:
-		pos.Size, pos.EntryPrice, pos.Leverage, pos.Side = qty, price, leverage, side
-	case pos.Side == side:
-		pos.Size += qty
-		pos.EntryPrice = types.Price((int64(pos.EntryPrice)*int64(pos.Size-qty) + int64(price)*int64(qty)) / int64(pos.Size))
-	default:
-		if qty >= pos.Size {
-			pnl := int64(price-pos.EntryPrice) * int64(pos.Size)
-			if pos.Side == constants.ORDER_SIDE_SELL {
-				pnl = -pnl
-			}
-			pos.RealizedPnl += pnl
-			pos.Size, pos.Side, pos.EntryPrice = qty-pos.Size, side, price
-		} else {
-			pnl := int64(price-pos.EntryPrice) * int64(qty)
-			if pos.Side == constants.ORDER_SIDE_SELL {
-				pnl = -pnl
-			}
-			pos.RealizedPnl += pnl
-			pos.Size -= qty
-		}
-	}
-
-	if pos.Size == 0 {
-		pos.Side = -1
-		bal := e.getOrCreateBalance(userID, "USDT")
-		bal.Available += bal.Margin
-		bal.Margin = 0
-	}
-}
-
-func (e *Engine) getOrCreateBalance(userID types.UserID, asset string) *types.UserBalance {
-	us := e.state.GetUserState(userID)
-
-	bal, exists := us.Balances[asset]
-	if exists {
-		return bal
-	}
-
-	// Early return pattern - create only if not found
-	bal = &types.UserBalance{UserID: userID, Asset: asset}
-	us.Balances[asset] = bal
-	return bal
-}
-
 func (e *Engine) lockBalanceForOrder(order *types.Order) {
 	if order.Type == constants.ORDER_TYPE_MARKET {
 		return
 	}
 
 	category := e.getSymbolCategory(order.Symbol)
-	bal := e.getOrCreateBalance(order.UserID, "USDT")
+	bal := balance.GetOrCreate(e.state, order.UserID, "USDT")
 	toLock := int64(order.Quantity-order.Filled) * int64(order.Price)
 
 	if category == constants.CATEGORY_SPOT {
@@ -767,7 +683,7 @@ func (e *Engine) lockBalanceForOrder(order *types.Order) {
 
 func (e *Engine) unlockBalanceForOrder(order *types.Order) {
 	category := e.getSymbolCategory(order.Symbol)
-	bal := e.getOrCreateBalance(order.UserID, "USDT")
+	bal := balance.GetOrCreate(e.state, order.UserID, "USDT")
 	toUnlock := int64(order.Quantity-order.Filled) * int64(order.Price)
 
 	if category == constants.CATEGORY_SPOT {
@@ -807,13 +723,13 @@ func (e *Engine) executeReduceOnly(order *types.Order, input *types.OrderInput, 
 	result.Filled, result.Remaining = tradeQty, input.Quantity-tradeQty
 	e.setStatus(order, result, constants.ORDER_STATUS_FILLED)
 
-	e.updatePosition(order.UserID, order.Symbol, order.Side, execPrice, tradeQty, e.getUserLeverage(order.UserID, order.Symbol))
+	position.UpdatePosition(e.state, order.UserID, order.Symbol, tradeQty, execPrice, order.Side, e.getUserLeverage(order.UserID, order.Symbol))
 	e.logOrderOp(wal.OP_PLACE_ORDER, now, order.UserID, order.Symbol, order.ID)
 	return result, nil
 }
 
 func (e *Engine) adjustLockedBalance(order *types.Order, oldQty types.Quantity, oldPrice types.Price) {
-	bal := e.getOrCreateBalance(order.UserID, "USDT")
+	bal := balance.GetOrCreate(e.state, order.UserID, "USDT")
 	bal.Locked += int64(order.Quantity)*int64(order.Price) - int64(oldQty)*int64(oldPrice)
 }
 
@@ -830,7 +746,14 @@ func (e *Engine) getUserLeverage(userID types.UserID, symbol types.SymbolID) int
 	return 2
 }
 
+func (e *Engine) updatePosition(userID types.UserID, symbol types.SymbolID, side int8, price types.Price, qty types.Quantity, leverage int8) {
+	position.UpdatePosition(e.state, userID, symbol, qty, price, side, leverage)
+}
+
 func (e *Engine) logOrderOp(opType wal.OperationType, now uint64, userID types.UserID, symbol types.SymbolID, orderID types.OrderID) {
+	if e.wal == nil {
+		return
+	}
 	_ = e.wal.Append(&wal.Operation{
 		Type:      opType,
 		Timestamp: int64(now),
