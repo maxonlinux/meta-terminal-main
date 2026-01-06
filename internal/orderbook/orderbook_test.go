@@ -11,10 +11,8 @@ import (
 func TestAddOrder(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order := &types.Order{
@@ -44,18 +42,16 @@ func TestAddOrder(t *testing.T) {
 	if level.Orders.Len() != 1 {
 		t.Errorf("expected 1 order in heap, got %d", level.Orders.Len())
 	}
-	if len(ss.BidPrices) != 1 {
-		t.Errorf("expected 1 price in BidPrices, got %d", len(ss.BidPrices))
+	if ss.BestBid != level {
+		t.Error("expected BestBid to point to the level")
 	}
 }
 
 func TestAddOrderMultipleOrders(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order1 := &types.Order{
@@ -87,18 +83,13 @@ func TestAddOrderMultipleOrders(t *testing.T) {
 	if level.Orders.Len() != 2 {
 		t.Errorf("expected 2 orders, got %d", level.Orders.Len())
 	}
-	if len(ss.BidPrices) != 1 {
-		t.Errorf("expected 1 price in BidPrices, got %d", len(ss.BidPrices))
-	}
 }
 
 func TestAddOrderNewPriceLevel(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order1 := &types.Order{
@@ -123,21 +114,19 @@ func TestAddOrderNewPriceLevel(t *testing.T) {
 	if ss.BidIndex[101] == nil {
 		t.Error("expected BidIndex[101] to exist")
 	}
-	if len(ss.BidPrices) != 2 {
-		t.Errorf("expected 2 prices in BidPrices, got %d", len(ss.BidPrices))
+	if ss.BestBid != ss.BidIndex[101] {
+		t.Errorf("expected BestBid to be 101 level, got %v", ss.BestBid)
 	}
-	if ss.BidPrices[0] != 101 || ss.BidPrices[1] != 100 {
-		t.Errorf("expected BidPrices sorted descending [101, 100], got %v", ss.BidPrices)
+	if ss.BestBid.NextBid != ss.BidIndex[100] {
+		t.Error("expected NextBid to point to 100 level")
 	}
 }
 
 func TestRemoveOrder(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order := &types.Order{
@@ -156,18 +145,16 @@ func TestRemoveOrder(t *testing.T) {
 	if _, ok := ss.BidIndex[100]; ok {
 		t.Error("expected BidIndex[100] to be nil after removing only order")
 	}
-	if len(ss.BidPrices) != 0 {
-		t.Error("expected BidPrices to be empty")
+	if ss.BestBid != nil {
+		t.Error("expected BestBid to be nil")
 	}
 }
 
 func TestRemoveOrderPartial(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order := &types.Order{
@@ -200,11 +187,15 @@ func TestRemoveOrderPartial(t *testing.T) {
 func TestGetBestBidAsk(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: []types.Price{99},
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: []types.Price{101},
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
+
+	ss.BidIndex[99] = &state.PriceLevel{Price: 99}
+	ss.BestBid = ss.BidIndex[99]
+
+	ss.AskIndex[101] = &state.PriceLevel{Price: 101}
+	ss.BestAsk = ss.AskIndex[101]
 
 	if ob.GetBestBid(ss) != 99 {
 		t.Errorf("expected best bid 99, got %d", ob.GetBestBid(ss))
@@ -217,22 +208,17 @@ func TestGetBestBidAsk(t *testing.T) {
 func TestGetDepth(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: []types.Price{101, 100},
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
-	ss.BidIndex[101] = &state.PriceLevel{
-		Price:    101,
-		Quantity: 5,
-		Orders:   state.NewOrderHeap(),
-	}
-	ss.BidIndex[100] = &state.PriceLevel{
-		Price:    100,
-		Quantity: 10,
-		Orders:   state.NewOrderHeap(),
-	}
+	level100 := &state.PriceLevel{Price: 100, Quantity: 10}
+	level101 := &state.PriceLevel{Price: 101, Quantity: 5}
+
+	ss.BidIndex[100] = level100
+	ss.BidIndex[101] = level101
+	ss.BestBid = level101
+	level101.NextBid = level100
 
 	depth := ob.GetDepth(ss, constants.ORDER_SIDE_BUY, 10)
 	if len(depth) != 4 {
@@ -254,10 +240,8 @@ func TestGetDepth(t *testing.T) {
 func TestRemoveOrderWithMultipleOrders(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	order1 := &types.Order{ID: 1, Side: constants.ORDER_SIDE_BUY, Price: 100, Quantity: 5, Filled: 0}
@@ -288,10 +272,8 @@ func TestRemoveOrderWithMultipleOrders(t *testing.T) {
 func TestEmptyOrderBook(t *testing.T) {
 	ob := New()
 	ss := &state.OrderBookState{
-		BidIndex:  make(map[types.Price]*state.PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*state.PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		BidIndex: make(map[types.Price]*state.PriceLevel),
+		AskIndex: make(map[types.Price]*state.PriceLevel),
 	}
 
 	if ob.GetBestBid(ss) != 0 {

@@ -55,9 +55,7 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	if err := godotenv.Load(); err != nil {
-		// .env is optional
-	}
+	_ = godotenv.Load()
 
 	return &Config{
 		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),

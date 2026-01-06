@@ -130,7 +130,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background())
 	}()
 
 	return srv.ListenAndServe()
@@ -170,7 +170,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(OrderResponse{
+	_ = json.NewEncoder(w).Encode(OrderResponse{
 		OrderID:   int64(result.Order.ID),
 		Status:    result.Status,
 		Filled:    int64(result.Filled),
@@ -198,7 +198,7 @@ func (s *Server) getUserOrders(w http.ResponseWriter, r *http.Request) {
 
 	orders := s.engine.GetUserOrders(types.UserID(userID))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(orders)
+	_ = json.NewEncoder(w).Encode(orders)
 }
 
 func (s *Server) getAllUserBalances(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +211,7 @@ func (s *Server) getAllUserBalances(w http.ResponseWriter, r *http.Request) {
 
 	balances := s.engine.GetUserBalances(types.UserID(userID))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(balances)
+	_ = json.NewEncoder(w).Encode(balances)
 }
 
 func (s *Server) getUserBalanceByAsset(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +225,7 @@ func (s *Server) getUserBalanceByAsset(w http.ResponseWriter, r *http.Request) {
 
 	balance := s.engine.GetUserBalanceByAsset(types.UserID(userID), asset)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(balance)
+	_ = json.NewEncoder(w).Encode(balance)
 }
 
 func (s *Server) getOrderBook(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +236,7 @@ func (s *Server) getOrderBook(w http.ResponseWriter, r *http.Request) {
 
 	bids, asks := s.engine.GetOrderBook(types.SymbolID(symbol), 20)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(OrderBookResponse{
+	_ = json.NewEncoder(w).Encode(OrderBookResponse{
 		Symbol:   int32(symbol),
 		Category: int8(category),
 		Bids:     flattenToNested(bids),
@@ -271,7 +271,7 @@ func (s *Server) getPosition(w http.ResponseWriter, r *http.Request) {
 	pos := s.engine.GetUserPosition(types.UserID(userID), types.SymbolID(symbol))
 	if pos == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"symbol":   int32(symbol),
 			"category": int8(category),
 			"size":     0,

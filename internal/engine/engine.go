@@ -48,7 +48,7 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 		if category == constants.CATEGORY_SPOT {
 			return nil, nil
 		}
-		if err := e.validateReduceOnly(input); err != nil {
+		if err := position.ReduceOnlyValidate(e.state, input.UserID, input.Symbol, input.Quantity, input.Side); err != nil {
 			return nil, err
 		}
 	}
@@ -56,25 +56,9 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 	orderID := e.state.NextOrderID
 	e.state.NextOrderID++
 
-	order := memory.GetOrderPool().Get()
-	order.ID = orderID
-	order.UserID = input.UserID
-	order.Symbol = input.Symbol
-	order.Side = input.Side
-	order.Type = input.Type
-	order.TIF = input.TIF
-	order.Status = constants.ORDER_STATUS_NEW
-	order.Price = input.Price
-	order.Quantity = input.Quantity
-	order.Filled = 0
-	order.TriggerPrice = input.TriggerPrice
-	order.StopOrderType = input.StopOrderType
-	order.ReduceOnly = input.ReduceOnly
-	order.CloseOnTrigger = input.CloseOnTrigger
-	order.CreatedAt = now
-	order.UpdatedAt = now
-
+	order := e.newOrder(orderID, input, now)
 	e.orderStore.Add(order)
+
 	result := memory.GetOrderResultPool().Get()
 	result.Order = order
 	result.Trades = nil
@@ -102,6 +86,27 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 	return result, nil
 }
 
+func (e *Engine) newOrder(id types.OrderID, input *types.OrderInput, now uint64) *types.Order {
+	o := memory.GetOrderPool().Get()
+	o.ID = id
+	o.UserID = input.UserID
+	o.Symbol = input.Symbol
+	o.Side = input.Side
+	o.Type = input.Type
+	o.TIF = input.TIF
+	o.Status = constants.ORDER_STATUS_NEW
+	o.Price = input.Price
+	o.Quantity = input.Quantity
+	o.Filled = 0
+	o.TriggerPrice = input.TriggerPrice
+	o.StopOrderType = input.StopOrderType
+	o.ReduceOnly = input.ReduceOnly
+	o.CloseOnTrigger = input.CloseOnTrigger
+	o.CreatedAt = now
+	o.UpdatedAt = now
+	return o
+}
+
 func (e *Engine) handleMarketOrder(order *types.Order, input *types.OrderInput, result *types.OrderResult, now uint64) {
 	if input.TIF == constants.TIF_FOK {
 		e.executeFOKOrder(order, result)
@@ -113,11 +118,11 @@ func (e *Engine) handleMarketOrder(order *types.Order, input *types.OrderInput, 
 
 	switch {
 	case filled == 0:
-		e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
+		order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 	case filled < order.Quantity:
-		e.setStatus(order, result, constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED)
+		order.Status, result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED, constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 	default:
-		e.setStatus(order, result, constants.ORDER_STATUS_FILLED)
+		order.Status, result.Status = constants.ORDER_STATUS_FILLED, constants.ORDER_STATUS_FILLED
 	}
 
 	result.Filled = filled
@@ -130,12 +135,12 @@ func (e *Engine) handleLimitOrder(order *types.Order, input *types.OrderInput, r
 	switch input.TIF {
 	case constants.TIF_GTC, constants.TIF_POST_ONLY:
 		if input.TIF == constants.TIF_POST_ONLY && e.ob.WouldCross(ss, order) {
-			e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
+			order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 			e.logOrderOp(wal.OP_CANCEL_ORDER, now, input.UserID, input.Symbol, order.ID)
 			return
 		}
 		balance.LockForOrder(e.state, e.getSymbolCategory(order.Symbol), order.UserID, order, e.getUserLeverage(order.UserID, order.Symbol))
-		e.setStatus(order, result, constants.ORDER_STATUS_NEW)
+		order.Status, result.Status = constants.ORDER_STATUS_NEW, constants.ORDER_STATUS_NEW
 		e.ob.AddOrder(ss, order)
 
 	case constants.TIF_IOC:
@@ -143,11 +148,11 @@ func (e *Engine) handleLimitOrder(order *types.Order, input *types.OrderInput, r
 		result.Filled, result.Remaining = filled, order.Quantity-filled
 		switch {
 		case filled == 0:
-			e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
+			order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 		case filled < order.Quantity:
-			e.setStatus(order, result, constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED)
+			order.Status, result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED, constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 		default:
-			e.setStatus(order, result, constants.ORDER_STATUS_FILLED)
+			order.Status, result.Status = constants.ORDER_STATUS_FILLED, constants.ORDER_STATUS_FILLED
 		}
 
 	case constants.TIF_FOK:
@@ -163,20 +168,20 @@ func (e *Engine) executeFOKOrder(order *types.Order, result *types.OrderResult) 
 
 	available := e.getAvailableQuantity(order.Symbol, order.Side, price)
 	if available < order.Quantity {
+		order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 		result.Filled, result.Remaining = 0, order.Quantity
-		e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
 		return
 	}
 
 	filled := e.matchOrder(order)
 	if filled < order.Quantity {
+		order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 		result.Filled, result.Remaining = 0, order.Quantity
-		e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
 		return
 	}
 
+	order.Status, result.Status = constants.ORDER_STATUS_FILLED, constants.ORDER_STATUS_FILLED
 	result.Filled, result.Remaining = filled, 0
-	e.setStatus(order, result, constants.ORDER_STATUS_FILLED)
 }
 
 func (e *Engine) CancelOrder(orderID types.OrderID, userID types.UserID) error {
@@ -351,33 +356,31 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 		tpSide = int8(constants.ORDER_SIDE_BUY)
 	}
 
-	createStopOrder := func(orderID int64, price types.Price, stopType int8) {
-		if orderID != 0 || price == 0 {
-			return
-		}
-		e.state.NextOrderID++
-		order := memory.GetOrderPool().Get()
-		order.ID = e.state.NextOrderID
-		order.UserID = userID
-		order.Symbol = symbol
-		order.Side = tpSide
-		order.Type = constants.ORDER_TYPE_LIMIT
-		order.TIF = constants.TIF_GTC
-		order.Price = price
-		order.Quantity = pos.Size
-		order.Status = constants.ORDER_STATUS_UNTRIGGERED
-		order.TriggerPrice = price
-		order.StopOrderType = stopType
-		order.CloseOnTrigger = true
-		order.ReduceOnly = true
-		order.CreatedAt = types.NanoTime()
-		order.UpdatedAt = types.NanoTime()
-		e.monitor.AddOrder(order)
-	}
-
-	createStopOrder(tpOrderID, tpPrice, constants.STOP_ORDER_TYPE_TP)
-	createStopOrder(slOrderID, slPrice, constants.STOP_ORDER_TYPE_SL)
+	e.createStopOrder(userID, symbol, tpSide, pos.Size, tpPrice, constants.STOP_ORDER_TYPE_TP)
+	e.createStopOrder(userID, symbol, tpSide, pos.Size, slPrice, constants.STOP_ORDER_TYPE_SL)
 	return nil
+}
+
+func (e *Engine) createStopOrder(userID types.UserID, symbol types.SymbolID, side int8, qty types.Quantity, price types.Price, stopType int8) {
+	if price == 0 {
+		return
+	}
+	e.state.NextOrderID++
+	order := e.newOrder(e.state.NextOrderID, &types.OrderInput{
+		UserID:         userID,
+		Symbol:         symbol,
+		Side:           side,
+		Type:           constants.ORDER_TYPE_LIMIT,
+		TIF:            constants.TIF_GTC,
+		Price:          price,
+		Quantity:       qty,
+		TriggerPrice:   price,
+		StopOrderType:  stopType,
+		CloseOnTrigger: true,
+		ReduceOnly:     true,
+	}, types.NanoTime())
+	order.Status = constants.ORDER_STATUS_UNTRIGGERED
+	e.monitor.AddOrder(order)
 }
 
 func (e *Engine) OnTrigger(order *types.Order) {
@@ -393,22 +396,20 @@ func (e *Engine) OnTrigger(order *types.Order) {
 	}
 
 	e.state.NextOrderID++
-	newOrder := memory.GetOrderPool().Get()
-	newOrder.ID = e.state.NextOrderID
-	newOrder.UserID = order.UserID
-	newOrder.Symbol = order.Symbol
-	newOrder.Side = order.Side
-	newOrder.Type = constants.ORDER_TYPE_LIMIT
-	newOrder.TIF = constants.TIF_GTC
-	newOrder.Price = order.Price
-	newOrder.Quantity = order.Quantity - order.Filled
+	newOrder := e.newOrder(e.state.NextOrderID, &types.OrderInput{
+		UserID:         order.UserID,
+		Symbol:         order.Symbol,
+		Side:           order.Side,
+		Type:           constants.ORDER_TYPE_LIMIT,
+		TIF:            constants.TIF_GTC,
+		Price:          order.Price,
+		Quantity:       order.Quantity - order.Filled,
+		TriggerPrice:   0,
+		StopOrderType:  constants.STOP_ORDER_TYPE_NORMAL,
+		ReduceOnly:     order.ReduceOnly,
+		CloseOnTrigger: false,
+	}, types.NanoTime())
 	newOrder.Status = constants.ORDER_STATUS_NEW
-	newOrder.TriggerPrice = 0
-	newOrder.StopOrderType = constants.STOP_ORDER_TYPE_NORMAL
-	newOrder.ReduceOnly = order.ReduceOnly
-	newOrder.CloseOnTrigger = false
-	newOrder.CreatedAt = types.NanoTime()
-	newOrder.UpdatedAt = types.NanoTime()
 	e.orderStore.Add(newOrder)
 	balance.LockForOrder(e.state, e.getSymbolCategory(order.Symbol), order.UserID, newOrder, e.getUserLeverage(order.UserID, order.Symbol))
 	ss := e.state.GetSymbolState(order.Symbol)
@@ -429,33 +430,17 @@ func (e *Engine) getCurrentPrice(symbol types.SymbolID) types.Price {
 	return e.ob.GetBestAsk(ss)
 }
 
-func (e *Engine) validateReduceOnly(input *types.OrderInput) error {
-	pos := e.state.GetUserState(input.UserID).Positions[input.Symbol]
-	if pos == nil || pos.Size == 0 {
-		return errors.New("reduceOnly order requires an existing position")
-	}
-	isClosing := (input.Side == constants.ORDER_SIDE_SELL && pos.Side == constants.ORDER_SIDE_BUY) ||
-		(input.Side == constants.ORDER_SIDE_BUY && pos.Side == constants.ORDER_SIDE_SELL)
-	if !isClosing {
-		return errors.New("reduceOnly order must close existing position")
-	}
-	if input.Quantity > pos.Size {
-		return errors.New("reduceOnly quantity exceeds position size")
-	}
-	return nil
-}
-
 func (e *Engine) getAvailableQuantity(symbol types.SymbolID, side int8, maxPrice int64) types.Quantity {
 	ss := e.state.GetSymbolState(symbol)
 	var total types.Quantity
 	if side == constants.ORDER_SIDE_BUY {
-		for _, level := range ss.AskIndex {
+		for level := ss.BestAsk; level != nil; level = level.NextAsk {
 			if maxPrice == 0 || int64(level.Price) <= maxPrice {
 				total += level.Quantity
 			}
 		}
 	} else {
-		for _, level := range ss.BidIndex {
+		for level := ss.BestBid; level != nil; level = level.NextBid {
 			if maxPrice == 0 || int64(level.Price) >= maxPrice {
 				total += level.Quantity
 			}
@@ -464,30 +449,24 @@ func (e *Engine) getAvailableQuantity(symbol types.SymbolID, side int8, maxPrice
 	return total
 }
 
+func (e *Engine) getUserLeverage(userID types.UserID, symbol types.SymbolID) int8 {
+	return position.GetLeverage(e.state, userID, symbol)
+}
+
 func (e *Engine) matchOrder(order *types.Order) types.Quantity {
 	ss := e.state.GetSymbolState(order.Symbol)
 	var filled types.Quantity
 	if order.Side == constants.ORDER_SIDE_BUY {
-		for _, price := range ss.AskPrices {
-			if order.Quantity <= filled {
-				break
-			}
-			level := ss.AskIndex[price]
-			if level == nil {
-				continue
-			}
-			filled += e.matchAtLevel(order, level, ss.AskIndex, &ss.AskPrices)
+		current := ss.BestAsk
+		for current != nil && order.Quantity > filled {
+			filled += e.matchAtLevel(order, current, ss.AskIndex)
+			current = current.NextAsk
 		}
 	} else {
-		for _, price := range ss.BidPrices {
-			if order.Quantity <= filled {
-				break
-			}
-			level := ss.BidIndex[price]
-			if level == nil {
-				continue
-			}
-			filled += e.matchAtLevel(order, level, ss.BidIndex, &ss.BidPrices)
+		current := ss.BestBid
+		for current != nil && order.Quantity > filled {
+			filled += e.matchAtLevel(order, current, ss.BidIndex)
+			current = current.NextBid
 		}
 	}
 	if filled > 0 {
@@ -496,7 +475,7 @@ func (e *Engine) matchOrder(order *types.Order) types.Quantity {
 	return filled
 }
 
-func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel, levels map[types.Price]*state.PriceLevel, prices *[]types.Price) types.Quantity {
+func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel, levels map[types.Price]*state.PriceLevel) types.Quantity {
 	if level == nil || level.Orders.Len() == 0 {
 		return 0
 	}
@@ -550,7 +529,11 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel, level
 
 	if level.Orders.Len() == 0 || level.Quantity == 0 {
 		delete(levels, level.Price)
-		e.ob.RemovePrice(prices, level.Price)
+		if order.Side == constants.ORDER_SIDE_BUY {
+			e.ob.MarkLevelEmpty(e.state.GetSymbolState(order.Symbol), false, level.Price)
+		} else {
+			e.ob.MarkLevelEmpty(e.state.GetSymbolState(order.Symbol), true, level.Price)
+		}
 	}
 
 	return filled
@@ -559,7 +542,7 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel, level
 func (e *Engine) executeReduceOnly(order *types.Order, input *types.OrderInput, result *types.OrderResult, now uint64) (*types.OrderResult, error) {
 	pos := e.state.GetUserState(order.UserID).Positions[order.Symbol]
 	if pos == nil || pos.Size == 0 {
-		e.setStatus(order, result, constants.ORDER_STATUS_CANCELED)
+		order.Status, result.Status = constants.ORDER_STATUS_CANCELED, constants.ORDER_STATUS_CANCELED
 		return result, nil
 	}
 
@@ -579,24 +562,11 @@ func (e *Engine) executeReduceOnly(order *types.Order, input *types.OrderInput, 
 
 	order.Filled = tradeQty
 	result.Filled, result.Remaining = tradeQty, input.Quantity-tradeQty
-	e.setStatus(order, result, constants.ORDER_STATUS_FILLED)
+	order.Status, result.Status = constants.ORDER_STATUS_FILLED, constants.ORDER_STATUS_FILLED
 
 	position.UpdatePosition(e.state, order.UserID, order.Symbol, tradeQty, execPrice, order.Side, e.getUserLeverage(order.UserID, order.Symbol))
 	e.logOrderOp(wal.OP_PLACE_ORDER, now, order.UserID, order.Symbol, order.ID)
 	return result, nil
-}
-
-func (e *Engine) setStatus(order *types.Order, result *types.OrderResult, status int8) {
-	order.Status = status
-	result.Status = status
-}
-
-func (e *Engine) getUserLeverage(userID types.UserID, symbol types.SymbolID) int8 {
-	pos := e.state.GetUserState(userID).Positions[symbol]
-	if pos != nil && pos.Leverage > 0 {
-		return pos.Leverage
-	}
-	return 2
 }
 
 func (e *Engine) logOrderOp(opType wal.OperationType, now uint64, userID types.UserID, symbol types.SymbolID, orderID types.OrderID) {

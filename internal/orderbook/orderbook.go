@@ -1,10 +1,6 @@
 package orderbook
 
 import (
-	"sort"
-
-	"slices"
-
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
@@ -38,10 +34,33 @@ func (ob *OrderBook) addBidLevel(ss *state.OrderBookState, price types.Price, qt
 			Orders:   state.NewOrderHeap(),
 		}
 		ss.BidIndex[price] = level
-		ob.insertPriceSorted(&ss.BidPrices, price, true)
+		ob.linkBid(ss, level)
 	}
 	level.Quantity += qty
 	level.Orders.Push(orderID)
+}
+
+func (ob *OrderBook) linkBid(ss *state.OrderBookState, level *state.PriceLevel) {
+	if ss.BestBid == nil || level.Price > ss.BestBid.Price {
+		level.NextBid = ss.BestBid
+		if ss.BestBid != nil {
+			ss.BestBid.PrevBid = level
+		}
+		ss.BestBid = level
+		return
+	}
+
+	current := ss.BestBid
+	for current.NextBid != nil && current.NextBid.Price > level.Price {
+		current = current.NextBid
+	}
+
+	level.NextBid = current.NextBid
+	level.PrevBid = current
+	if current.NextBid != nil {
+		current.NextBid.PrevBid = level
+	}
+	current.NextBid = level
 }
 
 func (ob *OrderBook) addAskLevel(ss *state.OrderBookState, price types.Price, qty types.Quantity, orderID types.OrderID) {
@@ -53,24 +72,33 @@ func (ob *OrderBook) addAskLevel(ss *state.OrderBookState, price types.Price, qt
 			Orders:   state.NewOrderHeap(),
 		}
 		ss.AskIndex[price] = level
-		ob.insertPriceSorted(&ss.AskPrices, price, false)
+		ob.linkAsk(ss, level)
 	}
 	level.Quantity += qty
 	level.Orders.Push(orderID)
 }
 
-func (ob *OrderBook) insertPriceSorted(prices *[]types.Price, price types.Price, descending bool) {
-	arr := *prices
-	i := sort.Search(len(arr), func(j int) bool {
-		if descending {
-			return arr[j] <= price
+func (ob *OrderBook) linkAsk(ss *state.OrderBookState, level *state.PriceLevel) {
+	if ss.BestAsk == nil || level.Price < ss.BestAsk.Price {
+		level.NextAsk = ss.BestAsk
+		if ss.BestAsk != nil {
+			ss.BestAsk.PrevAsk = level
 		}
-		return arr[j] >= price
-	})
-	if i < len(arr) && arr[i] == price {
+		ss.BestAsk = level
 		return
 	}
-	*prices = append(arr[:i], append([]types.Price{price}, arr[i:]...)...)
+
+	current := ss.BestAsk
+	for current.NextAsk != nil && current.NextAsk.Price < level.Price {
+		current = current.NextAsk
+	}
+
+	level.NextAsk = current.NextAsk
+	level.PrevAsk = current
+	if current.NextAsk != nil {
+		current.NextAsk.PrevAsk = level
+	}
+	current.NextAsk = level
 }
 
 func (ob *OrderBook) RemoveOrder(ss *state.OrderBookState, order *types.Order) {
@@ -95,9 +123,22 @@ func (ob *OrderBook) removeBidLevel(ss *state.OrderBookState, price types.Price,
 	level.Orders.Remove(orderID)
 
 	if level.Orders.Len() == 0 && level.Quantity == 0 {
+		ob.unlinkBid(ss, level)
 		delete(ss.BidIndex, price)
-		ob.RemovePrice(&ss.BidPrices, price)
 	}
+}
+
+func (ob *OrderBook) unlinkBid(ss *state.OrderBookState, level *state.PriceLevel) {
+	if level.PrevBid != nil {
+		level.PrevBid.NextBid = level.NextBid
+	} else {
+		ss.BestBid = level.NextBid
+	}
+	if level.NextBid != nil {
+		level.NextBid.PrevBid = level.PrevBid
+	}
+	level.PrevBid = nil
+	level.NextBid = nil
 }
 
 func (ob *OrderBook) removeAskLevel(ss *state.OrderBookState, price types.Price, qty types.Quantity, orderID types.OrderID) {
@@ -109,76 +150,105 @@ func (ob *OrderBook) removeAskLevel(ss *state.OrderBookState, price types.Price,
 	level.Orders.Remove(orderID)
 
 	if level.Orders.Len() == 0 && level.Quantity == 0 {
+		ob.unlinkAsk(ss, level)
 		delete(ss.AskIndex, price)
-		ob.RemovePrice(&ss.AskPrices, price)
 	}
 }
 
-func (ob *OrderBook) RemovePrice(prices *[]types.Price, price types.Price) {
-	arr := *prices
-	i := sort.Search(len(arr), func(j int) bool {
-		return arr[j] >= price
-	})
-	if i < len(arr) && arr[i] == price {
-		*prices = slices.Delete(arr, i, i+1)
+func (ob *OrderBook) unlinkAsk(ss *state.OrderBookState, level *state.PriceLevel) {
+	if level.PrevAsk != nil {
+		level.PrevAsk.NextAsk = level.NextAsk
+	} else {
+		ss.BestAsk = level.NextAsk
 	}
+	if level.NextAsk != nil {
+		level.NextAsk.PrevAsk = level.PrevAsk
+	}
+	level.PrevAsk = nil
+	level.NextAsk = nil
 }
 
 func (ob *OrderBook) WouldCross(ss *state.OrderBookState, order *types.Order) bool {
 	if order.Side == constants.ORDER_SIDE_BUY {
-		if len(ss.AskPrices) == 0 {
+		if ss.BestAsk == nil {
 			return false
 		}
-		return order.Price >= ss.AskPrices[0]
+		return order.Price >= ss.BestAsk.Price
 	} else {
-		if len(ss.BidPrices) == 0 {
+		if ss.BestBid == nil {
 			return false
 		}
-		return order.Price <= ss.BidPrices[0]
+		return order.Price <= ss.BestBid.Price
 	}
 }
 
 func (ob *OrderBook) GetBestBid(ss *state.OrderBookState) types.Price {
-	if len(ss.BidPrices) == 0 {
+	if ss.BestBid == nil {
 		return 0
 	}
-	return ss.BidPrices[0]
+	return ss.BestBid.Price
 }
 
 func (ob *OrderBook) GetBestAsk(ss *state.OrderBookState) types.Price {
-	if len(ss.AskPrices) == 0 {
+	if ss.BestAsk == nil {
 		return 0
 	}
-	return ss.AskPrices[0]
+	return ss.BestAsk.Price
 }
 
 func (ob *OrderBook) GetDepth(ss *state.OrderBookState, side int8, limit int) []int64 {
 	if side == constants.ORDER_SIDE_BUY {
-		return ob.getDepthFlat(ss.BidPrices, ss.BidIndex, limit)
+		return ob.getDepthBid(ss.BestBid, limit)
 	}
-	return ob.getDepthFlat(ss.AskPrices, ss.AskIndex, limit)
+	return ob.getDepthAsk(ss.BestAsk, limit)
 }
 
-func (ob *OrderBook) getDepthFlat(prices []types.Price, index map[types.Price]*state.PriceLevel, limit int) []int64 {
-	if len(prices) == 0 {
+func (ob *OrderBook) getDepthBid(level *state.PriceLevel, limit int) []int64 {
+	if level == nil {
 		return nil
 	}
 
-	count := min(len(prices), limit)
+	depth := make([]int64, 0, limit*2)
 
-	depth := make([]int64, count*2)
-
-	for i := range count {
-		price := prices[i]
-		level := index[price]
-		if level == nil {
-			depth[i*2] = int64(price)
-			depth[i*2+1] = 0
-		} else {
-			depth[i*2] = int64(price)
-			depth[i*2+1] = int64(level.Quantity)
-		}
+	current := level
+	for current != nil && len(depth) < limit*2 {
+		depth = append(depth, int64(current.Price), int64(current.Quantity))
+		current = current.NextBid
 	}
 
 	return depth
 }
+
+func (ob *OrderBook) getDepthAsk(level *state.PriceLevel, limit int) []int64 {
+	if level == nil {
+		return nil
+	}
+
+	depth := make([]int64, 0, limit*2)
+
+	current := level
+	for current != nil && len(depth) < limit*2 {
+		depth = append(depth, int64(current.Price), int64(current.Quantity))
+		current = current.NextAsk
+	}
+
+	return depth
+}
+
+func (ob *OrderBook) MarkLevelEmpty(ss *state.OrderBookState, isBid bool, price types.Price) {
+	if isBid {
+		level, ok := ss.BidIndex[price]
+		if ok {
+			ob.unlinkBid(ss, level)
+			delete(ss.BidIndex, price)
+		}
+	} else {
+		level, ok := ss.AskIndex[price]
+		if ok {
+			ob.unlinkAsk(ss, level)
+			delete(ss.AskIndex, price)
+		}
+	}
+}
+
+func (ob *OrderBook) Compact(ss *state.OrderBookState) {}

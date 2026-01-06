@@ -151,7 +151,7 @@ func (w *WAL) ReadOperation(offset int64) (*Operation, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	_, err = file.Seek(offset, 0)
 	if err != nil {
@@ -199,7 +199,7 @@ func (w *WAL) IterateFrom(offset int64, fn func(op *Operation) error) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := bufio.NewReaderSize(file, w.bufferSize)
 	if offset > 0 {

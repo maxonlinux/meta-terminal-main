@@ -98,7 +98,7 @@ func (s *Snapshot) Create(st *state.State, walOffset int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	writer := bufio.NewWriter(file)
 
@@ -128,7 +128,7 @@ func (s *Snapshot) Load() (*state.State, int64, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to open snapshot: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var header snapshotHeader
 	if err := binary.Read(file, binary.BigEndian, &header); err != nil {

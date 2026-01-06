@@ -20,11 +20,11 @@ type UserState struct {
 type OrderBookState struct {
 	Category int8
 
-	BidIndex  map[types.Price]*PriceLevel
-	BidPrices []types.Price
+	BidIndex map[types.Price]*PriceLevel
+	AskIndex map[types.Price]*PriceLevel
 
-	AskIndex  map[types.Price]*PriceLevel
-	AskPrices []types.Price
+	BestBid *PriceLevel
+	BestAsk *PriceLevel
 
 	BuyTriggers  *Heap
 	SellTriggers *Heap
@@ -34,6 +34,10 @@ type PriceLevel struct {
 	Price    types.Price
 	Quantity types.Quantity
 	Orders   *OrderHeap
+	NextBid  *PriceLevel
+	PrevBid  *PriceLevel
+	NextAsk  *PriceLevel
+	PrevAsk  *PriceLevel
 }
 
 type OrderHeap struct {
@@ -142,11 +146,9 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *OrderBookState {
 		return ss
 	}
 	ss := &OrderBookState{
-		Category:  0,
-		BidIndex:  make(map[types.Price]*PriceLevel),
-		BidPrices: make([]types.Price, 0),
-		AskIndex:  make(map[types.Price]*PriceLevel),
-		AskPrices: make([]types.Price, 0),
+		Category: 0,
+		BidIndex: make(map[types.Price]*PriceLevel),
+		AskIndex: make(map[types.Price]*PriceLevel),
 	}
 	s.Symbols[symbol] = ss
 	return ss
