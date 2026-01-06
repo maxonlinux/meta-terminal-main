@@ -218,12 +218,6 @@ func (e *Engine) AmendOrder(orderID types.OrderID, userID types.UserID, newQty t
 	oldQty, oldPrice := order.Quantity, order.Price
 	order.Quantity, order.Price, order.UpdatedAt = newQty, newPrice, types.NanoTime()
 
-	if oldPrice != newPrice {
-		ss := e.state.GetSymbolState(order.Symbol)
-		delete(ss.OrderMap, orderID)
-		ss.OrderMap[orderID] = order
-	}
-
 	e.adjustLockedBalance(order, oldQty, oldPrice)
 	e.logOrderOp(wal.OP_AMEND_ORDER, types.NanoTime(), userID, order.Symbol, orderID)
 	return nil
@@ -480,24 +474,28 @@ func (e *Engine) validateReduceOnly(input *types.OrderInput) error {
 func (e *Engine) addToOrderBook(order *types.Order) {
 	ss := e.state.GetSymbolState(order.Symbol)
 
-	var levels map[types.Price]*state.PriceLevel
 	var head **state.PriceLevel
-
 	if order.Side == constants.ORDER_SIDE_BUY {
-		levels = ss.BidLevels
 		head = &ss.Bids
 	} else {
-		levels = ss.AskLevels
 		head = &ss.Asks
 	}
 
-	if level, ok := levels[order.Price]; ok {
-		level.Quantity += order.Quantity
-		level.Orders.Push(order.ID)
-		return
-	}
-
-	for *head != nil && (*head).Price < order.Price {
+	for *head != nil {
+		if (*head).Price == order.Price {
+			(*head).Quantity += order.Quantity
+			(*head).Orders.Push(order.ID)
+			return
+		}
+		if order.Side == constants.ORDER_SIDE_BUY {
+			if (*head).Price > order.Price {
+				break
+			}
+		} else {
+			if (*head).Price < order.Price {
+				break
+			}
+		}
 		head = &(*head).NextPriceLevel
 	}
 
@@ -509,37 +507,39 @@ func (e *Engine) addToOrderBook(order *types.Order) {
 	}
 	newLevel.Orders.Push(order.ID)
 	*head = newLevel
-	levels[order.Price] = newLevel
 }
 
 func (e *Engine) removeFromOrderBook(order *types.Order) {
 	ss := e.state.GetSymbolState(order.Symbol)
 
-	var levels map[types.Price]*state.PriceLevel
+	var prev **state.PriceLevel
+	var level *state.PriceLevel
 	if order.Side == constants.ORDER_SIDE_BUY {
-		levels = ss.BidLevels
+		prev = &ss.Bids
+		level = ss.Bids
 	} else {
-		levels = ss.AskLevels
+		prev = &ss.Asks
+		level = ss.Asks
 	}
 
-	level, ok := levels[order.Price]
-	if !ok {
+	for level != nil {
+		if level.Price == order.Price {
+			break
+		}
+		prev = &level.NextPriceLevel
+		level = level.NextPriceLevel
+	}
+
+	if level == nil {
 		return
 	}
 
 	remaining := order.Quantity - order.Filled
 	level.Quantity -= remaining
-
-	// Remove from heap
 	level.Orders.Remove(order.ID)
 
 	if level.Quantity <= 0 || level.Orders.Len() == 0 {
-		if order.Side == constants.ORDER_SIDE_BUY {
-			ss.Bids = level.NextPriceLevel
-		} else {
-			ss.Asks = level.NextPriceLevel
-		}
-		delete(levels, order.Price)
+		*prev = level.NextPriceLevel
 	}
 }
 
@@ -653,10 +653,8 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel) types
 		ss := e.state.GetSymbolState(order.Symbol)
 		if order.Side == constants.ORDER_SIDE_BUY {
 			ss.Asks = level.NextPriceLevel
-			delete(ss.AskLevels, level.Price)
 		} else {
 			ss.Bids = level.NextPriceLevel
-			delete(ss.BidLevels, level.Price)
 		}
 	}
 
