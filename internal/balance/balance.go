@@ -2,6 +2,7 @@ package balance
 
 import (
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/position"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -186,7 +187,7 @@ func LockForOrder(s *state.State, category int8, userID types.UserID, order *typ
 	if category == constants.CATEGORY_SPOT {
 		bal.Locked += toLock
 	} else {
-		margin := toLock * int64(100/leverage) / 100
+		margin := position.CalculateMargin(order.Quantity-order.Filled, order.Price, leverage)
 		bal.Margin += margin
 		bal.Locked += margin
 	}
@@ -199,7 +200,7 @@ func UnlockForOrder(s *state.State, category int8, userID types.UserID, order *t
 	if category == constants.CATEGORY_SPOT {
 		bal.Locked -= toUnlock
 	} else {
-		margin := toUnlock * int64(100/leverage) / 100
+		margin := position.CalculateMargin(order.Quantity-order.Filled, order.Price, leverage)
 		bal.Locked -= margin
 	}
 
@@ -208,7 +209,20 @@ func UnlockForOrder(s *state.State, category int8, userID types.UserID, order *t
 	}
 }
 
-func AdjustLocked(s *state.State, userID types.UserID, order *types.Order, oldQty types.Quantity, oldPrice types.Price) {
+func AdjustLocked(s *state.State, category int8, userID types.UserID, order *types.Order, oldQty types.Quantity, oldPrice types.Price, leverage int8) {
 	bal := GetOrCreate(s, userID, "USDT")
-	bal.Locked += int64(order.Quantity)*int64(order.Price) - int64(oldQty)*int64(oldPrice)
+	oldQtyFloat := float64(oldQty)
+	oldPriceFloat := float64(oldPrice)
+	newQtyFloat := float64(order.Quantity)
+	newPriceFloat := float64(order.Price)
+
+	if category == constants.CATEGORY_SPOT {
+		oldLocked := int64(oldQtyFloat * oldPriceFloat)
+		newLocked := int64(newQtyFloat * newPriceFloat)
+		bal.Locked += newLocked - oldLocked
+	} else {
+		oldMargin := position.CalculateMargin(oldQty, oldPrice, leverage)
+		newMargin := position.CalculateMargin(order.Quantity, order.Price, leverage)
+		bal.Locked += newMargin - oldMargin
+	}
 }

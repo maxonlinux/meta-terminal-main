@@ -169,9 +169,10 @@ BUCKET_MARGIN = 2
 
 ### 6.2 closeOnTrigger
 
-- Только для STOP и TP/SL и для ликвидации (внутренний, создается с origin = SYSTEM)
-- При срабатывании закрывает позицию
-- Может иметь qty = 0 (означает при срабатывании закрыть весь обьем)
+- **Только для LINEAR** (SPOT: игнорируется, нет позиций)
+- Для STOP и TP/SL и для ликвидации (внутренний, создается с origin = SYSTEM)
+- При срабатывании закрывает позицию через MARKET IOC ордер (требует counterparty!)
+- Может иметь qty = 0 (означает при срабатывании закрыть весь объём)
 
 ### 6.3 stopOrderType
 
@@ -195,7 +196,7 @@ BUCKET_MARGIN = 2
 | LIMIT  | FOK       | НЕТ          | НЕТ        | ✗          | ✗              |
 | LIMIT  | POST_ONLY | ДА           | ДА/REJECT  | ✗          | ✗              |
 | MARKET | -         | НЕТ          | НЕТ        | ✗          | ✗              |
-| STOP   | -         | ДА           | НЕТ (UNTR) | ✗          | ✓              |
+| STOP   | -         | ДА           | НЕТ (UNTR) | ✗          | ✗              |
 
 ### 8.2 LINEAR
 
@@ -215,6 +216,8 @@ BUCKET_MARGIN = 2
 ### 9.1 Pre-Trade (ДО создания)
 
 - валидация ввода по схеме
+- SPOT: closeOnTrigger игнорируется (нет позиций)
+- LINEAR: reduceOnly требует существующую позицию
 
 **Отклонённые ордера НЕ создаются, НЕ сохраняются в память!**
 
@@ -413,58 +416,170 @@ position.leverage = 2  // По умолчанию при создании
 position.leverage = 10 // После изменения через EditLeverage
 ```
 
-### 12.2 Расчёт маржи
+### 12.2 Поля позиции (хранятся в базе)
 
-**Важно**: При увеличении плеча требуется МЕНЬШЕ маржи (больше кредитного плеча).
-
-```go
-// margin = (size * price) / leverage
-margin := int64(qty) * int64(price) / int64(leverage)
-
-// Пример: position 100 BTC @ 50000
-// leverage 2x: margin = 100 * 50000 / 2 = 2,500,000 USDT
-// leverage 10x: margin = 100 * 50000 / 10 = 500,000 USDT
-// leverage 50x: margin = 100 * 50000 / 50 = 100,000 USDT
 ```
-
-### 12.3 Позиции
-
-```go
-position.size > 0  // LONG
-position.size < 0  // SHORT
-position.size = 0  // Нет позиции (side = null = -1)
-
-// realized PnL при частичном закрытии
-if (Math.sign(current.size) !== Math.sign(deltaSize)) {
-  realizedPnl = calculatePnl(current, closedSize, fillPrice);
+Position {
+    UserID, Symbol, Size, Side, EntryPrice, Leverage
+    
+    // Риск-параметры (пересчитываются на каждый fill)
+    InitialMargin    // IM = size * entryPrice / leverage
+    MaintenanceMargin // MM = IM / 10
+    LiquidationPrice // Цена ликвидации
+    
+    RealizedPnl      // Накопленный realized PnL
+    Version          // Для optimistic locking
 }
 ```
 
-### 12.4 EditLeverage - изменение плеча
+### 12.3 Расчёт рисков
+
+```go
+func CalculatePositionRisk(pos *Position) {
+    if pos.Size == 0 {
+        pos.InitialMargin = 0
+        pos.MaintenanceMargin = 0
+        pos.LiquidationPrice = 0
+        return
+    }
+    
+    pos.InitialMargin = pos.Size * pos.EntryPrice / pos.Leverage
+    pos.MaintenanceMargin = pos.InitialMargin / 10
+    
+    // Ликвидация происходит когда |UnrealizedPnL| > (IM - MM)
+    // Рассчитываем цену ликвидации для отображения пользователю
+    buffer := pos.InitialMargin - pos.MaintenanceMargin
+    
+    if pos.Side == LONG {
+        // LONG ликвидируется когда цена падает
+        // PnL = (price - entryPrice) * size
+        // Ликвидация когда PnL < -buffer
+        // price - entryPrice < -buffer / size
+        // price < entryPrice - buffer / size
+        pos.LiquidationPrice = pos.EntryPrice - buffer / pos.Size
+    } else {
+        // SHORT ликвидируется когда цена растёт
+        // PnL = (entryPrice - price) * size
+        // Ликвидация когда PnL < -buffer
+        // entryPrice - price < -buffer / size
+        // price > entryPrice + buffer / size
+        pos.LiquidationPrice = pos.EntryPrice + buffer / pos.Size
+    }
+}
+```
+
+**Вызывается:**
+- При создании новой позиции
+- При каждом fill (увеличение/уменьшение позиции)
+- При изменении leverage
+
+### 12.4 UpdatePosition - обновление позиции
+
+Вызывается при каждом fill. Пересчитывает все параметры позиции.
+
+```go
+func UpdatePosition(s *state.State, userID, symbol, filledQty, price, side, leverage) (*Position, rpnl) {
+    pos := getOrCreatePosition(userID, symbol, leverage)
+    
+    var realizedPnl int64
+    
+    if pos.Size == 0 {
+        // Открытие позиции
+        pos.Size = filledQty
+        pos.Side = side
+        pos.EntryPrice = price
+    } else if pos.Side == side {
+        // Увеличение позиции ( усреднение)
+        newSize := pos.Size + filledQty
+        pos.EntryPrice = (pos.EntryPrice*pos.Size + price*filledQty) / newSize
+        pos.Size = newSize
+    } else {
+        // Уменьшение/переворот позиции
+        if filledQty >= pos.Size {
+            // Полное закрытие + переворот
+            closedSize := pos.Size
+            realizedPnl = calculateRpnl(pos, closedSize, price)
+            pos.Size = filledQty - pos.Size
+            pos.Side = side
+            pos.EntryPrice = price
+        } else {
+            // Частичное закрытие
+            realizedPnl = calculateRpnl(pos, filledQty, price)
+            pos.Size -= filledQty
+        }
+    }
+    
+    // Пересчитываем риски
+    CalculatePositionRisk(pos)
+    
+    if pos.Size == 0 {
+        pos.Side = -1
+        pos.EntryPrice = 0
+        pos.InitialMargin = 0
+        pos.MaintenanceMargin = 0
+        pos.LiquidationPrice = 0
+    }
+    
+    pos.Version++
+    return pos, realizedPnl
+}
+```
+
+```go
+    // Применяем realized PnL к балансу (НЕ В ДОМЕНЕ ПОЗИЦИИ А В ДРУГОМ МЕСТЕ)
+    if realizedPnl != 0 {
+        bal := balance.GetOrCreate(s, userID, "USDT")
+        bal.Available += realizedPnl
+        pos.RealizedPnl += realizedPnl
+    }
+```
+
+### 12.5 РPnL vs UPnL
+
+**RPNL (Realized PnL)** - реализованная прибыль/убыток:
+- Считается при уменьшении позиции
+- **Сохраняется** в позиции (накопленный)
+- **Применяется** к Available балансу немедленно
+- Формула: `(entryPrice - closePrice) × closedQty`
+
+**UPnL (Unrealized PnL)** - нереализованная прибыль/убыток:
+- Считается динамически по текущей цене
+- **НЕ сохраняется** в позиции
+- **НЕ применяется** к балансу пока позиция открыта
+- Формула: `(currentPrice - entryPrice) × size`
+
+### 12.6 Проверка ликвидации
+
+```go
+func CheckLiquidation(pos *Position, currentPrice Price) bool {
+    if pos.Size == 0 {
+        return false
+    }
+    
+    upnl := (currentPrice - pos.EntryPrice) * pos.Size
+    buffer := pos.InitialMargin - pos.MaintenanceMargin
+    
+    return upnl < -buffer || upnl > buffer
+}
+```
+
+**Вызывается:**
+- На каждый тик цены (price feed)
+- При изменении leverage (EditLeverage)
+
+### 12.7 EditLeverage - изменение плеча
 
 ```
 1. Проверка: leverage должен быть 1-100
-2. Расчёт: oldMargin = size * entryPrice / oldLeverage
-3. Расчёт: newMargin = size * entryPrice / newLeverage
+2. Расчёт: oldIM = size * entryPrice / oldLeverage
+3. Расчёт: newIM = size * entryPrice / newLeverage
 4. Корректировка баланса:
-   - если newMargin > oldMargin: available -= (newMargin - oldMargin)
-   - если newMargin < oldMargin: available += (oldMargin - newMargin)
-5. Проверка на ликвидацию
+   - если newIM > oldIM: available -= (newIM - oldIM)
+   - если newIM < oldIM: available += (oldIM - newIM)
+5. Проверка на ликвидацию при новом leverage
 6. Установка: position.leverage = newLeverage
+7. Пересчёт рисков: CalculatePositionRisk(pos)
 ```
-
-### 12.5 Ответы EditLeverage
-
-| Сценарий | HTTP код | Ошибка |
-|----------|----------|--------|
-| Успех | 200 | - |
-| Недостаточно баланса | 400 | "insufficient balance for new margin requirement" |
-| Будет ликвидация | 400 | "position would be liquidated with new leverage" |
-| Невалидное плечо | 400 | "leverage must be between 1 and 100" |
-
----
-
-## 13. Примеры
 
 ### 13.1 SPOT: FOK отмена (fills теряются!)
 
@@ -581,3 +696,245 @@ reduceOnly: boolean;
 если есть closeOnTrigger = ордер CloseOnTrigger (обязательно имеет stopOrderType)
 если есть reduceOnly = ордер ReduceOnly (только LINEAR)
 если type LIMIT то обязательно должна быть указана цена price (для MARKET всегда игнорируем и приравниваем к null)
+
+---
+
+## 15. Балансы и Маржа
+
+### 15.1 Структура баланса
+
+```
+UserBalance {
+    UserID    UserID
+    Asset     string    // "USDT", "BTC", etc.
+    Available int64     // Свободные средства
+    Locked    int64     // Заблокировано под активные LIMIT ордера
+    Margin    int64     // Используется как маржа для позиций
+    Version   int64     // Optimistic locking
+}
+```
+
+### 15.2 LockForOrder - блокировка под ордер
+
+При создании LIMIT ордера часть Available переводится в Locked (и Margin для LINEAR).
+
+```go
+func LockForOrder(s *state.State, category, userID, order, leverage) {
+    if order.Type == MARKET {
+        return  // MARKET не блокирует
+    }
+    
+    toLock = (order.Qty - order.Filled) * order.Price
+    
+    if category == SPOT {
+        bal.Locked += toLock
+    } else {
+        // IM = qty * price / leverage
+        margin = toLock / leverage
+        bal.Margin += margin
+        bal.Locked += margin
+    }
+}
+```
+
+### 15.3 UnlockForOrder - разблокировка
+
+При отмене/исполнении ордера Locked возвращается в Available.
+
+```go
+func UnlockForOrder(s *state.State, category, userID, order, leverage) {
+    toUnlock = (order.Qty - order.Filled) * order.Price
+    
+    if category == SPOT {
+        bal.Locked -= toUnlock
+    } else {
+        margin = toUnlock / leverage
+        bal.Locked -= margin
+    }
+}
+```
+
+### 15.4 ExecuteLinearTrade - применение RPNL и маржи
+
+При fill ордера вызывается UpdatePosition (пересчитывает риски) и применяется RPNL к Available.
+
+```go
+func ExecuteLinearTrade(s, taker, maker, price, qty, leverage) {
+    margin = qty * price / leverage
+    
+    // UpdatePosition пересчитывает IM, MM, LiquidationPrice
+    _, takerRpnl := position.UpdatePosition(s, taker.UserID, taker.Symbol, qty, price, taker.Side, leverage)
+    _, makerRpnl := position.UpdatePosition(s, maker.UserID, maker.Symbol, qty, price, maker.Side, leverage)
+    
+    tBal := balance.GetOrCreate(s, taker.UserID, "USDT")
+    if taker.Side == BUY {
+        tBal.Margin += margin      // Открываем LONG - увеличиваем маржу
+        tBal.Available += takerRpnl // Применяем RPNL
+    } else {
+        tBal.Margin -= margin      // Открываем SHORT - уменьшаем маржу
+        tBal.Available += takerRpnl
+    }
+    
+    // Аналогично для maker...
+}
+```
+
+### 15.5 EditLeverage - изменение плеча
+
+При изменении плеча пересчитывается IM и корректируется Available.
+
+```go
+func EditLeverage(userID, symbol, leverage) error {
+    pos = getPosition(userID, symbol)
+    
+    oldIM = pos.InitialMargin
+    pos.Leverage = leverage
+    position.CalculatePositionRisk(pos)  // Пересчитывает IM, MM, LiquidationPrice
+    newIM = pos.InitialMargin
+    
+    marginDiff = newIM - oldIM
+    bal = getBalance(userID, "USDT")
+    
+    if marginDiff > 0 {
+        bal.Available -= marginDiff  // Нужно больше маржи
+    } else if marginDiff < 0 {
+        bal.Available += -marginDiff // Освобождается маржа
+    }
+    
+    bal.Margin = pos.InitialMargin
+}
+```
+
+### 15.6 Единая формула маржи
+
+**ВСЕГДА используется одна формула:**
+
+```
+IM = qty × price / leverage
+MM = IM / 10
+```
+
+Используется в:
+- `position.CalculatePositionRisk()` - для позиции
+- `balance.LockForOrder()` - при создании ордера
+- `balance.UnlockForOrder()` - при отмене ордера
+- `trade.ExecuteLinearTrade()` - при fill ордера
+- `engine.EditLeverage()` - при изменении плеча
+
+---
+
+## 16. 生产环境需要什么
+
+### 16.1 缺失的功能
+
+| 功能 | 优先级 | 说明 | 状态 |
+|------|--------|------|------|
+| **Price Feed** | 高 | 自动检查每个价格 tick 的清算条件 | ✅ 已实现 |
+| **Liquidation Trigger** | 高 | 当条件满足时调用 `ClosePosition()` | ✅ 已实现 |
+| **API Validation Schema** | 中 | 验证输入的订单参数 | 待实现 |
+| **Multi-asset Support** | 中 | 目前 SPOT 总是 BTC/USDT | 待实现 |
+| **Monitoring & Alerts** | 中 | 指标、日志、告警 | 待实现 |
+
+### 16.2 Price Feed Integration (已实现)
+
+```go
+// internal/pricefeed/pricefeed.go
+type PriceFeed struct {
+    state *state.State
+    eng   Engine
+
+    prices map[types.SymbolID]types.Price
+}
+
+func (pf *PriceFeed) UpdatePrice(symbol types.SymbolID, price types.Price) {
+    pf.prices[symbol] = price
+    pf.checkLiquidation(symbol, price)
+}
+
+func (pf *PriceFeed) checkLiquidation(symbol types.SymbolID, currentPrice types.Price) {
+    for userID, us := range pf.state.Users {
+        pos := us.Positions[symbol]
+        if pos == nil || pos.Size == 0 {
+            continue
+        }
+
+        if pf.shouldLiquidate(pos, currentPrice) {
+            pf.eng.ClosePosition(userID, symbol)
+        }
+    }
+}
+```
+
+### 16.3 Multi-asset Support (待实现)
+
+**当前问题**: 交易逻辑硬编码使用 "USDT" 和 "BTC"。
+
+**需要修改的文件**:
+1. `internal/trade/trade.go` - `ExecuteSpotTrade()` 和 `ExecuteLinearTrade()`
+2. `internal/balance/balance.go` - `LockForOrder()`, `UnlockForOrder()`, `AdjustLocked()`
+3. `internal/engine/engine.go` - `ClosePosition()`, `EditLeverage()`
+
+**解决方案**:
+1. 将 `SymbolRegistry` 添加到 `State` 结构
+2. 修改 `ExecuteSpotTrade(s, taker, maker, price, qty, symbol)` 接受 symbol 参数
+3. 修改 `ExecuteLinearTrade(s, taker, maker, price, qty, leverage, symbol)` 接受 symbol 参数
+4. 通过 `symbol.QuoteAsset` 和 `symbol.BaseAsset` 获取正确的资产
+
+```go
+// 修改后的 ExecuteLinearTrade
+func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.Price, qty types.Quantity, leverage int8, symbol *state.Symbol) {
+    margin := position.CalculateMargin(qty, price, leverage)
+
+    quoteAsset := symbol.QuoteAsset // "USDT", "BUSD", etc.
+
+    tBal := balance.GetOrCreate(s, taker.UserID, quoteAsset)
+    // ... 其余逻辑
+}
+```
+
+### 16.4 监控指标建议
+
+| 指标 | 说明 |
+|------|------|
+| `orders_per_second` | 订单处理速率 |
+| `fills_per_second` | 成交处理速率 |
+| `liquidation_count` | 清算次数 |
+| `position_count` | 开放仓位数量 |
+| `margin_utilization` | 保证金使用率 |
+| `orderbook_depth` | 订单簿深度 |
+| `latency_p50` | P50 延迟 |
+| `latency_p99` | P99 延迟 |
+
+### 16.4 下一步
+
+1. **Price Feed Service** - 订阅交易所 WebSocket，推送价格到 engine
+2. **Liquidation Worker** - 后台任务检查所有开放仓位的清算条件
+3. **Schema Validation** - 添加 JSON Schema 验证订单参数
+4. **Multi-asset** - 支持更多交易对
+5. **Admin API** - 管理员操作接口
+
+---
+
+## 当前状态
+
+**Engine 核心功能已完成:**
+- ✅ 订单 (PlaceOrder, CancelOrder, AmendOrder)
+- ✅ 成交 (Matching Engine)
+- ✅ 仓位 (UpdatePosition, CalculatePositionRisk)
+- ✅ 保证金 (IM, MM, Liquidation)
+- ✅ 止盈止损 (STOP, TP, SL)
+- ✅ 持久化 (WAL + Snapshot)
+- ✅ HTTP API
+- ✅ Price Feed Service (自动清算检查)
+- ✅ Liquidation Trigger
+
+**测试覆盖:**
+- ✅ 单元测试: 92+
+- ✅ 集成测试: 15
+- ✅ 性能测试: 20+ benchmarks
+- ✅ Price Feed 测试: 15
+
+**性能:**
+- PlaceOrder: ~1.4 μs, 2 allocs
+- MatchOrder: ~1-4 μs, 2 allocs
+- GetOrder: ~4 ns, 0 allocs

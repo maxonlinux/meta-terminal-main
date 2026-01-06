@@ -12,7 +12,6 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/trade"
 	"github.com/anomalyco/meta-terminal-go/internal/trigger"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
-	"github.com/anomalyco/meta-terminal-go/internal/utils"
 	"github.com/anomalyco/meta-terminal-go/internal/wal"
 )
 
@@ -56,6 +55,10 @@ func (e *Engine) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error)
 		if err := position.ReduceOnlyValidate(e.state, input.UserID, input.Symbol, input.Quantity, input.Side); err != nil {
 			return nil, err
 		}
+	}
+
+	if input.CloseOnTrigger && category == constants.CATEGORY_SPOT {
+		input.CloseOnTrigger = false
 	}
 
 	orderID := e.state.NextOrderID
@@ -230,7 +233,7 @@ func (e *Engine) AmendOrder(orderID types.OrderID, userID types.UserID, newQty t
 	oldQty, oldPrice := order.Quantity, order.Price
 	order.Quantity, order.Price, order.UpdatedAt = newQty, newPrice, types.NanoTime()
 
-	balance.AdjustLocked(e.state, order.UserID, order, oldQty, oldPrice)
+	balance.AdjustLocked(e.state, e.state.GetSymbolState(order.Symbol).Category, order.UserID, order, oldQty, oldPrice, position.GetLeverage(e.state, order.UserID, order.Symbol))
 	e.logOrderOp(wal.OP_AMEND_ORDER, userID, order.Symbol, orderID)
 	return nil
 }
@@ -316,13 +319,8 @@ func (e *Engine) EditLeverage(userID types.UserID, symbol types.SymbolID, levera
 		return nil
 	}
 
-	oldLev := int(pos.Leverage)
-	if oldLev == 0 {
-		oldLev = 2
-	}
-
-	value := utils.AbsInt64(int64(pos.Size) * int64(pos.EntryPrice))
-	oldMargin, newMargin := value/int64(oldLev), value/int64(leverage)
+	oldMargin := pos.InitialMargin
+	newMargin := position.CalculateMargin(pos.Size, pos.EntryPrice, leverage)
 	marginDiff := newMargin - oldMargin
 
 	bal := balance.GetOrCreate(e.state, userID, "USDT")
@@ -330,20 +328,27 @@ func (e *Engine) EditLeverage(userID types.UserID, symbol types.SymbolID, levera
 		if bal.Available < marginDiff {
 			return ErrInsufficientBalance
 		}
+	}
+
+	currentPrice := e.getCurrentPrice(symbol)
+	if currentPrice > 0 {
+		upnl := (int64(currentPrice) - int64(pos.EntryPrice)) * int64(pos.Size)
+		buffer := newMargin - newMargin/10
+		if upnl < -buffer || upnl > buffer {
+			return ErrPositionLiquidated
+		}
+	}
+
+	pos.Leverage = leverage
+	position.CalculatePositionRisk(pos)
+	bal.Margin = pos.InitialMargin
+
+	if marginDiff > 0 {
 		bal.Available -= marginDiff
 	} else if marginDiff < 0 {
 		bal.Available += -marginDiff
 	}
-	bal.Margin = newMargin
 
-	liqPrice := position.CalculateLiquidationPrice(pos, leverage)
-	currentPrice := e.getCurrentPrice(symbol)
-	if currentPrice > 0 && liqPrice > 0 && ((pos.Side == constants.ORDER_SIDE_BUY && currentPrice <= liqPrice) ||
-		(pos.Side == constants.ORDER_SIDE_SELL && currentPrice >= liqPrice)) {
-		return ErrPositionLiquidated
-	}
-
-	pos.Leverage = leverage
 	return nil
 }
 
@@ -358,6 +363,7 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 		tpSide = int8(constants.ORDER_SIDE_BUY)
 	}
 
+	// tp order
 	_, _ = e.PlaceOrder(&types.OrderInput{
 		UserID:         userID,
 		Symbol:         symbol,
@@ -372,6 +378,7 @@ func (e *Engine) EditTPSL(userID types.UserID, symbol types.SymbolID, tpOrderID,
 		ReduceOnly:     true,
 	})
 
+	// sl order
 	_, _ = e.PlaceOrder(&types.OrderInput{
 		UserID:         userID,
 		Symbol:         symbol,

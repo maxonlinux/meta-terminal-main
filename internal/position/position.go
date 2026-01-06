@@ -60,13 +60,42 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 		}
 	}
 
+	CalculatePositionRisk(pos)
+
 	if pos.Size == 0 {
 		pos.Side = -1
 		pos.EntryPrice = 0
+		pos.InitialMargin = 0
+		pos.MaintenanceMargin = 0
+		pos.LiquidationPrice = 0
 	}
 
 	pos.Version++
 	return pos, realizedPnl
+}
+
+func CalculatePositionRisk(pos *types.Position) {
+	if pos.Size == 0 {
+		pos.InitialMargin = 0
+		pos.MaintenanceMargin = 0
+		pos.LiquidationPrice = 0
+		return
+	}
+
+	pos.InitialMargin = int64(pos.Size) * int64(pos.EntryPrice) / int64(pos.Leverage)
+	pos.MaintenanceMargin = pos.InitialMargin / 10
+
+	buffer := pos.InitialMargin - pos.MaintenanceMargin
+
+	if pos.Side == constants.ORDER_SIDE_BUY {
+		pos.LiquidationPrice = pos.EntryPrice - types.Price(buffer/int64(pos.Size))
+	} else {
+		pos.LiquidationPrice = pos.EntryPrice + types.Price(buffer/int64(pos.Size))
+	}
+}
+
+func CalculateMargin(qty types.Quantity, price types.Price, leverage int8) int64 {
+	return int64(qty) * int64(price) / int64(leverage)
 }
 
 func GetPosition(s *state.State, userID types.UserID, symbol types.SymbolID) *types.Position {
@@ -172,16 +201,4 @@ func GetLeverage(s *state.State, userID types.UserID, symbol types.SymbolID) int
 		return pos.Leverage
 	}
 	return 2
-}
-
-func CalculateLiquidationPrice(pos *types.Position, leverage int8) types.Price {
-	if pos.Size == 0 || leverage == 0 {
-		return 0
-	}
-	ratio := float64(leverage) / 100.0
-	distance := float64(pos.EntryPrice) * ratio * 10
-	if pos.Side == constants.ORDER_SIDE_BUY {
-		return types.Price(float64(pos.EntryPrice) - distance)
-	}
-	return types.Price(float64(pos.EntryPrice) + distance)
 }

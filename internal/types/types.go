@@ -57,12 +57,18 @@ type UserBalance struct {
 }
 
 type Position struct {
-	UserID      UserID
-	Symbol      SymbolID
-	Size        Quantity
-	Side        int8 // -1 = null (нет позиции), 0 = BUY (LONG), 1 = SELL (SHORT)
-	EntryPrice  Price
-	Leverage    int8
+	UserID     UserID
+	Symbol     SymbolID
+	Size       Quantity
+	Side       int8 // -1 = null (нет позиции), 0 = BUY (LONG), 1 = SELL (SHORT)
+	EntryPrice Price
+	Leverage   int8
+
+	// Риск-параметры (пересчитываются на каждый fill)
+	InitialMargin     int64 // IM = size * entryPrice / leverage
+	MaintenanceMargin int64 // MM = IM / 10
+	LiquidationPrice  Price // Цена ликвидации
+
 	RealizedPnl int64
 	Version     int64
 }

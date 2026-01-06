@@ -22,7 +22,7 @@ func ExecuteSpotTrade(s *state.State, taker, maker *types.Order, price types.Pri
 }
 
 func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.Price, qty types.Quantity, leverage int8) {
-	margin := int64(qty) * int64(price) * int64(100/leverage) / 100
+	margin := position.CalculateMargin(qty, price, leverage)
 
 	_, takerPnl := position.UpdatePosition(s, taker.UserID, taker.Symbol, qty, price, taker.Side, leverage)
 	_, makerPnl := position.UpdatePosition(s, maker.UserID, maker.Symbol, qty, price, maker.Side, leverage)
@@ -35,6 +35,7 @@ func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.P
 		tBal.Margin -= margin
 		tBal.Available += takerPnl
 	}
+	tBal.Version++
 
 	mBal := balance.GetOrCreate(s, maker.UserID, "USDT")
 	if maker.Side == constants.ORDER_SIDE_BUY {
@@ -44,4 +45,5 @@ func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.P
 		mBal.Margin -= margin
 		mBal.Available += makerPnl
 	}
+	mBal.Version++
 }

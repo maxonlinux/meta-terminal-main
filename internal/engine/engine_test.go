@@ -25,13 +25,16 @@ func TestEditLeverage_SuccessIncrease(t *testing.T) {
 	}
 
 	us.Positions[symbol] = &types.Position{
-		UserID:      userID,
-		Symbol:      symbol,
-		Size:        100,
-		Side:        0,
-		EntryPrice:  50000,
-		Leverage:    2,
-		RealizedPnl: 0,
+		UserID:            userID,
+		Symbol:            symbol,
+		Size:              100,
+		Side:              0,
+		EntryPrice:        50000,
+		Leverage:          2,
+		InitialMargin:     2500000,
+		MaintenanceMargin: 250000,
+		LiquidationPrice:  49800,
+		RealizedPnl:       0,
 	}
 
 	bal := us.Balances["USDT"]
@@ -78,13 +81,16 @@ func TestEditLeverage_SuccessDecrease(t *testing.T) {
 	}
 
 	us.Positions[symbol] = &types.Position{
-		UserID:      userID,
-		Symbol:      symbol,
-		Size:        100,
-		Side:        0,
-		EntryPrice:  50000,
-		Leverage:    10,
-		RealizedPnl: 0,
+		UserID:            userID,
+		Symbol:            symbol,
+		Size:              100,
+		Side:              0,
+		EntryPrice:        50000,
+		Leverage:          10,
+		InitialMargin:     500000,
+		MaintenanceMargin: 50000,
+		LiquidationPrice:  49500,
+		RealizedPnl:       0,
 	}
 
 	bal := us.Balances["USDT"]
@@ -131,13 +137,16 @@ func TestEditLeverage_InsufficientBalance(t *testing.T) {
 	}
 
 	us.Positions[symbol] = &types.Position{
-		UserID:      userID,
-		Symbol:      symbol,
-		Size:        100,
-		Side:        0,
-		EntryPrice:  50000,
-		Leverage:    10,
-		RealizedPnl: 0,
+		UserID:            userID,
+		Symbol:            symbol,
+		Size:              100,
+		Side:              0,
+		EntryPrice:        50000,
+		Leverage:          10,
+		InitialMargin:     500000,
+		MaintenanceMargin: 50000,
+		LiquidationPrice:  49500,
+		RealizedPnl:       0,
 	}
 
 	bal := us.Balances["USDT"]
@@ -246,13 +255,16 @@ func TestEditLeverage_SameLeverage(t *testing.T) {
 	}
 
 	us.Positions[symbol] = &types.Position{
-		UserID:      userID,
-		Symbol:      symbol,
-		Size:        100,
-		Side:        0,
-		EntryPrice:  50000,
-		Leverage:    2,
-		RealizedPnl: 0,
+		UserID:            userID,
+		Symbol:            symbol,
+		Size:              100,
+		Side:              0,
+		EntryPrice:        50000,
+		Leverage:          2,
+		InitialMargin:     2500000,
+		MaintenanceMargin: 250000,
+		LiquidationPrice:  49800,
+		RealizedPnl:       0,
 	}
 
 	initialAvailable := us.Balances["USDT"].Available
@@ -289,13 +301,16 @@ func TestEditLeverage_EmptyPositionUpdatesLeverage(t *testing.T) {
 	}
 
 	us.Positions[symbol] = &types.Position{
-		UserID:      userID,
-		Symbol:      symbol,
-		Size:        0,
-		Side:        -1,
-		EntryPrice:  0,
-		Leverage:    2,
-		RealizedPnl: 0,
+		UserID:            userID,
+		Symbol:            symbol,
+		Size:              0,
+		Side:              -1,
+		EntryPrice:        50000,
+		Leverage:          2,
+		InitialMargin:     0,
+		MaintenanceMargin: 0,
+		LiquidationPrice:  0,
+		RealizedPnl:       0,
 	}
 
 	err := e.EditLeverage(userID, symbol, 10)
