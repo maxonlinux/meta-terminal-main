@@ -178,7 +178,7 @@ func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 
 	ss := s.GetSymbolState(symbol)
 	ss.OrderMap = make(map[types.OrderID]*types.Order)
-	ss.UserReduceOnly = make(map[types.UserID][]types.OrderID)
+	ss.UserReduceOnly = make(map[types.UserID]map[types.OrderID]struct{})
 
 	order1 := &types.Order{
 		ID:         1,
@@ -201,7 +201,7 @@ func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 
 	ss.OrderMap[1] = order1
 	ss.OrderMap[2] = order2
-	ss.UserReduceOnly[userID] = []types.OrderID{1, 2}
+	ss.UserReduceOnly[userID] = map[types.OrderID]struct{}{1: {}, 2: {}}
 
 	AdjustReduceOnlyOrders(s, userID, symbol)
 

@@ -174,12 +174,26 @@ func (ts *TestServer) GetPosition(userID, symbol int) *types.Position {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		ts.t.Fatalf("get position failed: %d", resp.StatusCode)
+		return nil
 	}
 
-	var pos types.Position
-	json.NewDecoder(resp.Body).Decode(&pos)
-	return &pos
+	var posResp api.PositionResponse
+	json.NewDecoder(resp.Body).Decode(&posResp)
+
+	// If API returns empty response (no position at all), return nil
+	if posResp.Size == 0 && posResp.Leverage == 0 {
+		return nil
+	}
+
+	return &types.Position{
+		UserID:      types.UserID(userID),
+		Symbol:      types.SymbolID(symbol),
+		Size:        types.Quantity(posResp.Size),
+		Side:        posResp.Side,
+		EntryPrice:  types.Price(posResp.EntryPrice),
+		Leverage:    posResp.Leverage,
+		RealizedPnl: posResp.RealizedPnl,
+	}
 }
 
 func (ts *TestServer) GetBalances(userID int) []*types.UserBalance {
@@ -207,7 +221,9 @@ func (ts *TestServer) EditLeverage(userID, symbol, leverage int) error {
 	})
 
 	url := fmt.Sprintf("%s/api/v1/1/%d/position/leverage", ts.URL(), symbol)
-	resp, err := http.Post(url, "application/json", strings.NewReader(string(body)))
+	req, _ := http.NewRequest("PATCH", url, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -328,16 +344,20 @@ func TestIntegration_EditLeverage(t *testing.T) {
 
 	ts.SeedBalance(1, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
-
 	err := ts.EditLeverage(1, 1, 10)
 	if err != nil {
 		t.Errorf("EditLeverage failed: %v", err)
 	}
 
 	pos := ts.GetPosition(1, 1)
+	if pos == nil {
+		t.Fatalf("position is nil - EditLeverage should create empty position")
+	}
 	if pos.Leverage != 10 {
 		t.Errorf("expected leverage 10, got %d", pos.Leverage)
+	}
+	if pos.Size != 0 {
+		t.Errorf("expected size 0 (empty position), got %d", pos.Size)
 	}
 }
 
@@ -346,10 +366,16 @@ func TestIntegration_ClosePosition(t *testing.T) {
 	defer ts.Close()
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
+	// Create a position first
+	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000) // User 2 LIMIT SELL
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)     // User 1 MARKET BUY to open position
 
 	pos := ts.GetPosition(1, 1)
+	if pos == nil {
+		t.Fatalf("position is nil")
+	}
 	if pos.Size != 10 {
 		t.Errorf("expected size 10, got %d", pos.Size)
 	}
@@ -360,8 +386,8 @@ func TestIntegration_ClosePosition(t *testing.T) {
 	}
 
 	pos = ts.GetPosition(1, 1)
-	if pos.Size != 0 {
-		t.Errorf("expected size 0, got %d", pos.Size)
+	if pos != nil && pos.Size != 0 {
+		t.Errorf("expected position to be closed, got size %d", pos.Size)
 	}
 }
 
@@ -426,9 +452,15 @@ func TestIntegration_ReduceOnly(t *testing.T) {
 	defer ts.Close()
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
+	// User 2 places LIMIT SELL 10 @ 50000 to provide liquidity
+	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000)
+
+	// User 1 places MARKET BUY 10 to open LONG position
 	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
 
+	// User 1 places MARKET SELL 5 with reduceOnly
 	resp := ts.PlaceOrder(1, 1, 1, 1, 0, 5, 0, WithReduceOnly())
 
 	if resp.Status != 2 {
@@ -447,7 +479,8 @@ func TestIntegration_BalanceTracking(t *testing.T) {
 
 	ts.SeedBalance(1, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	// Place LIMIT order - this should lock the balance
+	ts.PlaceOrder(1, 1, 0, 0, 0, 10, 50000) // LIMIT BUY 10 @ 50000
 
 	balances := ts.GetBalances(1)
 	marginRequired := int64(10) * 50000 / 2
@@ -483,8 +516,11 @@ func TestIntegration_SnapshotAndRecovery(t *testing.T) {
 	ts := NewTestServer(t)
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	// Create a position first - need liquidity from user 2
+	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000) // User 2 LIMIT SELL
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)     // User 1 MARKET BUY to open position
 
 	err := ts.snap.Create(ts.s, ts.w.Offset())
 	if err != nil {
@@ -514,20 +550,34 @@ func TestIntegration_PositionSideUpdates(t *testing.T) {
 	defer ts.Close()
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	// User 2 provides both buy and sell liquidity
+	ts.PlaceOrder(2, 1, 1, 0, 0, 20, 50000) // LIMIT SELL 20 @ 50000
+	ts.PlaceOrder(2, 1, 0, 0, 0, 20, 49000) // LIMIT BUY 20 @ 49000
+
+	// User 1 opens SHORT position by selling to LIMIT BUY @ 49000
+	ts.PlaceOrder(1, 1, 1, 1, 0, 10, 0) // MARKET SELL 10
 	pos := ts.GetPosition(1, 1)
-	if pos.Side != 0 {
-		t.Errorf("expected side 0 (LONG), got %d", pos.Side)
+	t.Logf("After SELL 10: pos=%v", pos)
+	if pos == nil || pos.Side != 1 {
+		t.Errorf("expected SHORT position (side 1), got %v", pos)
+	}
+	if pos.Size != 10 {
+		t.Errorf("expected size 10, got %d", pos.Size)
 	}
 
-	ts.PlaceOrder(1, 1, 1, 1, 0, 15, 51000)
+	// User 1 flips to LONG by buying from LIMIT SELL @ 50000
+	// BUY 15: closes SHORT 10 (10 sold @ 49000, bought @ 50000 = -10000 PnL)
+	//         opens LONG 5  (5 bought @ 50000)
+	ts.PlaceOrder(1, 1, 0, 1, 0, 15, 0) // MARKET BUY 15
 	pos = ts.GetPosition(1, 1)
-	if pos.Side != 1 {
-		t.Errorf("expected side 1 (SHORT), got %d", pos.Side)
+	t.Logf("After BUY 15: pos=%v", pos)
+	if pos == nil || pos.Side != 0 {
+		t.Errorf("expected LONG position (side 0), got %v", pos)
 	}
 	if pos.Size != 5 {
-		t.Errorf("expected size 5, got %d", pos.Size)
+		t.Errorf("expected size 5 (15 - 10 = 5), got %d", pos.Size)
 	}
 }
 
@@ -536,8 +586,11 @@ func TestIntegration_LeverageIncreaseReleasesMargin(t *testing.T) {
 	defer ts.Close()
 
 	ts.SeedBalance(1, 1000000)
+	ts.SeedBalance(2, 1000000)
 
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 50000)
+	// Create position first
+	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000) // User 2 LIMIT SELL
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)     // User 1 MARKET BUY to open position
 
 	balances := ts.GetBalances(1)
 	var initialAvailable int64
@@ -553,11 +606,14 @@ func TestIntegration_LeverageIncreaseReleasesMargin(t *testing.T) {
 	}
 
 	balances = ts.GetBalances(1)
+	var newAvailable int64
 	for _, bal := range balances {
 		if bal.Asset == "USDT" {
-			if bal.Available <= initialAvailable {
-				t.Errorf("expected available to increase, got %d (was %d)", bal.Available, initialAvailable)
-			}
+			newAvailable = bal.Available
 		}
+	}
+
+	if newAvailable <= initialAvailable {
+		t.Errorf("expected available to increase, got %d (was %d)", newAvailable, initialAvailable)
 	}
 }

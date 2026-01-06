@@ -72,10 +72,13 @@ func (ob *OrderBook) placeLimitOrder(order *types.Order) ([]*types.Trade, types.
 		}
 
 	case constants.TIF_POST_ONLY:
+		// Check if AT LEAST ONE TRADE POSSIBLE
+		// WE DONT NEED TO CHECK THE ENTIRE BOOK HERE OKAY ?????
 		if ob.wouldCrossSpread(order) {
-			order.Status = constants.ORDER_STATUS_DEACTIVATED
+			order.Status = constants.ORDER_STATUS_CANCELED
 			return nil, 0, nil
 		}
+		// WTF??? REMAINING???????? POST ONLY??????
 		trades, remaining = ob.match(order)
 		if remaining > 0 {
 			ob.addToBook(order)
@@ -94,7 +97,7 @@ func (ob *OrderBook) placeMarketOrder(order *types.Order) ([]*types.Trade, types
 	if order.Filled > 0 {
 		order.Status = constants.ORDER_STATUS_FILLED
 		if remaining > 0 {
-			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 		}
 	} else {
 		order.Status = constants.ORDER_STATUS_CANCELED

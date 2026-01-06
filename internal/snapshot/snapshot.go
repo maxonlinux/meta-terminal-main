@@ -85,7 +85,7 @@ type OrderSnap struct {
 }
 
 func New(path string, maxSize int64) *Snapshot {
-	os.MkdirAll(path, 0755)
+	_ = os.MkdirAll(path, 0755)
 	return &Snapshot{
 		path:    path,
 		maxSize: maxSize,
@@ -128,8 +128,8 @@ func (s *Snapshot) Create(st *state.State, walOffset int64) error {
 		return fmt.Errorf("failed to write data: %w", err)
 	}
 
-	writer.Flush()
-	file.Close()
+	_ = writer.Flush()
+	_ = file.Close()
 
 	s.rotateOldSnapshots()
 
@@ -396,6 +396,6 @@ func (s *Snapshot) rotateOldSnapshots() {
 	}
 
 	if oldest != "" {
-		os.Remove(filepath.Join(s.path, oldest))
+		_ = os.Remove(filepath.Join(s.path, oldest))
 	}
 }

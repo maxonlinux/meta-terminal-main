@@ -2,6 +2,9 @@
 
 Very useful information here: https://ramendraparmar.substack.com/p/system-design-question-10-stock-trading
 
+## Linter
+golangci-lint run
+
 ## Overview
 
 High-performance trading engine optimized for minimal resource usage:

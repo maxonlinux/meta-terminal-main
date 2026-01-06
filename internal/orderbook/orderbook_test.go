@@ -301,8 +301,8 @@ func TestPostOnlyRejection(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if buyerOrder.Status != constants.ORDER_STATUS_DEACTIVATED {
-		t.Errorf("expected DEACTIVATED, got %d", buyerOrder.Status)
+	if buyerOrder.Status != constants.ORDER_STATUS_CANCELED {
+		t.Errorf("expected CANCELED, got %d", buyerOrder.Status)
 	}
 
 	bids := ob.GetBids()

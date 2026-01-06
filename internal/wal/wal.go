@@ -51,7 +51,7 @@ func New(path string, bufferSize int) (*WAL, error) {
 
 	stat, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 
@@ -84,7 +84,7 @@ func (w *WAL) Append(op *Operation) error {
 	if _, err := writer.Write(data); err != nil {
 		return err
 	}
-	writer.Flush()
+	_ = writer.Flush()
 
 	w.offset += int64(len(header) + len(data))
 	return nil
@@ -108,7 +108,7 @@ func (w *WAL) IterateFrom(offset int64, fn func(op *Operation) error) error {
 
 	reader := bufio.NewReaderSize(file, w.bufferSize)
 	if offset > 0 {
-		reader.Discard(int(offset))
+		_, _ = reader.Discard(int(offset))
 	}
 
 	for {

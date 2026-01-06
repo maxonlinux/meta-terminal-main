@@ -86,9 +86,12 @@ func (o *Outbox) flushLocked() {
 func (o *Outbox) writeToDisk(events []Event) {
 	filename := filepath.Join(o.path, "outbox_1e7e3c6a.jsonl")
 
-	data, _ := json.Marshal(events)
-	os.WriteFile(filename+"_tmp", data, 0644)
-	os.Rename(filename+"_tmp", filename)
+	data, err := json.Marshal(events)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filename+"_tmp", data, 0644)
+	_ = os.Rename(filename+"_tmp", filename)
 }
 
 func (o *Outbox) Close() {

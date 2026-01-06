@@ -68,7 +68,6 @@ func (d *Dispatcher) processQueue(q *UserQueue) {
 		d.RemoveQueue(q.userID)
 	}()
 
-	ob := orderbook.New(0, 0, d.state)
 	tradeBuffer := NewTradeBuffer(GetTradePool(), 64)
 	totalFilled := types.Quantity(0)
 	var lastStatus int8
@@ -76,12 +75,17 @@ func (d *Dispatcher) processQueue(q *UserQueue) {
 	for elem := q.orders.Front(); elem != nil && !q.IsClosed(); elem = elem.Next() {
 		ord := elem.Value.(*types.Order)
 
+		// Создаём OrderBook для правильного символа
+		category := d.state.GetSymbolState(ord.Symbol).Category
+		ob := orderbook.New(ord.Symbol, category, d.state)
+
 		trades, _, err := ob.PlaceOrder(ord)
 		if err != nil {
 			q.ResultChan() <- &UserQueueResult{Error: err}
 			return
 		}
 
+		// NESTED LOOP!!!!
 		for _, trade := range trades {
 			tradeBuffer.Add(trade)
 			totalFilled += trade.Quantity
