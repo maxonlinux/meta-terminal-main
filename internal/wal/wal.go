@@ -3,7 +3,6 @@ package wal
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +21,18 @@ const (
 	OP_CHECKPOINT
 )
 
+// Binary operation format (fixed 32 bytes header + variable data)
+// Header: Type(1) + Timestamp(8) + UserID(8) + Symbol(4) + OrderID(8) + DataLen(4) = 33 bytes
+type BinaryOperation struct {
+	Type      OperationType
+	Timestamp uint64
+	UserID    uint64
+	Symbol    uint32
+	OrderID   uint64
+	DataLen   uint32
+}
+
+// Legacy Operation struct for compatibility during migration
 type Operation struct {
 	Type      OperationType
 	Timestamp int64
@@ -37,6 +48,7 @@ type WAL struct {
 	offset     int64
 	mu         sync.Mutex
 	bufferSize int
+	writeBuf   []byte
 }
 
 func New(path string, bufferSize int) (*WAL, error) {
@@ -60,6 +72,7 @@ func New(path string, bufferSize int) (*WAL, error) {
 		file:       f,
 		offset:     stat.Size(),
 		bufferSize: bufferSize * 1024,
+		writeBuf:   make([]byte, 0, 1024),
 	}, nil
 }
 
@@ -67,26 +80,59 @@ func (w *WAL) Append(op *Operation) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	data, err := json.Marshal(op)
+	// Write binary directly - no JSON allocation
+	var data []byte
+	if op.Data != nil {
+		data = op.Data
+	}
+
+	// Ensure buffer is large enough
+	headerLen := 33
+	totalLen := headerLen + len(data)
+	if cap(w.writeBuf) < totalLen {
+		w.writeBuf = make([]byte, totalLen)
+	} else {
+		w.writeBuf = w.writeBuf[:totalLen]
+	}
+
+	// Write header (binary, no allocation)
+	w.writeBuf[0] = byte(op.Type)
+	binary.BigEndian.PutUint64(w.writeBuf[1:9], uint64(op.Timestamp))
+	binary.BigEndian.PutUint64(w.writeBuf[9:17], uint64(op.UserID))
+	binary.BigEndian.PutUint32(w.writeBuf[17:21], uint32(op.Symbol))
+	binary.BigEndian.PutUint64(w.writeBuf[21:29], uint64(op.OrderID))
+	binary.BigEndian.PutUint32(w.writeBuf[29:33], uint32(len(data)))
+
+	// Copy data
+	if len(data) > 0 {
+		copy(w.writeBuf[33:], data)
+	}
+
+	// Write to file
+	_, err := w.file.Write(w.writeBuf)
 	if err != nil {
 		return err
 	}
 
-	header := make([]byte, 17)
-	header[0] = byte(op.Type)
-	binary.BigEndian.PutUint64(header[1:9], uint64(op.Timestamp))
-	binary.BigEndian.PutUint64(header[9:17], uint64(len(data)))
+	w.offset += int64(totalLen)
+	return nil
+}
 
-	writer := bufio.NewWriterSize(w.file, w.bufferSize)
-	if _, err := writer.Write(header); err != nil {
+// AppendBinary - zero-allocation append using pre-serialized binary data
+func (w *WAL) AppendBinary(data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(data) < 33 {
+		return fmt.Errorf("invalid binary operation data")
+	}
+
+	_, err := w.file.Write(data)
+	if err != nil {
 		return err
 	}
-	if _, err := writer.Write(data); err != nil {
-		return err
-	}
-	_ = writer.Flush()
 
-	w.offset += int64(len(header) + len(data))
+	w.offset += int64(len(data))
 	return nil
 }
 
@@ -94,6 +140,55 @@ func (w *WAL) Flush() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.file.Sync()
+}
+
+// ReadOperation reads a binary operation from WAL
+func (w *WAL) ReadOperation(offset int64) (*Operation, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	file, err := os.Open(w.path + "/wal.log")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	_, err = file.Seek(offset, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read header
+	header := make([]byte, 33)
+	n, err := file.Read(header)
+	if err != nil {
+		return nil, err
+	}
+	if n < 33 {
+		return nil, fmt.Errorf("incomplete header")
+	}
+
+	op := &Operation{
+		Type:      OperationType(header[0]),
+		Timestamp: int64(binary.BigEndian.Uint64(header[1:9])),
+		UserID:    int64(binary.BigEndian.Uint64(header[9:17])),
+		Symbol:    int32(binary.BigEndian.Uint32(header[17:21])),
+		OrderID:   int64(binary.BigEndian.Uint64(header[21:29])),
+	}
+
+	dataLen := int(binary.BigEndian.Uint32(header[29:33]))
+	if dataLen > 0 {
+		op.Data = make([]byte, dataLen)
+		n, err = file.Read(op.Data)
+		if err != nil {
+			return nil, err
+		}
+		if n < dataLen {
+			return nil, fmt.Errorf("incomplete data")
+		}
+	}
+
+	return op, nil
 }
 
 func (w *WAL) IterateFrom(offset int64, fn func(op *Operation) error) error {
@@ -112,7 +207,8 @@ func (w *WAL) IterateFrom(offset int64, fn func(op *Operation) error) error {
 	}
 
 	for {
-		header := make([]byte, 17)
+		// Read header
+		header := make([]byte, 33)
 		n, err := reader.Read(header)
 		if n == 0 && err != nil {
 			break
@@ -124,17 +220,21 @@ func (w *WAL) IterateFrom(offset int64, fn func(op *Operation) error) error {
 		op := &Operation{
 			Type:      OperationType(header[0]),
 			Timestamp: int64(binary.BigEndian.Uint64(header[1:9])),
+			UserID:    int64(binary.BigEndian.Uint64(header[9:17])),
+			Symbol:    int32(binary.BigEndian.Uint32(header[17:21])),
+			OrderID:   int64(binary.BigEndian.Uint64(header[21:29])),
 		}
 
-		dataLen := int64(binary.BigEndian.Uint64(header[9:17]))
-		data := make([]byte, dataLen)
-		n, err = reader.Read(data)
-		if err != nil {
-			return err
-		}
-
-		if err := json.Unmarshal(data, op); err != nil {
-			return err
+		dataLen := int(binary.BigEndian.Uint32(header[29:33]))
+		if dataLen > 0 {
+			op.Data = make([]byte, dataLen)
+			n, err = reader.Read(op.Data)
+			if err != nil {
+				return err
+			}
+			if n < dataLen {
+				return fmt.Errorf("incomplete data")
+			}
 		}
 
 		if err := fn(op); err != nil {

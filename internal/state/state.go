@@ -49,6 +49,7 @@ func (s *State) GetUserState(userID types.UserID) *UserState {
 	if us, ok := s.Users[userID]; ok {
 		return us
 	}
+	// Early return - create only if not found
 	us := &UserState{
 		Balances:  make(map[string]*types.UserBalance),
 		Positions: make(map[types.SymbolID]*types.Position),
@@ -61,6 +62,7 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *SymbolState {
 	if ss, ok := s.Symbols[symbol]; ok {
 		return ss
 	}
+	// Early return - create only if not found
 	ss := &SymbolState{
 		Category:       0,
 		Bids:           nil,

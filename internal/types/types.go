@@ -27,8 +27,9 @@ type Order struct {
 	ReduceOnly     bool
 	CloseOnTrigger bool
 
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// Use uint64 timestamp instead of time.Time to avoid allocations
+	CreatedAt uint64
+	UpdatedAt uint64
 
 	Next OrderID
 	Prev OrderID
@@ -43,7 +44,7 @@ type Trade struct {
 	Quantity     Quantity
 	TakerOrderID OrderID
 	MakerOrderID OrderID
-	ExecutedAt   time.Time
+	ExecutedAt   uint64 // uint64 instead of time.Time
 }
 
 type UserBalance struct {
@@ -86,4 +87,9 @@ type OrderResult struct {
 	Filled    Quantity
 	Remaining Quantity
 	Status    int8
+}
+
+// NanoTime returns current time as uint64 nanoseconds
+func NanoTime() uint64 {
+	return uint64(time.Now().UnixNano())
 }

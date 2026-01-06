@@ -1,8 +1,6 @@
 package orderbook
 
 import (
-	"time"
-
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
@@ -145,7 +143,7 @@ func (ob *OrderBook) match(order *types.Order) ([]*types.Trade, types.Quantity) 
 				Quantity:     fillQty,
 				TakerOrderID: order.ID,
 				MakerOrderID: oid,
-				ExecutedAt:   time.Now(),
+				ExecutedAt:   types.NanoTime(),
 			}
 			trades = append(trades, trade)
 

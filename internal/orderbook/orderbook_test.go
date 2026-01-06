@@ -2,7 +2,6 @@ package orderbook
 
 import (
 	"testing"
-	"time"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
@@ -326,7 +325,7 @@ func TestPriceTimePriority(t *testing.T) {
 		Price:     100,
 		Quantity:  10,
 		Status:    constants.ORDER_STATUS_NEW,
-		CreatedAt: time.Now(),
+		CreatedAt: types.NanoTime(),
 	}
 
 	order2 := &types.Order{
@@ -339,7 +338,7 @@ func TestPriceTimePriority(t *testing.T) {
 		Price:     101,
 		Quantity:  5,
 		Status:    constants.ORDER_STATUS_NEW,
-		CreatedAt: time.Now().Add(time.Second),
+		CreatedAt: types.NanoTime() + 1e9, // 1 second later
 	}
 
 	_, _, _ = ob.PlaceOrder(order1)

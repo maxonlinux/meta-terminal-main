@@ -73,6 +73,37 @@ func (p *TradePool) Put(t *types.Trade) {
 	p.pool.Put(t)
 }
 
+// OrderResultPool eliminates allocation for OrderResult
+type OrderResultPool struct {
+	pool sync.Pool
+}
+
+func NewOrderResultPool() *OrderResultPool {
+	return &OrderResultPool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				return &types.OrderResult{}
+			},
+		},
+	}
+}
+
+func (p *OrderResultPool) Get() *types.OrderResult {
+	return p.pool.Get().(*types.OrderResult)
+}
+
+func (p *OrderResultPool) Put(r *types.OrderResult) {
+	if r == nil {
+		return
+	}
+	r.Order = nil
+	r.Trades = nil
+	r.Filled = 0
+	r.Remaining = 0
+	r.Status = 0
+	p.pool.Put(r)
+}
+
 type TradeBuffer struct {
 	trades []*types.Trade
 	pool   *TradePool
@@ -106,15 +137,17 @@ func (b *TradeBuffer) Reset() {
 }
 
 var (
-	orderPool    *OrderPool
-	tradePool    *TradePool
-	orderCounter int64
-	tradeCounter int64
+	orderPool       *OrderPool
+	tradePool       *TradePool
+	orderResultPool *OrderResultPool
+	orderCounter    int64
+	tradeCounter    int64
 )
 
 func init() {
 	orderPool = NewOrderPool()
 	tradePool = NewTradePool()
+	orderResultPool = NewOrderResultPool()
 }
 
 func GetOrderPool() *OrderPool {
@@ -123,6 +156,10 @@ func GetOrderPool() *OrderPool {
 
 func GetTradePool() *TradePool {
 	return tradePool
+}
+
+func GetOrderResultPool() *OrderResultPool {
+	return orderResultPool
 }
 
 func NextOrderID() types.OrderID {
