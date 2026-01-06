@@ -17,7 +17,7 @@ func BenchmarkMatching10000OrdersOnePrice(b *testing.B) {
 	e := New(w, s)
 	e.InitSymbolCategory(1, constants.CATEGORY_SPOT)
 
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		input := &types.OrderInput{
 			UserID:   types.UserID(i%100 + 1),
 			Symbol:   types.SymbolID(1),

@@ -239,9 +239,20 @@ func (s *Server) getOrderBook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(OrderBookResponse{
 		Symbol:   int32(symbol),
 		Category: int8(category),
-		Bids:     bids,
-		Asks:     asks,
+		Bids:     flattenToNested(bids),
+		Asks:     flattenToNested(asks),
 	})
+}
+
+func flattenToNested(flat []int64) [][]int64 {
+	if len(flat) == 0 {
+		return nil
+	}
+	result := make([][]int64, len(flat)/2)
+	for i := 0; i < len(flat); i += 2 {
+		result[i/2] = []int64{flat[i], flat[i+1]}
+	}
+	return result
 }
 
 func (s *Server) getPosition(w http.ResponseWriter, r *http.Request) {

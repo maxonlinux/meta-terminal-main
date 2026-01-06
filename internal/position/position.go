@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -100,7 +101,7 @@ func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.Symbol
 	return nil
 }
 
-func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.SymbolID) {
+func AdjustReduceOnlyOrders(orderStore *memory.OrderStore, s *state.State, userID types.UserID, symbol types.SymbolID) {
 	us, ok := s.Users[userID]
 	if !ok {
 		return
@@ -111,14 +112,12 @@ func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.Sy
 		return
 	}
 
-	ss := s.GetSymbolState(symbol)
-
 	totalReduceOnly := types.Quantity(0)
-	userOrderIDs := ss.GetUserReduceOnlyOrders(userID)
+	userOrderIDs := orderStore.GetUserReduceOnlyOrders(userID)
 
 	for _, oid := range userOrderIDs {
-		order, ok := ss.OrderMap[oid]
-		if !ok {
+		order := orderStore.Get(oid)
+		if order == nil {
 			continue
 		}
 		if order.Filled < order.Quantity {
@@ -136,8 +135,8 @@ func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.Sy
 	ordersToModify := make(map[types.OrderID]types.Quantity)
 
 	for _, oid := range userOrderIDs {
-		order, ok := ss.OrderMap[oid]
-		if !ok {
+		order := orderStore.Get(oid)
+		if order == nil {
 			continue
 		}
 		if order.Filled < order.Quantity {
@@ -156,12 +155,12 @@ func AdjustReduceOnlyOrders(s *state.State, userID types.UserID, symbol types.Sy
 	}
 
 	for _, oid := range toDelete {
-		delete(ss.OrderMap, oid)
-		ss.RemoveReduceOnlyOrder(userID, oid)
+		orderStore.Remove(oid)
+		orderStore.RemoveReduceOnlyOrder(userID, oid)
 	}
 
 	for oid, newQty := range ordersToModify {
-		if order, ok := ss.OrderMap[oid]; ok {
+		if order := orderStore.Get(oid); order != nil {
 			order.Quantity = newQty
 		}
 	}
@@ -179,14 +178,6 @@ func min(a, b types.Quantity) types.Quantity {
 		return a
 	}
 	return b
-}
-
-func calculatePnl(entryPrice, exitPrice types.Price, size types.Quantity, isLong bool) int64 {
-	pnl := int64(exitPrice-entryPrice) * int64(size)
-	if !isLong {
-		pnl = -pnl
-	}
-	return pnl
 }
 
 func GetLeverage(s *state.State, userID types.UserID, symbol types.SymbolID) int8 {

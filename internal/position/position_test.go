@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -165,6 +166,7 @@ func TestReduceOnlyValidate(t *testing.T) {
 
 func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 	s := state.New()
+	store := memory.NewOrderStore()
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
 
@@ -175,10 +177,6 @@ func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 		Size:       10,
 		EntryPrice: 100,
 	}
-
-	ss := s.GetSymbolState(symbol)
-	ss.OrderMap = make(map[types.OrderID]*types.Order)
-	ss.UserReduceOnly = make(map[types.UserID]map[types.OrderID]struct{})
 
 	order1 := &types.Order{
 		ID:         1,
@@ -199,11 +197,10 @@ func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 		Status:     constants.ORDER_STATUS_NEW,
 	}
 
-	ss.OrderMap[1] = order1
-	ss.OrderMap[2] = order2
-	ss.UserReduceOnly[userID] = map[types.OrderID]struct{}{1: {}, 2: {}}
+	store.Add(order1)
+	store.Add(order2)
 
-	AdjustReduceOnlyOrders(s, userID, symbol)
+	AdjustReduceOnlyOrders(store, s, userID, symbol)
 
 	if order1.Status != constants.ORDER_STATUS_CANCELED {
 		t.Errorf("expected order1 canceled, got status %d", order1.Status)

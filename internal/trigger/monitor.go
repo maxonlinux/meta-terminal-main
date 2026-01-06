@@ -2,20 +2,23 @@ package trigger
 
 import (
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 type Monitor struct {
 	state      *state.State
+	orderStore *memory.OrderStore
 	stopOrders map[types.SymbolID]*state.Heap
 	tpOrders   map[types.SymbolID]*state.Heap
 	slOrders   map[types.SymbolID]*state.Heap
 }
 
-func NewMonitor(s *state.State) *Monitor {
+func NewMonitor(s *state.State, orderStore *memory.OrderStore) *Monitor {
 	return &Monitor{
 		state:      s,
+		orderStore: orderStore,
 		stopOrders: make(map[types.SymbolID]*state.Heap),
 		tpOrders:   make(map[types.SymbolID]*state.Heap),
 		slOrders:   make(map[types.SymbolID]*state.Heap),
@@ -23,8 +26,6 @@ func NewMonitor(s *state.State) *Monitor {
 }
 
 func (m *Monitor) AddOrder(order *types.Order) {
-	ss := m.state.GetSymbolState(order.Symbol)
-
 	var heap *state.Heap
 	var heapMap map[types.SymbolID]*state.Heap
 
@@ -42,17 +43,16 @@ func (m *Monitor) AddOrder(order *types.Order) {
 	if _, ok := heapMap[order.Symbol]; !ok {
 		heapMap[order.Symbol] = state.NewHeap(order.Side == constants.ORDER_SIDE_SELL, func(o *types.Order) types.Price {
 			return o.TriggerPrice
-		})
+		}, m.orderStore)
 	}
 
 	heap = heapMap[order.Symbol]
-	ss.OrderMap[order.ID] = order
-	heap.Push(ss.OrderMap, order.ID)
+	heap.Push(order.ID)
 
 	if order.Side == constants.ORDER_SIDE_BUY {
-		ss.BuyTriggers = heap
+		m.state.GetSymbolState(order.Symbol).BuyTriggers = heap
 	} else {
-		ss.SellTriggers = heap
+		m.state.GetSymbolState(order.Symbol).SellTriggers = heap
 	}
 }
 
@@ -63,13 +63,17 @@ func (m *Monitor) Check(symbol types.SymbolID, currentPrice types.Price) []*type
 
 	if ss.BuyTriggers != nil {
 		for ss.BuyTriggers.Len() > 0 {
-			oid := ss.BuyTriggers.Peek(ss.OrderMap)
+			oid := ss.BuyTriggers.Peek()
 			if oid == 0 {
 				break
 			}
-			order := ss.OrderMap[oid]
+			order := m.orderStore.Get(oid)
+			if order == nil {
+				ss.BuyTriggers.Pop()
+				continue
+			}
 			if order.TriggerPrice <= currentPrice {
-				ss.BuyTriggers.Pop(ss.OrderMap)
+				ss.BuyTriggers.Pop()
 				triggered = append(triggered, order)
 			} else {
 				break
@@ -79,13 +83,17 @@ func (m *Monitor) Check(symbol types.SymbolID, currentPrice types.Price) []*type
 
 	if ss.SellTriggers != nil {
 		for ss.SellTriggers.Len() > 0 {
-			oid := ss.SellTriggers.Peek(ss.OrderMap)
+			oid := ss.SellTriggers.Peek()
 			if oid == 0 {
 				break
 			}
-			order := ss.OrderMap[oid]
+			order := m.orderStore.Get(oid)
+			if order == nil {
+				ss.SellTriggers.Pop()
+				continue
+			}
 			if order.TriggerPrice >= currentPrice {
-				ss.SellTriggers.Pop(ss.OrderMap)
+				ss.SellTriggers.Pop()
 				triggered = append(triggered, order)
 			} else {
 				break
@@ -128,9 +136,9 @@ func (m *Monitor) RemoveOrder(orderID types.OrderID, symbol types.SymbolID) {
 	ss := m.state.GetSymbolState(symbol)
 
 	if ss.BuyTriggers != nil {
-		ss.BuyTriggers.Remove(orderID, ss.OrderMap)
+		ss.BuyTriggers.Remove(orderID)
 	}
 	if ss.SellTriggers != nil {
-		ss.SellTriggers.Remove(orderID, ss.OrderMap)
+		ss.SellTriggers.Remove(orderID)
 	}
 }

@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 func TestMonitor_AddOrder(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	order := &types.Order{
 		ID:             1,
@@ -41,7 +43,8 @@ func TestMonitor_AddOrder(t *testing.T) {
 
 func TestMonitor_Check_BuyTrigger(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	order := &types.Order{
 		ID:             1,
@@ -59,6 +62,7 @@ func TestMonitor_Check_BuyTrigger(t *testing.T) {
 		CloseOnTrigger: false,
 	}
 
+	store.Add(order)
 	m.AddOrder(order)
 
 	triggered := m.Check(1, 48500)
@@ -82,7 +86,8 @@ func TestMonitor_Check_BuyTrigger(t *testing.T) {
 
 func TestMonitor_Check_SellTrigger(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	order := &types.Order{
 		ID:             1,
@@ -100,6 +105,7 @@ func TestMonitor_Check_SellTrigger(t *testing.T) {
 		CloseOnTrigger: false,
 	}
 
+	store.Add(order)
 	m.AddOrder(order)
 
 	triggered := m.Check(1, 51000)
@@ -120,7 +126,8 @@ func TestMonitor_Check_SellTrigger(t *testing.T) {
 
 func TestMonitor_Check_MultipleOrders(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	orders := []*types.Order{
 		{ID: 1, UserID: 100, Symbol: 1, Side: constants.ORDER_SIDE_BUY, TriggerPrice: 47000, StopOrderType: constants.STOP_ORDER_TYPE_STOP},
@@ -129,6 +136,7 @@ func TestMonitor_Check_MultipleOrders(t *testing.T) {
 	}
 
 	for _, o := range orders {
+		store.Add(o)
 		m.AddOrder(o)
 	}
 
@@ -145,7 +153,8 @@ func TestMonitor_Check_MultipleOrders(t *testing.T) {
 
 func TestMonitor_OnTrigger_CloseOnTrigger(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	order := &types.Order{
 		ID:             1,
@@ -171,7 +180,8 @@ func TestMonitor_OnTrigger_CloseOnTrigger(t *testing.T) {
 
 func TestMonitor_OnTrigger_CreateNewOrder(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	initialOrderID := s.NextOrderID
 
@@ -221,7 +231,8 @@ func TestMonitor_OnTrigger_CreateNewOrder(t *testing.T) {
 
 func TestMonitor_RemoveOrder(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	order := &types.Order{
 		ID:            1,
@@ -232,6 +243,7 @@ func TestMonitor_RemoveOrder(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_STOP,
 	}
 
+	store.Add(order)
 	m.AddOrder(order)
 
 	ss := s.GetSymbolState(1)
@@ -248,7 +260,8 @@ func TestMonitor_RemoveOrder(t *testing.T) {
 
 func TestMonitor_TP_SL_Orders(t *testing.T) {
 	s := state.New()
-	m := NewMonitor(s)
+	store := memory.NewOrderStore()
+	m := NewMonitor(s, store)
 
 	tpOrder := &types.Order{
 		ID:            1,
@@ -268,6 +281,8 @@ func TestMonitor_TP_SL_Orders(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_SL,
 	}
 
+	store.Add(tpOrder)
+	store.Add(slOrder)
 	m.AddOrder(tpOrder)
 	m.AddOrder(slOrder)
 

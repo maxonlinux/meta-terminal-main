@@ -326,7 +326,7 @@ func TestDebugFOKFullFill(t *testing.T) {
 		Quantity: 10,
 		Price:    50000,
 	}
-	e.PlaceOrder(input1)
+	_, _ = e.PlaceOrder(input1)
 
 	// User 1 places FOK BUY 10 - should fill completely
 	input2 := &types.OrderInput{
@@ -406,8 +406,12 @@ func TestDebugFOKPartialFill(t *testing.T) {
 
 	// Check symbol state directly
 	ss := st.GetSymbolState(1)
-	t.Logf("SymbolState Asks level: Price=%d, Quantity=%d, OrderCount=%d",
-		ss.Asks.Price, ss.Asks.Quantity, ss.Asks.Orders.Len())
+	if ss.AskIndex[50000] != nil {
+		t.Logf("SymbolState Asks level: Price=%d, Quantity=%d, OrderCount=%d",
+			ss.AskIndex[50000].Price, ss.AskIndex[50000].Quantity, ss.AskIndex[50000].Orders.Len())
+	} else {
+		t.Logf("SymbolState Asks level: nil")
+	}
 
 	// Check available quantity
 	available := e.getAvailableQuantity(1, 0, 0) // BUY side checks Asks, MARKET price=0
@@ -499,7 +503,7 @@ func TestDebugPOST_ONLY_Rejected(t *testing.T) {
 	// Order book should be unchanged
 	bids, asks = e.GetOrderBook(1, 10)
 	t.Logf("OrderBook after POST_ONLY rejection: Bids: %v, Asks: %v", bids, asks)
-	if len(asks) != 1 || asks[0][0] != 50000 || asks[0][1] != 10 {
+	if len(asks) != 2 || asks[0] != 50000 || asks[1] != 10 {
 		t.Errorf("ask book changed unexpectedly: %v", asks)
 	}
 }
@@ -559,7 +563,7 @@ func TestDebugPOST_ONLY_Accepted(t *testing.T) {
 	// Should be in order book as bid
 	bids, asks = e.GetOrderBook(1, 10)
 	t.Logf("OrderBook after POST_ONLY: Bids: %v, Asks: %v", bids, asks)
-	if len(bids) != 1 || bids[0][0] != 49999 || bids[0][1] != 10 {
+	if len(bids) != 2 || bids[0] != 49999 || bids[1] != 10 {
 		t.Errorf("bid not in book: %v", bids)
 	}
 }
@@ -598,7 +602,7 @@ func TestDebugPOST_ONLY_ExactSpread(t *testing.T) {
 	bids, asks := e.GetOrderBook(1, 10)
 	t.Logf("OrderBook: Bids: %v, Asks: %v", bids, asks)
 
-	// User 2 places POST_ONLY BUY @ 50000 (at ask price - does NOT cross)
+	// User 2 places POST_ONLY BUY @ 50000 (at ask price - IMMEDIATELY CROSSES!)
 	input2 := &types.OrderInput{
 		UserID:   2,
 		Symbol:   1,
@@ -611,15 +615,15 @@ func TestDebugPOST_ONLY_ExactSpread(t *testing.T) {
 	result2, err := e.PlaceOrder(input2)
 	t.Logf("POST_ONLY BUY 10 @ 50000 (at ask): err=%v, status=%d", err, result2.Status)
 
-	// Should be NEW (resting in book - doesn't cross spread)
-	if result2.Status != constants.ORDER_STATUS_NEW {
-		t.Errorf("expected NEW, got %d", result2.Status)
+	// Should be CANCELED (immediately crosses spread)
+	if result2.Status != constants.ORDER_STATUS_CANCELED {
+		t.Errorf("expected CANCELED, got %d", result2.Status)
 	}
 
-	// Should be in order book as bid at same price
+	// Order book should still only have the ask
 	bids, asks = e.GetOrderBook(1, 10)
 	t.Logf("OrderBook after POST_ONLY: Bids: %v, Asks: %v", bids, asks)
-	if len(bids) != 1 || len(asks) != 1 {
-		t.Errorf("expected both bids and asks: %v, %v", bids, asks)
+	if len(bids) != 0 || len(asks) != 2 {
+		t.Errorf("expected no bids and 1 ask (2 values): %v, %v", bids, asks)
 	}
 }

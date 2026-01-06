@@ -8,15 +8,17 @@ import (
 )
 
 type Dispatcher struct {
-	state  *state.State
-	queues map[types.UserID]*UserQueue
-	mu     sync.RWMutex
+	state      *state.State
+	orderStore *OrderStore
+	queues     map[types.UserID]*UserQueue
+	mu         sync.RWMutex
 }
 
-func NewDispatcher(s *state.State) *Dispatcher {
+func NewDispatcher(s *state.State, orderStore *OrderStore) *Dispatcher {
 	return &Dispatcher{
-		state:  s,
-		queues: make(map[types.UserID]*UserQueue),
+		state:      s,
+		orderStore: orderStore,
+		queues:     make(map[types.UserID]*UserQueue),
 	}
 }
 
@@ -53,13 +55,7 @@ func (d *Dispatcher) processQueue(q *UserQueue, userID types.UserID) *types.Orde
 		return nil
 	}
 
-	var order *types.Order
-	for _, ss := range d.state.Symbols {
-		if o, ok := ss.OrderMap[orderID]; ok {
-			order = o
-			break
-		}
-	}
+	order := d.orderStore.Get(orderID)
 	if order == nil {
 		return nil
 	}

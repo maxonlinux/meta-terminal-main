@@ -5,6 +5,10 @@ Very useful information here you MUST read: https://ramendraparmar.substack.com/
 ## Linter
 golangci-lint run
 
+## MCP
+you can use Context7 MCP server as much as you need
+also, you have github MCP for code snippets and best practices
+
 ## Overview
 
 High-performance trading engine optimized for minimal resource usage:

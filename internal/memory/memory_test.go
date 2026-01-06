@@ -126,7 +126,8 @@ func TestUserQueueClose(t *testing.T) {
 
 func TestDispatcher(t *testing.T) {
 	s := state.New()
-	d := NewDispatcher(s)
+	store := NewOrderStore()
+	d := NewDispatcher(s, store)
 
 	userID := types.UserID(1)
 

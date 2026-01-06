@@ -46,22 +46,6 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 
 	ss := st.GetSymbolState(1)
 	ss.Category = 1
-	ss.OrderMap[1] = &types.Order{
-		ID:             1,
-		UserID:         1,
-		Symbol:         1,
-		Side:           0,
-		Type:           0,
-		TIF:            0,
-		Status:         0,
-		Price:          50000,
-		Quantity:       10,
-		Filled:         0,
-		TriggerPrice:   0,
-		StopOrderType:  0,
-		ReduceOnly:     false,
-		CloseOnTrigger: false,
-	}
 
 	err := snap.Create(st, 12345)
 	if err != nil {
@@ -107,9 +91,6 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 	loadedSs := loadedSt.GetSymbolState(1)
 	if loadedSs.Category != 1 {
 		t.Errorf("expected category 1, got %d", loadedSs.Category)
-	}
-	if len(loadedSs.OrderMap) != 1 {
-		t.Errorf("expected 1 order in OrderMap, got %d", len(loadedSs.OrderMap))
 	}
 }
 

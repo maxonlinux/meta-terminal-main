@@ -59,8 +59,7 @@ func (p *OrderPool) grow() {
 }
 
 type TradePool struct {
-	pool    sync.Pool
-	counter int64
+	pool sync.Pool
 }
 
 func NewTradePool() *TradePool {

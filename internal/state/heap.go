@@ -6,26 +6,32 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-type Heap struct {
-	Data       []types.OrderID
-	PriceField func(*types.Order) types.Price
-	Max        bool
+type OrderLookup interface {
+	Get(orderID types.OrderID) *types.Order
 }
 
-func NewHeap(max bool, priceField func(*types.Order) types.Price) *Heap {
+type Heap struct {
+	Data        []types.OrderID
+	PriceField  func(*types.Order) types.Price
+	OrderLookup OrderLookup
+	Max         bool
+}
+
+func NewHeap(max bool, priceField func(*types.Order) types.Price, orderLookup OrderLookup) *Heap {
 	return &Heap{
-		Data:       make([]types.OrderID, 0),
-		PriceField: priceField,
-		Max:        max,
+		Data:        make([]types.OrderID, 0),
+		PriceField:  priceField,
+		OrderLookup: orderLookup,
+		Max:         max,
 	}
 }
 
-func (h *Heap) Push(orders map[types.OrderID]*types.Order, id types.OrderID) {
+func (h *Heap) Push(id types.OrderID) {
 	h.Data = append(h.Data, id)
-	h.siftUp(orders, len(h.Data)-1)
+	h.siftUp(len(h.Data) - 1)
 }
 
-func (h *Heap) Pop(orders map[types.OrderID]*types.Order) types.OrderID {
+func (h *Heap) Pop() types.OrderID {
 	if len(h.Data) == 0 {
 		return 0
 	}
@@ -33,12 +39,12 @@ func (h *Heap) Pop(orders map[types.OrderID]*types.Order) types.OrderID {
 	h.Data[0] = h.Data[len(h.Data)-1]
 	h.Data = h.Data[:len(h.Data)-1]
 	if len(h.Data) > 0 {
-		h.siftDown(orders, 0)
+		h.siftDown(0)
 	}
 	return result
 }
 
-func (h *Heap) Peek(orders map[types.OrderID]*types.Order) types.OrderID {
+func (h *Heap) Peek() types.OrderID {
 	if len(h.Data) == 0 {
 		return 0
 	}
@@ -49,10 +55,10 @@ func (h *Heap) Len() int {
 	return len(h.Data)
 }
 
-func (h *Heap) siftUp(orders map[types.OrderID]*types.Order, idx int) {
+func (h *Heap) siftUp(idx int) {
 	for idx > 0 {
 		parent := (idx - 1) / 2
-		if h.less(orders, parent, idx) {
+		if h.less(parent, idx) {
 			break
 		}
 		h.Data[parent], h.Data[idx] = h.Data[idx], h.Data[parent]
@@ -60,16 +66,16 @@ func (h *Heap) siftUp(orders map[types.OrderID]*types.Order, idx int) {
 	}
 }
 
-func (h *Heap) siftDown(orders map[types.OrderID]*types.Order, idx int) {
+func (h *Heap) siftDown(idx int) {
 	n := len(h.Data)
 	for {
 		left := 2*idx + 1
 		right := 2*idx + 2
 		smallest := idx
-		if left < n && h.less(orders, left, smallest) {
+		if left < n && h.less(left, smallest) {
 			smallest = left
 		}
-		if right < n && h.less(orders, right, smallest) {
+		if right < n && h.less(right, smallest) {
 			smallest = right
 		}
 		if smallest == idx {
@@ -80,24 +86,29 @@ func (h *Heap) siftDown(orders map[types.OrderID]*types.Order, idx int) {
 	}
 }
 
-func (h *Heap) less(orders map[types.OrderID]*types.Order, i, j int) bool {
+func (h *Heap) less(i, j int) bool {
 	if i < 0 || i >= len(h.Data) || j < 0 || j >= len(h.Data) {
 		return false
 	}
-	priceI := h.PriceField(orders[h.Data[i]])
-	priceJ := h.PriceField(orders[h.Data[j]])
+	orderI := h.OrderLookup.Get(h.Data[i])
+	orderJ := h.OrderLookup.Get(h.Data[j])
+	if orderI == nil || orderJ == nil {
+		return false
+	}
+	priceI := h.PriceField(orderI)
+	priceJ := h.PriceField(orderJ)
 	if h.Max {
 		return priceI > priceJ
 	}
 	return priceI < priceJ
 }
 
-func (h *Heap) Remove(orderID types.OrderID, orders map[types.OrderID]*types.Order) {
+func (h *Heap) Remove(orderID types.OrderID) {
 	for i, oid := range h.Data {
 		if oid == orderID {
 			h.Data = slices.Delete(h.Data, i, i+1)
-			h.siftUp(orders, i)
-			h.siftDown(orders, i)
+			h.siftUp(i)
+			h.siftDown(i)
 			return
 		}
 	}

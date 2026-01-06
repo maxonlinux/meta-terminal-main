@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/anomalyco/meta-terminal-go/internal/position"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -317,7 +318,7 @@ func TestEditLeverage_EmptyPositionUpdatesLeverage(t *testing.T) {
 
 func TestPosition_SideSetOnOpen(t *testing.T) {
 	s := state.New()
-	e := New(nil, s)
+	_ = New(nil, s)
 
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
@@ -331,7 +332,7 @@ func TestPosition_SideSetOnOpen(t *testing.T) {
 		Margin:    0,
 	}
 
-	e.updatePosition(userID, symbol, 0, 50000, 100, 2)
+	position.UpdatePosition(s, userID, symbol, 100, 50000, 0, 2)
 
 	pos := us.Positions[symbol]
 	if pos.Side != 0 {
@@ -347,7 +348,7 @@ func TestPosition_SideSetOnOpen(t *testing.T) {
 
 func TestPosition_SideReversed(t *testing.T) {
 	s := state.New()
-	e := New(nil, s)
+	_ = New(nil, s)
 
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
@@ -361,8 +362,8 @@ func TestPosition_SideReversed(t *testing.T) {
 		Margin:    0,
 	}
 
-	e.updatePosition(userID, symbol, 0, 50000, 100, 2)
-	e.updatePosition(userID, symbol, 1, 51000, 150, 2)
+	position.UpdatePosition(s, userID, symbol, 100, 50000, 0, 2)
+	position.UpdatePosition(s, userID, symbol, 150, 51000, 1, 2)
 
 	pos := us.Positions[symbol]
 	if pos.Side != 1 {
@@ -375,7 +376,7 @@ func TestPosition_SideReversed(t *testing.T) {
 
 func TestPosition_SideNullOnClose(t *testing.T) {
 	s := state.New()
-	e := New(nil, s)
+	_ = New(nil, s)
 
 	userID := types.UserID(1)
 	symbol := types.SymbolID(1)
@@ -389,8 +390,8 @@ func TestPosition_SideNullOnClose(t *testing.T) {
 		Margin:    0,
 	}
 
-	e.updatePosition(userID, symbol, 0, 50000, 100, 2)
-	e.updatePosition(userID, symbol, 1, 51000, 100, 2)
+	position.UpdatePosition(s, userID, symbol, 100, 50000, 0, 2)
+	position.UpdatePosition(s, userID, symbol, 100, 51000, 1, 2)
 
 	pos := us.Positions[symbol]
 	if pos.Side != -1 {

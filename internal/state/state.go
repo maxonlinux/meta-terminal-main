@@ -1,12 +1,14 @@
 package state
 
 import (
+	"slices"
+
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 type State struct {
 	Users       map[types.UserID]*UserState
-	Symbols     map[types.SymbolID]*SymbolState
+	Symbols     map[types.SymbolID]*OrderBookState
 	NextOrderID types.OrderID
 }
 
@@ -15,25 +17,23 @@ type UserState struct {
 	Positions map[types.SymbolID]*types.Position
 }
 
-type SymbolState struct {
-	Category       int8
-	Bids           *PriceLevel
-	Asks           *PriceLevel
-	BidLevels      map[types.Price]*PriceLevel
-	AskLevels      map[types.Price]*PriceLevel
-	OrderMap       map[types.OrderID]*types.Order
-	BuyTriggers    *Heap
-	SellTriggers   *Heap
-	UserReduceOnly map[types.UserID]map[types.OrderID]struct{}
+type OrderBookState struct {
+	Category int8
+
+	BidIndex  map[types.Price]*PriceLevel
+	BidPrices []types.Price
+
+	AskIndex  map[types.Price]*PriceLevel
+	AskPrices []types.Price
+
+	BuyTriggers  *Heap
+	SellTriggers *Heap
 }
 
 type PriceLevel struct {
-	Price          types.Price
-	Quantity       types.Quantity
-	Orders         *OrderHeap
-	FirstOrderID   types.OrderID
-	PrevPriceLevel *PriceLevel
-	NextPriceLevel *PriceLevel
+	Price    types.Price
+	Quantity types.Quantity
+	Orders   *OrderHeap
 }
 
 type OrderHeap struct {
@@ -55,7 +55,6 @@ func (h *OrderHeap) Pop() types.OrderID {
 	if len(h.Data) == 0 {
 		return 0
 	}
-
 	min := h.Data[0]
 	h.Data[0] = h.Data[len(h.Data)-1]
 	h.Data = h.Data[:len(h.Data)-1]
@@ -93,7 +92,6 @@ func (h *OrderHeap) siftDown(index int) {
 		left := 2*index + 1
 		right := left + 1
 		smallest := index
-
 		if left < n && h.Data[left] < h.Data[smallest] {
 			smallest = left
 		}
@@ -111,7 +109,7 @@ func (h *OrderHeap) siftDown(index int) {
 func (h *OrderHeap) Remove(orderID types.OrderID) bool {
 	for i, id := range h.Data {
 		if id == orderID {
-			h.Data = append(h.Data[:i], h.Data[i+1:]...)
+			h.Data = slices.Delete(h.Data, i, i+1)
 			h.siftDown(i)
 			return true
 		}
@@ -122,7 +120,7 @@ func (h *OrderHeap) Remove(orderID types.OrderID) bool {
 func New() *State {
 	return &State{
 		Users:       make(map[types.UserID]*UserState),
-		Symbols:     make(map[types.SymbolID]*SymbolState),
+		Symbols:     make(map[types.SymbolID]*OrderBookState),
 		NextOrderID: 1,
 	}
 }
@@ -139,66 +137,17 @@ func (s *State) GetUserState(userID types.UserID) *UserState {
 	return us
 }
 
-func (s *State) GetSymbolState(symbol types.SymbolID) *SymbolState {
+func (s *State) GetSymbolState(symbol types.SymbolID) *OrderBookState {
 	if ss, ok := s.Symbols[symbol]; ok {
 		return ss
 	}
-	ss := &SymbolState{
-		Category:       0,
-		Bids:           nil,
-		Asks:           nil,
-		BidLevels:      make(map[types.Price]*PriceLevel),
-		AskLevels:      make(map[types.Price]*PriceLevel),
-		OrderMap:       make(map[types.OrderID]*types.Order),
-		BuyTriggers:    nil,
-		SellTriggers:   nil,
-		UserReduceOnly: make(map[types.UserID]map[types.OrderID]struct{}),
+	ss := &OrderBookState{
+		Category:  0,
+		BidIndex:  make(map[types.Price]*PriceLevel),
+		BidPrices: make([]types.Price, 0),
+		AskIndex:  make(map[types.Price]*PriceLevel),
+		AskPrices: make([]types.Price, 0),
 	}
 	s.Symbols[symbol] = ss
 	return ss
-}
-
-func (ss *SymbolState) AddBidLevel(price types.Price) *PriceLevel {
-	if level, ok := ss.BidLevels[price]; ok {
-		return level
-	}
-	level := &PriceLevel{
-		Price:  price,
-		Orders: NewOrderHeap(),
-	}
-	ss.BidLevels[price] = level
-	level.NextPriceLevel = ss.Bids
-	ss.Bids = level
-	return level
-}
-
-func (ss *SymbolState) AddAskLevel(price types.Price) *PriceLevel {
-	if level, ok := ss.AskLevels[price]; ok {
-		return level
-	}
-	level := &PriceLevel{
-		Price:  price,
-		Orders: NewOrderHeap(),
-	}
-	ss.AskLevels[price] = level
-	level.NextPriceLevel = ss.Asks
-	ss.Asks = level
-	return level
-}
-
-func (ss *SymbolState) GetUserReduceOnlyOrders(userID types.UserID) []types.OrderID {
-	if orders, ok := ss.UserReduceOnly[userID]; ok {
-		result := make([]types.OrderID, 0, len(orders))
-		for oid := range orders {
-			result = append(result, oid)
-		}
-		return result
-	}
-	return nil
-}
-
-func (ss *SymbolState) RemoveReduceOnlyOrder(userID types.UserID, orderID types.OrderID) {
-	if orders, ok := ss.UserReduceOnly[userID]; ok {
-		delete(orders, orderID)
-	}
 }

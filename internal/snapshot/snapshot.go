@@ -63,25 +63,7 @@ type PositionSnap struct {
 }
 
 type SymbolSnap struct {
-	Category int8                 `json:"category"`
-	OrderMap map[int64]*OrderSnap `json:"order_map"`
-}
-
-type OrderSnap struct {
-	ID             int64 `json:"id"`
-	UserID         int64 `json:"user_id"`
-	Symbol         int32 `json:"symbol"`
-	Side           int8  `json:"side"`
-	Type           int8  `json:"type"`
-	TIF            int8  `json:"tif"`
-	Status         int8  `json:"status"`
-	Price          int64 `json:"price"`
-	Quantity       int64 `json:"quantity"`
-	Filled         int64 `json:"filled"`
-	TriggerPrice   int64 `json:"trigger_price"`
-	StopOrderType  int8  `json:"stop_order_type"`
-	ReduceOnly     bool  `json:"reduce_only"`
-	CloseOnTrigger bool  `json:"close_on_trigger"`
+	Category int8 `json:"category"`
 }
 
 func New(path string, maxSize int64) *Snapshot {
@@ -237,26 +219,6 @@ func (s *Snapshot) serialize(st *state.State, walOffset int64) *SnapshotData {
 	for symbolID, ss := range st.Symbols {
 		symbolSnap := &SymbolSnap{
 			Category: ss.Category,
-			OrderMap: make(map[int64]*OrderSnap),
-		}
-
-		for orderID, order := range ss.OrderMap {
-			symbolSnap.OrderMap[int64(orderID)] = &OrderSnap{
-				ID:             int64(order.ID),
-				UserID:         int64(order.UserID),
-				Symbol:         int32(order.Symbol),
-				Side:           int8(order.Side),
-				Type:           int8(order.Type),
-				TIF:            int8(order.TIF),
-				Status:         int8(order.Status),
-				Price:          int64(order.Price),
-				Quantity:       int64(order.Quantity),
-				Filled:         int64(order.Filled),
-				TriggerPrice:   int64(order.TriggerPrice),
-				StopOrderType:  int8(order.StopOrderType),
-				ReduceOnly:     order.ReduceOnly,
-				CloseOnTrigger: order.CloseOnTrigger,
-			}
 		}
 
 		data.Symbols[int32(symbolID)] = symbolSnap
@@ -298,25 +260,6 @@ func (s *Snapshot) deserialize(data *SnapshotData) *state.State {
 	for symbolID, symbolSnap := range data.Symbols {
 		ss := st.GetSymbolState(types.SymbolID(symbolID))
 		ss.Category = symbolSnap.Category
-
-		for orderID, orderSnap := range symbolSnap.OrderMap {
-			ss.OrderMap[types.OrderID(orderID)] = &types.Order{
-				ID:             types.OrderID(orderSnap.ID),
-				UserID:         types.UserID(orderSnap.UserID),
-				Symbol:         types.SymbolID(orderSnap.Symbol),
-				Side:           int8(orderSnap.Side),
-				Type:           int8(orderSnap.Type),
-				TIF:            int8(orderSnap.TIF),
-				Status:         int8(orderSnap.Status),
-				Price:          types.Price(orderSnap.Price),
-				Quantity:       types.Quantity(orderSnap.Quantity),
-				Filled:         types.Quantity(orderSnap.Filled),
-				TriggerPrice:   types.Price(orderSnap.TriggerPrice),
-				StopOrderType:  int8(orderSnap.StopOrderType),
-				ReduceOnly:     orderSnap.ReduceOnly,
-				CloseOnTrigger: orderSnap.CloseOnTrigger,
-			}
-		}
 	}
 
 	return st
