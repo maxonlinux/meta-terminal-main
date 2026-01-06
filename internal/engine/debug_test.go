@@ -414,7 +414,7 @@ func TestDebugFOKPartialFill(t *testing.T) {
 	}
 
 	// Check available quantity
-	available := e.getAvailableQuantity(1, 0, 0) // BUY side checks Asks, MARKET price=0
+	available := e.ob.AvailableQuantity(ss, 0, 0, 100) // BUY side checks Asks, MARKET price=0, need up to 100
 	t.Logf("Available quantity for BUY: %d", available)
 
 	// User 1 places FOK BUY 10 - should be CANCELED (not enough liquidity)

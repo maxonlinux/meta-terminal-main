@@ -166,20 +166,6 @@ func AdjustReduceOnlyOrders(orderStore *memory.OrderStore, s *state.State, userI
 	}
 }
 
-func abs(qty types.Quantity) types.Quantity {
-	if qty < 0 {
-		return -qty
-	}
-	return qty
-}
-
-func min(a, b types.Quantity) types.Quantity {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func GetLeverage(s *state.State, userID types.UserID, symbol types.SymbolID) int8 {
 	pos := s.GetUserState(userID).Positions[symbol]
 	if pos != nil && pos.Leverage > 0 {

@@ -251,4 +251,24 @@ func (ob *OrderBook) MarkLevelEmpty(ss *state.OrderBookState, isBid bool, price 
 	}
 }
 
+func (ob *OrderBook) AvailableQuantity(ss *state.OrderBookState, side int8, maxPrice int64, needed types.Quantity) types.Quantity {
+	var total types.Quantity
+	if side == constants.ORDER_SIDE_BUY {
+		for level := ss.BestAsk; level != nil && total < needed; level = level.NextAsk {
+			if maxPrice > 0 && int64(level.Price) > maxPrice {
+				break
+			}
+			total += level.Quantity
+		}
+	} else {
+		for level := ss.BestBid; level != nil && total < needed; level = level.NextBid {
+			if maxPrice > 0 && int64(level.Price) < maxPrice {
+				break
+			}
+			total += level.Quantity
+		}
+	}
+	return total
+}
+
 func (ob *OrderBook) Compact(ss *state.OrderBookState) {}

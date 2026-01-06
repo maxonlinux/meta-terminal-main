@@ -70,6 +70,7 @@ type Position struct {
 type OrderInput struct {
 	UserID         UserID
 	Symbol         SymbolID
+	Category       int8
 	Side           int8
 	Type           int8
 	TIF            int8

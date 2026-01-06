@@ -24,6 +24,7 @@ type Outbox struct {
 	buffer      []Event
 	flushTicker *time.Ticker
 	done        chan struct{}
+	wg          sync.WaitGroup
 }
 
 func New(path string, batchSize int, flushInterval time.Duration) (*Outbox, error) {
@@ -80,10 +81,12 @@ func (o *Outbox) flushLocked() {
 	events := o.buffer
 	o.buffer = make([]Event, 0, o.batchSize)
 
+	o.wg.Add(1)
 	go o.writeToDisk(events)
 }
 
 func (o *Outbox) writeToDisk(events []Event) {
+	defer o.wg.Done()
 	filename := filepath.Join(o.path, "outbox_1e7e3c6a.jsonl")
 
 	data, err := json.Marshal(events)
@@ -97,6 +100,7 @@ func (o *Outbox) writeToDisk(events []Event) {
 func (o *Outbox) Close() {
 	close(o.done)
 	o.Flush()
+	o.wg.Wait()
 }
 
 func (o *Outbox) BufferLen() int {

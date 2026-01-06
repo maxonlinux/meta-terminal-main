@@ -367,10 +367,10 @@ func TestIntegration_ClosePosition(t *testing.T) {
 
 	ts.SeedBalance(1, 1000000)
 	ts.SeedBalance(2, 1000000)
+	ts.SeedBalance(3, 1000000)
 
-	// Create a position first
-	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000) // User 2 LIMIT SELL
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)     // User 1 MARKET BUY to open position
+	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000)
+	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
 
 	pos := ts.GetPosition(1, 1)
 	if pos == nil {
@@ -379,6 +379,8 @@ func TestIntegration_ClosePosition(t *testing.T) {
 	if pos.Size != 10 {
 		t.Errorf("expected size 10, got %d", pos.Size)
 	}
+
+	ts.PlaceOrder(3, 1, 0, 0, 0, 10, 50001)
 
 	err := ts.ClosePosition(1, 1)
 	if err != nil {
@@ -453,15 +455,19 @@ func TestIntegration_ReduceOnly(t *testing.T) {
 
 	ts.SeedBalance(1, 1000000)
 	ts.SeedBalance(2, 1000000)
+	ts.SeedBalance(3, 1000000)
 
-	// User 2 places LIMIT SELL 10 @ 50000 to provide liquidity
+	// User 2 places LIMIT SELL 10 @ 50000 (ASK for opening position)
 	ts.PlaceOrder(2, 1, 1, 0, 0, 10, 50000)
 
-	// User 1 places MARKET BUY 10 to open LONG position
-	ts.PlaceOrder(1, 1, 0, 1, 0, 10, 0)
+	// User 1 opens LONG position with MARKET BUY 10 IOC (matches User 2's ASK)
+	ts.PlaceOrder(1, 1, 0, 1, 1, 10, 0)
 
-	// User 1 places MARKET SELL 5 with reduceOnly
-	resp := ts.PlaceOrder(1, 1, 1, 1, 0, 5, 0, WithReduceOnly())
+	// User 3 places LIMIT BUY 5 @ 51000 (BID for reduceOnly SELL)
+	ts.PlaceOrder(3, 1, 0, 0, 0, 5, 51000)
+
+	// User 1 places reduceOnly SELL 5 (matches User 3's BID)
+	resp := ts.PlaceOrder(1, 1, 1, 0, 1, 5, 51000, WithReduceOnly())
 
 	if resp.Status != 2 {
 		t.Errorf("expected FILLED (2), got %d", resp.Status)

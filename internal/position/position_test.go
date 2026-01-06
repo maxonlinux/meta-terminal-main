@@ -209,21 +209,3 @@ func TestAdjustReduceOnlyOrdersCancel(t *testing.T) {
 		t.Errorf("expected order2 quantity 10, got %d", order2.Quantity)
 	}
 }
-
-func TestAbs(t *testing.T) {
-	if abs(10) != 10 {
-		t.Errorf("abs(10) = 10, got %d", abs(10))
-	}
-	if abs(-10) != 10 {
-		t.Errorf("abs(-10) = 10, got %d", abs(-10))
-	}
-}
-
-func TestMin(t *testing.T) {
-	if min(5, 10) != 5 {
-		t.Errorf("min(5, 10) = 5, got %d", min(5, 10))
-	}
-	if min(10, 5) != 5 {
-		t.Errorf("min(10, 5) = 5, got %d", min(10, 5))
-	}
-}

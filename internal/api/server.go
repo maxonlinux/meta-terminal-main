@@ -148,6 +148,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 	input := &types.OrderInput{
 		UserID:         types.UserID(req.UserID),
 		Symbol:         types.SymbolID(req.Symbol),
+		Category:       req.Category,
 		Side:           req.Side,
 		Type:           req.Type,
 		TIF:            req.TIF,

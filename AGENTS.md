@@ -20,6 +20,8 @@ High-performance trading engine optimized for minimal resource usage:
 
 ## Ключевые принципы
 
+1. **ВСЕ ордера требуют counterparty** - для исполнения ордера в книге должен быть встречный ордер. Без counterparty ордер не исполнится (будет canceled для IOC/FOK или останется в книге для GTC/POST_ONLY).
+
 2. **Conditional (STOP) ордера** - Превращаются в новые ордера. Существующий ордер меняет статус UNTRIGGERED → TRIGGERED и создается клон этого ордера с triggerPrice = null.
 
 3. **Lock/Unlock** - только для RESTING ордеров (LIMIT, не исполнившиеся сразу), только остаток (qty - filled).
@@ -509,7 +511,8 @@ if (Math.sign(current.size) !== Math.sign(deltaSize)) {
 
 STOP SELL @ 49000 closeOnTrigger:
   При срабатывании:
-  → closePosition(@ 49000)
+  → closePosition() - размещает MARKET IOC ордер
+  → Для исполнения НУЖЕН counterparty (BID в книге)!
   → realizedPnl = -1000 USDT
   → cancelOrder(stop)
   → Позиция = 0
@@ -541,6 +544,8 @@ BUY 0.5 BTC reduceOnly:
 
 ## 14. Итоговые правила
 
+**ВСЕ ордера требуют counterparty** - без встречного ордера в книге исполнение невозможно.
+
 1. **REJECTED** - не статус. Ордер не создаётся.
 
 2. **STOP** - превращается в новый ордер. Существующий меняет статус.
@@ -557,7 +562,7 @@ BUY 0.5 BTC reduceOnly:
 
 8. **reduceOnly** - только LINEAR, только уменьшает позицию.
 
-9. **closeOnTrigger** - закрывает позицию.
+9. **closeOnTrigger** - закрывает позицию через MARKET IOC ордер (требует counterparty).
 
 СХЕМА ордера который приходит от клиента: {
 userId: string;
