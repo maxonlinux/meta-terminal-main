@@ -7,6 +7,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
+	"github.com/anomalyco/meta-terminal-go/internal/utils"
 )
 
 func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, filledQty types.Quantity, price types.Price, side int8, leverage int8) (*types.Position, int64) {
@@ -23,7 +24,7 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 			Version:    0,
 		}
 		us.Positions[symbol] = pos
-	} else if pos.Leverage == 0 {
+	} else if pos.Leverage < 2 {
 		pos.Leverage = leverage
 	}
 
@@ -36,8 +37,7 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 	} else if pos.Side == side {
 		currentSize := pos.Size
 		newSize := currentSize + filledQty
-		newEntryPrice := types.Price((int64(pos.EntryPrice)*int64(currentSize) + int64(price)*int64(filledQty)) / int64(newSize))
-		pos.EntryPrice = newEntryPrice
+		pos.EntryPrice = types.Price(utils.Avg(int64(pos.EntryPrice), int64(currentSize), int64(price), int64(filledQty)))
 		pos.Size = newSize
 	} else {
 		if filledQty >= pos.Size {
@@ -82,20 +82,20 @@ func CalculatePositionRisk(pos *types.Position) {
 		return
 	}
 
-	pos.InitialMargin = int64(pos.Size) * int64(pos.EntryPrice) / int64(pos.Leverage)
-	pos.MaintenanceMargin = pos.InitialMargin / 10
+	pos.InitialMargin = utils.MulDiv(int64(pos.Size), int64(pos.EntryPrice), int64(pos.Leverage))
+	pos.MaintenanceMargin = utils.Div(pos.InitialMargin, int64(constants.MAINTENANCE_MARGIN_RATIO))
 
-	buffer := pos.InitialMargin - pos.MaintenanceMargin
+	buffer := utils.Sub(pos.InitialMargin, pos.MaintenanceMargin)
 
 	if pos.Side == constants.ORDER_SIDE_BUY {
-		pos.LiquidationPrice = pos.EntryPrice - types.Price(buffer/int64(pos.Size))
+		pos.LiquidationPrice = types.Price(utils.Sub(int64(pos.EntryPrice), utils.Div(buffer, int64(pos.Size))))
 	} else {
-		pos.LiquidationPrice = pos.EntryPrice + types.Price(buffer/int64(pos.Size))
+		pos.LiquidationPrice = types.Price(utils.Add(int64(pos.EntryPrice), utils.Div(buffer, int64(pos.Size))))
 	}
 }
 
 func CalculateMargin(qty types.Quantity, price types.Price, leverage int8) int64 {
-	return int64(qty) * int64(price) / int64(leverage)
+	return utils.MulDiv(int64(qty), int64(price), int64(leverage))
 }
 
 func GetPosition(s *state.State, userID types.UserID, symbol types.SymbolID) *types.Position {

@@ -1,11 +1,26 @@
 package memory
 
 import (
+	"math/big"
 	"sync"
 	"sync/atomic"
 
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
+
+var bigIntPool = sync.Pool{
+	New: func() interface{} {
+		return new(big.Int)
+	},
+}
+
+func GetBigInt() *big.Int {
+	return bigIntPool.Get().(*big.Int)
+}
+
+func PutBigInt(b *big.Int) {
+	bigIntPool.Put(b)
+}
 
 type OrderPool struct {
 	stack []*types.Order

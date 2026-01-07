@@ -6,6 +6,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/position"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
+	"github.com/anomalyco/meta-terminal-go/internal/utils"
 )
 
 func ExecuteSpotTrade(s *state.State, taker, maker *types.Order, price types.Price, qty types.Quantity) {
@@ -22,28 +23,34 @@ func ExecuteSpotTrade(s *state.State, taker, maker *types.Order, price types.Pri
 }
 
 func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.Price, qty types.Quantity, leverage int8) {
-	margin := position.CalculateMargin(qty, price, leverage)
-
+	usTaker := s.GetUserState(taker.UserID)
+	oldTakerMargin := int64(0)
+	if posTaker := usTaker.Positions[taker.Symbol]; posTaker != nil {
+		oldTakerMargin = posTaker.InitialMargin
+	}
 	_, takerPnl := position.UpdatePosition(s, taker.UserID, taker.Symbol, qty, price, taker.Side, leverage)
+
+	usMaker := s.GetUserState(maker.UserID)
+	oldMakerMargin := int64(0)
+	if posMaker := usMaker.Positions[maker.Symbol]; posMaker != nil {
+		oldMakerMargin = posMaker.InitialMargin
+	}
 	_, makerPnl := position.UpdatePosition(s, maker.UserID, maker.Symbol, qty, price, maker.Side, leverage)
 
 	tBal := balance.GetOrCreate(s, taker.UserID, "USDT")
-	if taker.Side == constants.ORDER_SIDE_BUY {
-		tBal.Margin += margin
-		tBal.Available += takerPnl
-	} else {
-		tBal.Margin -= margin
-		tBal.Available += takerPnl
-	}
+	takerNewMargin := usTaker.Positions[taker.Symbol].InitialMargin
+	tBal.Margin += takerNewMargin - oldTakerMargin
+	tBal.Available += takerPnl
 	tBal.Version++
 
 	mBal := balance.GetOrCreate(s, maker.UserID, "USDT")
-	if maker.Side == constants.ORDER_SIDE_BUY {
-		mBal.Margin += margin
-		mBal.Available += makerPnl
-	} else {
-		mBal.Margin -= margin
-		mBal.Available += makerPnl
-	}
+	makerNewMargin := usMaker.Positions[maker.Symbol].InitialMargin
+	mBal.Margin += makerNewMargin - oldMakerMargin
+	mBal.Available += makerPnl
+
+	orderMargin := position.CalculateMargin(maker.Quantity, maker.Price, leverage)
+	filledRatio := utils.Div(int64(qty), int64(maker.Quantity))
+	unlockAmount := utils.Mul(int64(orderMargin), int64(filledRatio))
+	mBal.Locked -= unlockAmount
 	mBal.Version++
 }

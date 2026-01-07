@@ -18,7 +18,7 @@ import (
 var (
 	ErrInsufficientBalance = errors.New("insufficient balance for new margin requirement")
 	ErrPositionLiquidated  = errors.New("position would be liquidated with new leverage")
-	ErrInvalidLeverage     = errors.New("leverage must be between 1 and 100")
+	ErrInvalidLeverage     = errors.New("leverage must be between 2 and 100")
 )
 
 type Engine struct {
@@ -113,7 +113,7 @@ func (e *Engine) newOrder(id types.OrderID, input *types.OrderInput) *types.Orde
 
 func (e *Engine) handleMarketOrder(order *types.Order, input *types.OrderInput, result *types.OrderResult) {
 	if input.TIF == constants.TIF_FOK {
-		e.executeFOKOrder(order, input, result)
+		e.executeFOKOrder(order, result)
 		return
 	}
 
@@ -144,8 +144,22 @@ func (e *Engine) handleLimitOrder(order *types.Order, input *types.OrderInput, r
 			return
 		}
 		balance.LockForOrder(e.state, e.state.GetSymbolState(order.Symbol).Category, order.UserID, order, position.GetLeverage(e.state, order.UserID, order.Symbol))
-		order.Status, result.Status = constants.ORDER_STATUS_NEW, constants.ORDER_STATUS_NEW
-		e.ob.AddOrder(ss, order)
+
+		filled := e.matchOrder(order)
+		if filled > 0 {
+			order.Filled = filled
+			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+			result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+			result.Filled = filled
+			result.Remaining = order.Quantity - filled
+			if filled >= order.Quantity {
+				order.Status = constants.ORDER_STATUS_FILLED
+				result.Status = constants.ORDER_STATUS_FILLED
+			}
+		} else {
+			order.Status, result.Status = constants.ORDER_STATUS_NEW, constants.ORDER_STATUS_NEW
+			e.ob.AddOrder(ss, order)
+		}
 
 	case constants.TIF_IOC:
 		filled := e.matchOrder(order)
@@ -160,11 +174,11 @@ func (e *Engine) handleLimitOrder(order *types.Order, input *types.OrderInput, r
 		}
 
 	case constants.TIF_FOK:
-		e.executeFOKOrder(order, input, result)
+		e.executeFOKOrder(order, result)
 	}
 }
 
-func (e *Engine) executeFOKOrder(order *types.Order, input *types.OrderInput, result *types.OrderResult) {
+func (e *Engine) executeFOKOrder(order *types.Order, result *types.OrderResult) {
 	price := int64(0)
 	if order.Type == constants.ORDER_TYPE_LIMIT {
 		price = int64(order.Price)
@@ -446,9 +460,6 @@ func (e *Engine) matchOrder(order *types.Order) types.Quantity {
 			current = current.NextBid
 		}
 	}
-	if filled > 0 {
-		balance.UnlockForOrder(e.state, e.state.GetSymbolState(order.Symbol).Category, order.UserID, order, position.GetLeverage(e.state, order.UserID, order.Symbol))
-	}
 	return filled
 }
 
@@ -479,16 +490,26 @@ func (e *Engine) matchAtLevel(order *types.Order, level *state.PriceLevel, level
 			continue
 		}
 
-		tradeQty := maker.Quantity - maker.Filled
-		if order.Quantity-filled < tradeQty {
-			tradeQty = order.Quantity - filled
+		tradeQty := min(order.Quantity-filled, maker.Quantity-maker.Filled)
+
+		if order.Price > 0 {
+			if order.Side == constants.ORDER_SIDE_BUY && order.Price < types.Price(level.Price) {
+				break
+			}
+			if order.Side == constants.ORDER_SIDE_SELL && order.Price > types.Price(level.Price) {
+				break
+			}
 		}
 
 		if needsSideCheck {
 			lev := position.GetLeverage(e.state, order.UserID, order.Symbol)
 			trade.ExecuteLinearTrade(e.state, order, maker, tradePrice, tradeQty, lev)
+			e.logFill(order, maker, tradePrice, tradeQty)
+			e.logPositionUpdate(order.UserID, order.Symbol)
+			e.logPositionUpdate(maker.UserID, maker.Symbol)
 		} else {
 			trade.ExecuteSpotTrade(e.state, order, maker, tradePrice, tradeQty)
+			e.logFill(order, maker, tradePrice, tradeQty)
 		}
 
 		maker.Filled += tradeQty
@@ -529,5 +550,39 @@ func (e *Engine) logOrderOp(opType wal.OperationType, userID types.UserID, symbo
 		UserID:    int64(userID),
 		Symbol:    int32(symbol),
 		OrderID:   int64(orderID),
+	})
+}
+
+func (e *Engine) logFill(taker, maker *types.Order, price types.Price, qty types.Quantity) {
+	if e.wal == nil {
+		return
+	}
+	_ = e.wal.AppendFill(&wal.FillOp{
+		TakerOrderID: int64(taker.ID),
+		MakerOrderID: int64(maker.ID),
+		Price:        int64(price),
+		Quantity:     int64(qty),
+		Symbol:       int32(taker.Symbol),
+		TakerUserID:  int64(taker.UserID),
+		MakerUserID:  int64(maker.UserID),
+	})
+}
+
+func (e *Engine) logPositionUpdate(userID types.UserID, symbol types.SymbolID) {
+	if e.wal == nil {
+		return
+	}
+	us := e.state.GetUserState(userID)
+	pos := us.Positions[symbol]
+	if pos == nil {
+		return
+	}
+	_ = e.wal.AppendPositionUpdate(&wal.PositionUpdateOp{
+		UserID:     int64(userID),
+		Symbol:     int32(symbol),
+		Size:       int64(pos.Size),
+		Side:       pos.Side,
+		EntryPrice: int64(pos.EntryPrice),
+		Leverage:   pos.Leverage,
 	})
 }

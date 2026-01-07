@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/anomalyco/meta-terminal-go/internal/api"
 	"github.com/anomalyco/meta-terminal-go/internal/config"
 	"github.com/anomalyco/meta-terminal-go/internal/engine"
 	"github.com/anomalyco/meta-terminal-go/internal/outbox"
+	"github.com/anomalyco/meta-terminal-go/internal/snapshot"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/wal"
 )
@@ -25,15 +27,38 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	wal, err := wal.New(cfg.WALPath, cfg.WALBufferSize)
+	w, err := wal.New(cfg.WALPath, cfg.WALBufferSize)
 	if err != nil {
 		log.Fatalf("Failed to initialize WAL: %v", err)
 	}
-	defer wal.Close()
+	defer w.Close()
 
 	state := state.New()
+	var startOffset int64 = 0
 
-	tradingEngine := engine.New(wal, state)
+	snap := snapshot.New(cfg.SnapshotPath, 100*1024*1024)
+	loadedState, offset, err := snap.Load()
+	if err == nil {
+		state = loadedState
+		startOffset = offset
+		log.Printf("Loaded snapshot, WAL offset: %d", startOffset)
+	}
+
+	tradingEngine := engine.New(w, state)
+
+	if startOffset > 0 {
+		log.Printf("Replaying WAL from offset %d...", startOffset)
+		err = w.IterateFrom(startOffset, func(op *wal.Operation) error {
+			return nil
+		})
+		if err != nil {
+			log.Printf("WAL replay error: %v", err)
+		}
+	}
+
+	snapManager := snapshot.NewManager(snap, w, state, time.Duration(cfg.SnapshotInterval)*time.Second, 100)
+	snapManager.Start(ctx)
+	defer snapManager.Stop()
 
 	outboxWorker, err := outbox.New(cfg.OutboxPath, cfg.OutboxBatchSize, cfg.OutboxFlushDuration)
 	if err != nil {

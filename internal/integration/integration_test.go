@@ -69,6 +69,42 @@ func NewTestServer(t *testing.T) *TestServer {
 	}
 }
 
+func NewTestServerWithDir(t *testing.T, tmpDir string) *TestServer {
+	cfg := &config.Config{
+		ServerHost: "127.0.0.1",
+		ServerPort: 8080,
+	}
+
+	st := state.New()
+
+	w, err := wal.New(tmpDir+"/wal", 64)
+	if err != nil {
+		t.Fatalf("failed to create WAL: %v", err)
+	}
+
+	snap := snapshot.New(tmpDir+"/snapshots", 100*1024*1024)
+
+	e := engine.New(w, st)
+
+	s := api.NewServer(cfg, e)
+
+	ctx := context.Background()
+	go s.Start(ctx)
+
+	time.Sleep(100 * time.Millisecond)
+
+	return &TestServer{
+		t:      t,
+		cfg:    cfg,
+		s:      st,
+		w:      w,
+		snap:   snap,
+		e:      e,
+		srv:    s,
+		server: httptest.NewServer(s.Router()),
+	}
+}
+
 func (ts *TestServer) Close() {
 	ts.server.Close()
 	ts.w.Close()

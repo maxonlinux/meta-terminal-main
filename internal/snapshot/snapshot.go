@@ -16,7 +16,7 @@ import (
 const (
 	MagicNumber    = 0x534E4150
 	Version        = 1
-	SnapshotHeader = 16
+	SnapshotHeader = 36
 )
 
 type snapshotHeader struct {
@@ -24,6 +24,7 @@ type snapshotHeader struct {
 	Version   uint32
 	Timestamp int64
 	Offset    int64
+	DataSize  int64
 	Checksum  uint32
 }
 
@@ -89,6 +90,7 @@ func (s *Snapshot) Create(st *state.State, walOffset int64) error {
 		Version:   Version,
 		Timestamp: time.Now().Unix(),
 		Offset:    walOffset,
+		DataSize:  int64(len(dataBytes)),
 		Checksum:  checksum,
 	}
 
@@ -143,14 +145,13 @@ func (s *Snapshot) Load() (*state.State, int64, error) {
 		return nil, 0, fmt.Errorf("invalid version")
 	}
 
-	fileInfo, _ := file.Stat()
-	dataSize := fileInfo.Size() - SnapshotHeader
+	dataSize := header.DataSize
 	if dataSize < 0 {
 		dataSize = 0
 	}
 
 	dataBytes := make([]byte, dataSize)
-	_, err = file.Read(dataBytes)
+	_, err = file.ReadAt(dataBytes, SnapshotHeader)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to read data: %w", err)
 	}
@@ -158,13 +159,6 @@ func (s *Snapshot) Load() (*state.State, int64, error) {
 	checksum := s.checksum(dataBytes)
 	if checksum != header.Checksum {
 		return nil, 0, fmt.Errorf("checksum mismatch: got %d, expected %d", checksum, header.Checksum)
-	}
-
-	for i := len(dataBytes) - 1; i >= 0; i-- {
-		if dataBytes[i] != 0 {
-			dataBytes = dataBytes[:i+1]
-			break
-		}
 	}
 
 	var data SnapshotData

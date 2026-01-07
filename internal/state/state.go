@@ -153,3 +153,11 @@ func (s *State) GetSymbolState(symbol types.SymbolID) *OrderBookState {
 	s.Symbols[symbol] = ss
 	return ss
 }
+
+func (us *UserState) GetTotalInitialMargin() int64 {
+	var total int64
+	for _, pos := range us.Positions {
+		total += pos.InitialMargin
+	}
+	return total
+}

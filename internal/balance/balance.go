@@ -5,6 +5,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/position"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
+	"github.com/anomalyco/meta-terminal-go/internal/utils"
 )
 
 func Lock(s *state.State, userID types.UserID, asset string, amount int64) error {
@@ -182,26 +183,29 @@ func LockForOrder(s *state.State, category int8, userID types.UserID, order *typ
 	}
 
 	bal := GetOrCreate(s, userID, "USDT")
-	toLock := int64(order.Quantity-order.Filled) * int64(order.Price)
+	orderValue := utils.Mul(int64(order.Quantity), int64(order.Price))
 
 	if category == constants.CATEGORY_SPOT {
-		bal.Locked += toLock
+		bal.Locked += orderValue
+		bal.Available -= orderValue
 	} else {
 		margin := position.CalculateMargin(order.Quantity-order.Filled, order.Price, leverage)
-		bal.Margin += margin
 		bal.Locked += margin
 	}
 }
 
 func UnlockForOrder(s *state.State, category int8, userID types.UserID, order *types.Order, leverage int8) {
 	bal := GetOrCreate(s, userID, "USDT")
-	toUnlock := int64(order.Quantity-order.Filled) * int64(order.Price)
+	lockedValue := utils.Mul(int64(order.Quantity-order.Filled), int64(order.Price))
 
 	if category == constants.CATEGORY_SPOT {
-		bal.Locked -= toUnlock
+		bal.Locked -= lockedValue
+		bal.Available += lockedValue
 	} else {
-		margin := position.CalculateMargin(order.Quantity-order.Filled, order.Price, leverage)
-		bal.Locked -= margin
+		margin := position.CalculateMargin(order.Quantity, order.Price, leverage)
+		filledRatio := utils.Div(int64(order.Filled), int64(order.Quantity))
+		unlockAmount := utils.Mul(int64(margin), int64(filledRatio))
+		bal.Locked -= unlockAmount
 	}
 
 	if bal.Locked < 0 {
