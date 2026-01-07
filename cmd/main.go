@@ -12,6 +12,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/api"
 	"github.com/anomalyco/meta-terminal-go/internal/config"
 	"github.com/anomalyco/meta-terminal-go/internal/engine"
+	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
 	"github.com/anomalyco/meta-terminal-go/internal/outbox"
 	"github.com/anomalyco/meta-terminal-go/internal/snapshot"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
@@ -44,15 +45,16 @@ func main() {
 		log.Printf("Loaded snapshot, WAL offset: %d", startOffset)
 	}
 
+	ob := orderbook.New()
 	tradingEngine := engine.New(w, state)
 
 	if startOffset > 0 {
 		log.Printf("Replaying WAL from offset %d...", startOffset)
-		err = w.IterateFrom(startOffset, func(op *wal.Operation) error {
-			return nil
-		})
+		err = w.Replay(state, startOffset, ob)
 		if err != nil {
 			log.Printf("WAL replay error: %v", err)
+		} else {
+			log.Printf("WAL replay completed successfully")
 		}
 	}
 

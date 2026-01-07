@@ -938,3 +938,79 @@ func ExecuteLinearTrade(s *state.State, taker, maker *types.Order, price types.P
 - PlaceOrder: ~1.4 μs, 2 allocs
 - MatchOrder: ~1-4 μs, 2 allocs
 - GetOrder: ~4 ns, 0 allocs
+
+---
+
+## 17. Недавние изменения (январь 2025)
+
+### 17.1 Исправленные проблемы
+
+| Проблема | Файл | Исправление |
+|----------|------|-------------|
+| Синтаксические ошибки в хаос-тестах | `internal/integration/chaos_fuzz_test.go` | Удалены дублирующиеся тестовые функции, добавлен `NewTestServerWithDir()` |
+| Повреждение данных при загрузке снапшота | `internal/snapshot/snapshot.go` | Исправлена проблема с усечением данных, добавлено поле `DataSize` в заголовок |
+| GTC лимитные ордера не сопоставлялись | `internal/engine/engine.go` | Добавлена логика сопоставления для GTC лимитных ордеров |
+| Отсутствовала проверка пересечения цены | `internal/engine/engine.go` | Добавлена проверка цены: BUY требует price>=ask, SELL требует price<=bid |
+
+### 17.2 Реализация воспроизведения WAL
+
+Добавлен `internal/wal/replay.go` для реализации функции воспроизведения WAL:
+
+```go
+// Использование в main.go
+if startOffset > 0 {
+    log.Printf("Воспроизводим WAL с offset %d...", startOffset)
+    err = w.Replay(state, startOffset, ob)
+    if err != nil {
+        log.Printf("Ошибка воспроизведения WAL: %v", err)
+    } else {
+        log.Printf("Воспроизведение WAL успешно завершено")
+    }
+}
+```
+
+Поддерживаемые операции воспроизведения:
+- `OP_PLACE_ORDER` - восстановление ордера
+- `OP_FILL` - воспроизведение сделки, обновление позиции и баланса
+- `OP_POSITION_UPDATE` - обновление позиции
+- `OP_BALANCE_UPDATE` - обновление баланса
+
+### 17.3 Результаты тестов
+
+Все тесты прошли успешно:
+```
+ok  github.com/anomalyco/meta-terminal-go/internal/balance    0.519s
+ok  github.com/anomalyco/meta-terminal-go/internal/engine     0.306s
+ok  github.com/anomalyco/meta-terminal-go/internal/integration 5.050s
+ok  github.com/anomalyco/meta-terminal-go/internal/memory     1.408s
+ok  github.com/anomalyco/meta-terminal-go/internal/orderbook  0.829s
+ok  github.com/anomalyco/meta-terminal-go/internal/outbox     1.225s
+ok  github.com/anomalyco/meta-terminal-go/internal/position   1.611s
+ok  github.com/anomalyco/meta-terminal-go/internal/pricefeed  1.026s
+ok  github.com/anomalyco/meta-terminal-go/internal/snapshot   1.818s
+ok  github.com/anomalyco/meta-terminal-go/internal/trigger    1.906s
+ok  github.com/anomalyco/meta-terminal-go/internal/wal        2.049s
+```
+
+支持的回放操作：
+- `OP_PLACE_ORDER` - 重建订单
+- `OP_FILL` - 重放成交，更新仓位和余额
+- `OP_POSITION_UPDATE` - 更新仓位
+- `OP_BALANCE_UPDATE` - 更新余额
+
+### 17.3 测试结果
+
+所有测试通过：
+```
+ok  github.com/anomalyco/meta-terminal-go/internal/balance    0.519s
+ok  github.com/anomalyco/meta-terminal-go/internal/engine     0.306s
+ok  github.com/anomalyco/meta-terminal-go/internal/integration 5.050s
+ok  github.com/anomalyco/meta-terminal-go/internal/memory     1.408s
+ok  github.com/anomalyco/meta-terminal-go/internal/orderbook  0.829s
+ok  github.com/anomalyco/meta-terminal-go/internal/outbox     1.225s
+ok  github.com/anomalyco/meta-terminal-go/internal/position   1.611s
+ok  github.com/anomalyco/meta-terminal-go/internal/pricefeed  1.026s
+ok  github.com/anomalyco/meta-terminal-go/internal/snapshot   1.818s
+ok  github.com/anomalyco/meta-terminal-go/internal/trigger    1.906s
+ok  github.com/anomalyco/meta-terminal-go/internal/wal        2.049s
+```

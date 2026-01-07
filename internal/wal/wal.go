@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var ErrEndOfWAL = fmt.Errorf("end of WAL")
+
 type OperationType byte
 
 const (
@@ -329,4 +331,57 @@ func (w *WAL) EventCount() int64 {
 
 func (w *WAL) ResetEventCount() {
 	atomic.StoreInt64(&w.eventCount, 0)
+}
+
+type WALReader struct {
+	reader     *bufio.Reader
+	bufferSize int
+}
+
+func NewWALReader(file *os.File, bufferSize int) *WALReader {
+	return &WALReader{
+		reader:     bufio.NewReaderSize(file, bufferSize),
+		bufferSize: bufferSize,
+	}
+}
+
+func (r *WALReader) Discard(n int64) error {
+	_, err := r.reader.Discard(int(n))
+	return err
+}
+
+func (r *WALReader) ReadOperation() (*Operation, error) {
+	header := make([]byte, 33)
+	n, err := r.reader.Read(header)
+	if n == 0 && err != nil {
+		return nil, ErrEndOfWAL
+	}
+	if err != nil {
+		return nil, err
+	}
+	if n < 33 {
+		return nil, fmt.Errorf("incomplete header")
+	}
+
+	op := &Operation{
+		Type:      OperationType(header[0]),
+		Timestamp: int64(binary.BigEndian.Uint64(header[1:9])),
+		UserID:    int64(binary.BigEndian.Uint64(header[9:17])),
+		Symbol:    int32(binary.BigEndian.Uint32(header[17:21])),
+		OrderID:   int64(binary.BigEndian.Uint64(header[21:29])),
+	}
+
+	dataLen := int(binary.BigEndian.Uint32(header[29:33]))
+	if dataLen > 0 {
+		op.Data = make([]byte, dataLen)
+		n, err = r.reader.Read(op.Data)
+		if err != nil {
+			return nil, err
+		}
+		if n < dataLen {
+			return nil, fmt.Errorf("incomplete data")
+		}
+	}
+
+	return op, nil
 }
