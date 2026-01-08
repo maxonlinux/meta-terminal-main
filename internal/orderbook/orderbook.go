@@ -94,12 +94,15 @@ func (h *PriceHeap) RemovePrice(price types.Price) {
 	}
 }
 
-func (ob *OrderBook) AddOrder(order *types.Order) {
+func (ob *OrderBook) AddOrder(order *types.Order) ([]*types.Trade, error) {
 	ob.orderStore.Add(order)
+
+	var trades []*types.Trade
+	var remaining types.Quantity
 
 	switch order.TIF {
 	case constants.TIF_GTC, constants.TIF_POST_ONLY:
-		trades, remaining := ob.match(order)
+		trades, remaining = ob.match(order)
 		order.Filled = order.Quantity - remaining
 
 		if remaining > 0 {
@@ -110,7 +113,7 @@ func (ob *OrderBook) AddOrder(order *types.Order) {
 		}
 
 	case constants.TIF_IOC:
-		trades, remaining := ob.match(order)
+		trades, remaining = ob.match(order)
 		order.Filled = order.Quantity - remaining
 		if remaining > 0 {
 			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
@@ -121,7 +124,7 @@ func (ob *OrderBook) AddOrder(order *types.Order) {
 		}
 
 	case constants.TIF_FOK:
-		trades, remaining := ob.match(order)
+		trades, remaining = ob.match(order)
 		if remaining > 0 {
 			for _, t := range trades {
 				ob.reverseTrade(t)
@@ -132,6 +135,8 @@ func (ob *OrderBook) AddOrder(order *types.Order) {
 			order.Status = constants.ORDER_STATUS_FILLED
 		}
 	}
+
+	return trades, nil
 }
 
 func (ob *OrderBook) match(order *types.Order) ([]*types.Trade, types.Quantity) {

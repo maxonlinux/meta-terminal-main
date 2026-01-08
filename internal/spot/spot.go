@@ -23,6 +23,10 @@ func New(s *state.EngineState, orderStore *state.OrderStore) *Spot {
 	}
 }
 
+func (s *Spot) Reset() {
+	s.orderBooks = make(map[string]*orderbook.OrderBook)
+}
+
 func (s *Spot) getOrderBook(symbol string) *orderbook.OrderBook {
 	ob, ok := s.orderBooks[symbol]
 	if !ok {
@@ -37,7 +41,7 @@ func (s *Spot) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error) {
 		return nil, nil
 	}
 	if input.CloseOnTrigger {
-		input.CloseOnTrigger = false
+		return nil, nil
 	}
 
 	orderID := pool.NextOrderID()
@@ -68,24 +72,60 @@ func (s *Spot) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error) {
 	}
 
 	ob := s.getOrderBook(input.Symbol)
-	ob.AddOrder(order)
+
+	cost := int64(order.Quantity) * int64(order.Price)
+
+	if order.Side == constants.ORDER_SIDE_BUY {
+		if cost > 0 {
+			if err := balance.Deduct(s.state, order.UserID, "USDT", types.BUCKET_AVAILABLE, cost); err != nil {
+				pool.PutOrder(order)
+				return nil, err
+			}
+			if err := balance.Add(s.state, order.UserID, "USDT", types.BUCKET_LOCKED, cost); err != nil {
+				balance.Add(s.state, order.UserID, "USDT", types.BUCKET_AVAILABLE, cost)
+				pool.PutOrder(order)
+				return nil, err
+			}
+		}
+	} else {
+		if err := balance.Deduct(s.state, order.UserID, "BTC", types.BUCKET_AVAILABLE, int64(order.Quantity)); err != nil {
+			pool.PutOrder(order)
+			return nil, err
+		}
+		if err := balance.Add(s.state, order.UserID, "BTC", types.BUCKET_LOCKED, int64(order.Quantity)); err != nil {
+			balance.Add(s.state, order.UserID, "BTC", types.BUCKET_AVAILABLE, int64(order.Quantity))
+			pool.PutOrder(order)
+			return nil, err
+		}
+	}
+
+	trades, err := ob.AddOrder(order)
+	if err != nil {
+		pool.PutOrder(order)
+		return nil, err
+	}
+	result.Trades = trades
+
+	s.executeSpotTrades(trades, order)
 
 	switch order.TIF {
 	case constants.TIF_GTC, constants.TIF_POST_ONLY:
 		if order.Filled == 0 {
 			order.Status = constants.ORDER_STATUS_NEW
 			result.Status = constants.ORDER_STATUS_NEW
-		} else {
+		} else if order.Filled == order.Quantity {
 			order.Status = constants.ORDER_STATUS_FILLED
 			result.Status = constants.ORDER_STATUS_FILLED
-			result.Filled = order.Filled
-			result.Remaining = order.Quantity - order.Filled
+		} else {
+			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+			result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
 		}
 
 	case constants.TIF_IOC:
 		if order.Filled == 0 {
 			order.Status = constants.ORDER_STATUS_CANCELED
 			result.Status = constants.ORDER_STATUS_CANCELED
+			s.refundUnfilled(order)
 		} else if order.Filled < order.Quantity {
 			order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 			result.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
@@ -93,24 +133,73 @@ func (s *Spot) PlaceOrder(input *types.OrderInput) (*types.OrderResult, error) {
 			order.Status = constants.ORDER_STATUS_FILLED
 			result.Status = constants.ORDER_STATUS_FILLED
 		}
-		result.Filled = order.Filled
-		result.Remaining = order.Quantity - order.Filled
 
 	case constants.TIF_FOK:
 		if order.Filled == order.Quantity {
 			order.Status = constants.ORDER_STATUS_FILLED
 			result.Status = constants.ORDER_STATUS_FILLED
-			result.Filled = order.Filled
-			result.Remaining = 0
 		} else {
 			order.Status = constants.ORDER_STATUS_CANCELED
 			result.Status = constants.ORDER_STATUS_CANCELED
-			result.Filled = 0
-			result.Remaining = order.Quantity
+			s.refundUnfilled(order)
 		}
 	}
 
+	result.Filled = order.Filled
+	result.Remaining = order.Quantity - order.Filled
+
 	return result, nil
+}
+
+func (s *Spot) refundUnfilled(order *types.Order) {
+	unfilledQty := order.Quantity - order.Filled
+	orderCost := int64(unfilledQty) * int64(order.Price)
+
+	if order.Side == constants.ORDER_SIDE_BUY {
+		if orderCost > 0 {
+			balance.Move(s.state, order.UserID, "USDT", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, orderCost)
+		}
+	} else {
+		balance.Move(s.state, order.UserID, "BTC", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, int64(unfilledQty))
+	}
+}
+
+func (s *Spot) executeSpotTrades(trades []*types.Trade, taker *types.Order) {
+	for _, trade := range trades {
+		maker := s.orderStore.Get(trade.MakerOrderID)
+		if maker == nil {
+			continue
+		}
+
+		trade.TakerID = taker.UserID
+		trade.MakerID = maker.UserID
+		trade.Symbol = taker.Symbol
+		trade.ExecutedAt = types.NanoTime()
+
+		tradeQty := int64(trade.Quantity)
+		tradeCost := tradeQty * int64(trade.Price)
+
+		orderPrice := int64(maker.Price)
+		makerReserved := orderPrice * tradeQty
+
+		if taker.Side == constants.ORDER_SIDE_BUY {
+			balance.Move(s.state, taker.UserID, "USDT", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, makerReserved)
+			balance.Deduct(s.state, taker.UserID, "USDT", types.BUCKET_AVAILABLE, tradeCost)
+			balance.Add(s.state, maker.UserID, "USDT", types.BUCKET_AVAILABLE, tradeCost)
+
+			balance.Move(s.state, maker.UserID, "BTC", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, tradeQty)
+			balance.Deduct(s.state, maker.UserID, "BTC", types.BUCKET_AVAILABLE, tradeQty)
+			balance.Add(s.state, taker.UserID, "BTC", types.BUCKET_AVAILABLE, tradeQty)
+		} else {
+			balance.Move(s.state, maker.UserID, "USDT", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, makerReserved)
+			balance.Deduct(s.state, maker.UserID, "USDT", types.BUCKET_AVAILABLE, tradeCost)
+			balance.Add(s.state, taker.UserID, "USDT", types.BUCKET_AVAILABLE, tradeCost)
+
+			balance.Move(s.state, taker.UserID, "BTC", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, tradeQty)
+			balance.Deduct(s.state, taker.UserID, "BTC", types.BUCKET_AVAILABLE, tradeQty)
+			balance.Add(s.state, maker.UserID, "BTC", types.BUCKET_AVAILABLE, tradeQty)
+		}
+	}
 }
 
 func (s *Spot) CancelOrder(orderID types.OrderID, userID types.UserID) error {
@@ -122,9 +211,8 @@ func (s *Spot) CancelOrder(orderID types.OrderID, userID types.UserID) error {
 		return nil
 	}
 
-	if order.Status == constants.ORDER_STATUS_NEW {
-		orderValue := int64(order.Quantity-order.Filled) * int64(order.Price)
-		balance.Move(s.state, order.UserID, "USDT", types.BUCKET_LOCKED, types.BUCKET_AVAILABLE, orderValue)
+	if order.Status == constants.ORDER_STATUS_NEW || order.Status == constants.ORDER_STATUS_PARTIALLY_FILLED {
+		s.refundUnfilled(order)
 
 		ob := s.getOrderBook(order.Symbol)
 		ob.RemoveOrder(order)

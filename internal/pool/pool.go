@@ -34,6 +34,14 @@ func PutOrder(o *types.Order) {
 	o.Filled = 0
 	o.TriggerPrice = 0
 	o.Status = 0
+	o.Side = 0
+	o.Type = 0
+	o.TIF = 0
+	o.Price = 0
+	o.ReduceOnly = false
+	o.CloseOnTrigger = false
+	o.CreatedAt = 0
+	o.UpdatedAt = 0
 	o.Prev = 0
 	o.Next = 0
 	orderPool.Put(o)
@@ -48,10 +56,14 @@ func PutTrade(t *types.Trade) {
 		return
 	}
 	t.ID = 0
-	t.Quantity = 0
-	t.Price = 0
+	t.Symbol = ""
+	t.TakerID = 0
+	t.MakerID = 0
 	t.TakerOrderID = 0
 	t.MakerOrderID = 0
+	t.Price = 0
+	t.Quantity = 0
+	t.ExecutedAt = 0
 	tradePool.Put(t)
 }
 
