@@ -1,74 +1,57 @@
 package balance
 
-import (
-	"errors"
+import "sync"
 
-	"github.com/anomalyco/meta-terminal-go/internal/state"
-	"github.com/anomalyco/meta-terminal-go/types"
-)
-
-var (
-	ErrInsufficientBalance = errors.New("insufficient balance")
-	ErrNegativeAmount      = errors.New("amount cannot be negative")
-)
-
-func Add(s *state.EngineState, userID types.UserID, asset string, bucket int8, amount int64) error {
-	if amount < 0 {
-		return ErrNegativeAmount
-	}
-	us := s.GetUserState(userID)
-	bal, ok := us.Balances[asset]
-	if !ok {
-		bal = types.NewUserBalance(userID, asset)
-		us.Balances[asset] = bal
-	}
-	bal.Add(bucket, amount)
-	bal.Version++
-	return nil
+type Balance struct {
+	mu      sync.RWMutex
+	buckets [3]int64
 }
 
-func Deduct(s *state.EngineState, userID types.UserID, asset string, bucket int8, amount int64) error {
-	if amount < 0 {
-		return ErrNegativeAmount
-	}
-	us := s.GetUserState(userID)
-	bal, ok := us.Balances[asset]
-	if !ok {
-		return ErrInsufficientBalance
-	}
-	if !bal.Deduct(bucket, amount) {
-		return ErrInsufficientBalance
-	}
-	bal.Version++
-	return nil
+func New() *Balance { return &Balance{} }
+
+func (b *Balance) Add(bucket int8, amount int64) {
+	b.mu.Lock()
+	b.buckets[bucket] += amount
+	b.mu.Unlock()
 }
 
-func Move(s *state.EngineState, userID types.UserID, asset string, fromBucket, toBucket int8, amount int64) error {
-	if amount < 0 {
-		return ErrNegativeAmount
+func (b *Balance) Deduct(bucket int8, amount int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.buckets[bucket] < amount {
+		return false
 	}
-	us := s.GetUserState(userID)
-	bal, ok := us.Balances[asset]
-	if !ok {
-		return ErrInsufficientBalance
-	}
-	if bal.Buckets[fromBucket] < amount {
-		return ErrInsufficientBalance
-	}
-	bal.Buckets[fromBucket] -= amount
-	bal.Buckets[toBucket] += amount
-	bal.Version++
-	return nil
+	b.buckets[bucket] -= amount
+	return true
 }
 
-func Get(s *state.EngineState, userID types.UserID, asset string, bucket int8) int64 {
-	us, ok := s.Users[userID]
-	if !ok {
-		return 0
+func (b *Balance) Move(from, to int8, amount int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.buckets[from] < amount {
+		return false
 	}
-	bal, ok := us.Balances[asset]
-	if !ok {
-		return 0
-	}
-	return bal.Get(bucket)
+	b.buckets[from] -= amount
+	b.buckets[to] += amount
+	return true
+}
+
+func (b *Balance) Get(bucket int8) int64 {
+	b.mu.RLock()
+	v := b.buckets[bucket]
+	b.mu.RUnlock()
+	return v
+}
+
+func (b *Balance) Snapshot() [3]int64 {
+	b.mu.RLock()
+	v := b.buckets
+	b.mu.RUnlock()
+	return v
+}
+
+func (b *Balance) Restore(v [3]int64) {
+	b.mu.Lock()
+	b.buckets = v
+	b.mu.Unlock()
 }
