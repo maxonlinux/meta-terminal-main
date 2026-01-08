@@ -2,21 +2,20 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/anomalyco/meta-terminal-go/config"
 	"github.com/anomalyco/meta-terminal-go/internal/api"
-	"github.com/anomalyco/meta-terminal-go/internal/config"
-	"github.com/anomalyco/meta-terminal-go/internal/engine"
-	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
-	"github.com/anomalyco/meta-terminal-go/internal/outbox"
-	"github.com/anomalyco/meta-terminal-go/internal/snapshot"
+	"github.com/anomalyco/meta-terminal-go/internal/linear"
+	"github.com/anomalyco/meta-terminal-go/internal/persistence/outbox"
+	"github.com/anomalyco/meta-terminal-go/internal/persistence/snapshot"
+	"github.com/anomalyco/meta-terminal-go/internal/persistence/wal"
+	"github.com/anomalyco/meta-terminal-go/internal/spot"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
-	"github.com/anomalyco/meta-terminal-go/internal/wal"
 )
 
 func main() {
@@ -28,47 +27,31 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	s := state.NewEngineState()
+	orderStore := state.NewOrderStore()
+
+	spotMarket := spot.New(s, orderStore)
+	linearMarket := linear.New(s, orderStore)
+
 	w, err := wal.New(cfg.WALPath, cfg.WALBufferSize)
 	if err != nil {
-		log.Fatalf("Failed to initialize WAL: %v", err)
+		log.Fatalf("Failed to init WAL: %v", err)
 	}
 	defer w.Close()
 
-	state := state.New()
-	var startOffset int64 = 0
-
-	snap := snapshot.New(cfg.SnapshotPath, 100*1024*1024)
-	loadedState, offset, err := snap.Load()
-	if err == nil {
-		state = loadedState
-		startOffset = offset
-		log.Printf("Loaded snapshot, WAL offset: %d", startOffset)
+	snap := snapshot.New(cfg.SnapshotPath)
+	_, offset, _ := snap.Load()
+	if offset > 0 {
+		log.Printf("Loaded snapshot, WAL offset: %d", offset)
 	}
 
-	ob := orderbook.New()
-	tradingEngine := engine.New(w, state)
-
-	if startOffset > 0 {
-		log.Printf("Replaying WAL from offset %d...", startOffset)
-		err = w.Replay(state, startOffset, ob)
-		if err != nil {
-			log.Printf("WAL replay error: %v", err)
-		} else {
-			log.Printf("WAL replay completed successfully")
-		}
-	}
-
-	snapManager := snapshot.NewManager(snap, w, state, time.Duration(cfg.SnapshotInterval)*time.Second, 100)
-	snapManager.Start(ctx)
-	defer snapManager.Stop()
-
-	outboxWorker, err := outbox.New(cfg.OutboxPath, cfg.OutboxBatchSize, cfg.OutboxFlushDuration)
+	out, err := outbox.New(cfg.OutboxPath, cfg.OutboxBatchSize, cfg.OutboxFlushDuration)
 	if err != nil {
-		log.Fatalf("Failed to initialize outbox: %v", err)
+		log.Fatalf("Failed to init outbox: %v", err)
 	}
-	defer outboxWorker.Close()
+	defer out.Close()
 
-	server := api.NewServer(cfg, tradingEngine)
+	server := api.NewServer(cfg, s, spotMarket, linearMarket)
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -78,8 +61,20 @@ func main() {
 	}()
 
 	if err := server.Start(ctx); err != nil {
-		log.Fatalf("Server error: %v", err)
+		log.Printf("Server error: %v", err)
 	}
 
-	fmt.Println("Trading engine shutdown complete")
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				snap.Save(s, 0)
+				return
+			case <-time.After(time.Duration(cfg.SnapshotInterval) * time.Second):
+				snap.Save(s, 0)
+			}
+		}
+	}()
+
+	log.Println("Trading engine shutdown complete")
 }

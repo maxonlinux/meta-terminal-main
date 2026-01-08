@@ -2,143 +2,60 @@ package trigger
 
 import (
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
-	"github.com/anomalyco/meta-terminal-go/internal/memory"
-	"github.com/anomalyco/meta-terminal-go/internal/state"
-	"github.com/anomalyco/meta-terminal-go/internal/types"
+	"github.com/anomalyco/meta-terminal-go/types"
 )
 
 type Monitor struct {
-	state      *state.State
-	orderStore *memory.OrderStore
-	stopOrders map[types.SymbolID]*state.Heap
-	tpOrders   map[types.SymbolID]*state.Heap
-	slOrders   map[types.SymbolID]*state.Heap
+	buyHeap  []types.OrderID
+	sellHeap []types.OrderID
 }
 
-func NewMonitor(s *state.State, orderStore *memory.OrderStore) *Monitor {
+func NewMonitor() *Monitor {
 	return &Monitor{
-		state:      s,
-		orderStore: orderStore,
-		stopOrders: make(map[types.SymbolID]*state.Heap),
-		tpOrders:   make(map[types.SymbolID]*state.Heap),
-		slOrders:   make(map[types.SymbolID]*state.Heap),
+		buyHeap:  make([]types.OrderID, 0),
+		sellHeap: make([]types.OrderID, 0),
 	}
 }
 
 func (m *Monitor) AddOrder(order *types.Order) {
-	var heap *state.Heap
-	var heapMap map[types.SymbolID]*state.Heap
-
-	switch order.StopOrderType {
-	case constants.STOP_ORDER_TYPE_STOP:
-		heapMap = m.stopOrders
-	case constants.STOP_ORDER_TYPE_TP:
-		heapMap = m.tpOrders
-	case constants.STOP_ORDER_TYPE_SL:
-		heapMap = m.slOrders
-	default:
-		return
-	}
-
-	if _, ok := heapMap[order.Symbol]; !ok {
-		heapMap[order.Symbol] = state.NewHeap(order.Side == constants.ORDER_SIDE_SELL, func(o *types.Order) types.Price {
-			return o.TriggerPrice
-		}, m.orderStore)
-	}
-
-	heap = heapMap[order.Symbol]
-	heap.Push(order.ID)
-
 	if order.Side == constants.ORDER_SIDE_BUY {
-		m.state.GetSymbolState(order.Symbol).BuyTriggers = heap
+		m.buyHeap = append(m.buyHeap, order.ID)
 	} else {
-		m.state.GetSymbolState(order.Symbol).SellTriggers = heap
+		m.sellHeap = append(m.sellHeap, order.ID)
 	}
 }
 
-func (m *Monitor) Check(symbol types.SymbolID, currentPrice types.Price) []*types.Order {
-	var triggered []*types.Order
-
-	ss := m.state.GetSymbolState(symbol)
-
-	if ss.BuyTriggers != nil {
-		for ss.BuyTriggers.Len() > 0 {
-			oid := ss.BuyTriggers.Peek()
-			if oid == 0 {
-				break
-			}
-			order := m.orderStore.Get(oid)
-			if order == nil {
-				ss.BuyTriggers.Pop()
-				continue
-			}
-			if order.TriggerPrice <= currentPrice {
-				ss.BuyTriggers.Pop()
-				triggered = append(triggered, order)
-			} else {
-				break
-			}
+func (m *Monitor) RemoveOrder(orderID types.OrderID) {
+	for i, id := range m.buyHeap {
+		if id == orderID {
+			m.buyHeap = append(m.buyHeap[:i], m.buyHeap[i+1:]...)
+			return
 		}
 	}
-
-	if ss.SellTriggers != nil {
-		for ss.SellTriggers.Len() > 0 {
-			oid := ss.SellTriggers.Peek()
-			if oid == 0 {
-				break
-			}
-			order := m.orderStore.Get(oid)
-			if order == nil {
-				ss.SellTriggers.Pop()
-				continue
-			}
-			if order.TriggerPrice >= currentPrice {
-				ss.SellTriggers.Pop()
-				triggered = append(triggered, order)
-			} else {
-				break
-			}
+	for i, id := range m.sellHeap {
+		if id == orderID {
+			m.sellHeap = append(m.sellHeap[:i], m.sellHeap[i+1:]...)
+			return
 		}
 	}
+}
+
+func (m *Monitor) Check(currentPrice types.Price) []types.OrderID {
+	var triggered []types.OrderID
+
+	for _, orderID := range m.buyHeap {
+		triggered = append(triggered, orderID)
+	}
+	m.buyHeap = m.buyHeap[:0]
+
+	for _, orderID := range m.sellHeap {
+		triggered = append(triggered, orderID)
+	}
+	m.sellHeap = m.sellHeap[:0]
 
 	return triggered
 }
 
-func (m *Monitor) OnTrigger(order *types.Order) ([]*types.Order, error) {
+func (m *Monitor) OnTrigger(order *types.Order) {
 	order.Status = constants.ORDER_STATUS_TRIGGERED
-
-	if order.CloseOnTrigger {
-		return nil, nil
-	}
-
-	triggeredOrder := &types.Order{
-		ID:             m.state.NextOrderID,
-		UserID:         order.UserID,
-		Symbol:         order.Symbol,
-		Side:           order.Side,
-		Type:           constants.ORDER_TYPE_LIMIT,
-		TIF:            constants.TIF_GTC,
-		Price:          order.Price,
-		Quantity:       order.Quantity - order.Filled,
-		Status:         constants.ORDER_STATUS_NEW,
-		TriggerPrice:   0,
-		StopOrderType:  constants.STOP_ORDER_TYPE_NORMAL,
-		ReduceOnly:     order.ReduceOnly,
-		CloseOnTrigger: false,
-	}
-
-	m.state.NextOrderID++
-
-	return []*types.Order{triggeredOrder}, nil
-}
-
-func (m *Monitor) RemoveOrder(orderID types.OrderID, symbol types.SymbolID) {
-	ss := m.state.GetSymbolState(symbol)
-
-	if ss.BuyTriggers != nil {
-		ss.BuyTriggers.Remove(orderID)
-	}
-	if ss.SellTriggers != nil {
-		ss.SellTriggers.Remove(orderID)
-	}
 }

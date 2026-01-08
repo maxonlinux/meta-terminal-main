@@ -4,13 +4,12 @@ import (
 	"errors"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
-	"github.com/anomalyco/meta-terminal-go/internal/memory"
 	"github.com/anomalyco/meta-terminal-go/internal/state"
-	"github.com/anomalyco/meta-terminal-go/internal/types"
 	"github.com/anomalyco/meta-terminal-go/internal/utils"
+	"github.com/anomalyco/meta-terminal-go/types"
 )
 
-func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, filledQty types.Quantity, price types.Price, side int8, leverage int8) (*types.Position, int64) {
+func UpdatePosition(s *state.EngineState, userID types.UserID, symbol string, filledQty types.Quantity, price types.Price, side int8, leverage int8) (*types.Position, int64) {
 	us := s.GetUserState(userID)
 	pos, ok := us.Positions[symbol]
 	if !ok {
@@ -18,7 +17,7 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 			UserID:     userID,
 			Symbol:     symbol,
 			Size:       0,
-			Side:       -1,
+			Side:       types.SIDE_NONE,
 			EntryPrice: 0,
 			Leverage:   leverage,
 			Version:    0,
@@ -63,7 +62,7 @@ func UpdatePosition(s *state.State, userID types.UserID, symbol types.SymbolID, 
 	CalculatePositionRisk(pos)
 
 	if pos.Size == 0 {
-		pos.Side = -1
+		pos.Side = types.SIDE_NONE
 		pos.EntryPrice = 0
 		pos.InitialMargin = 0
 		pos.MaintenanceMargin = 0
@@ -94,11 +93,47 @@ func CalculatePositionRisk(pos *types.Position) {
 	}
 }
 
-func CalculateMargin(qty types.Quantity, price types.Price, leverage int8) int64 {
-	return utils.MulDiv(int64(qty), int64(price), int64(leverage))
+func CheckLiquidation(pos *types.Position, currentPrice types.Price) bool {
+	if pos.Size == 0 {
+		return false
+	}
+
+	var upnl int64
+	if pos.Side == constants.ORDER_SIDE_BUY {
+		upnl = int64(currentPrice-pos.EntryPrice) * int64(pos.Size)
+	} else {
+		upnl = int64(pos.EntryPrice-currentPrice) * int64(pos.Size)
+	}
+
+	buffer := pos.InitialMargin - pos.MaintenanceMargin
+	return upnl < -buffer
 }
 
-func GetPosition(s *state.State, userID types.UserID, symbol types.SymbolID) *types.Position {
+func LiquidatePosition(s *state.EngineState, userID types.UserID, symbol string, currentPrice types.Price) bool {
+	us, ok := s.Users[userID]
+	if !ok {
+		return false
+	}
+
+	pos, ok := us.Positions[symbol]
+	if !ok || pos.Size == 0 {
+		return false
+	}
+
+	if CheckLiquidation(pos, currentPrice) {
+		pos.Size = 0
+		pos.Side = types.SIDE_NONE
+		pos.EntryPrice = 0
+		pos.InitialMargin = 0
+		pos.MaintenanceMargin = 0
+		pos.LiquidationPrice = 0
+		pos.Version++
+		return true
+	}
+	return false
+}
+
+func GetPosition(s *state.EngineState, userID types.UserID, symbol string) *types.Position {
 	us, ok := s.Users[userID]
 	if !ok {
 		return nil
@@ -106,7 +141,7 @@ func GetPosition(s *state.State, userID types.UserID, symbol types.SymbolID) *ty
 	return us.Positions[symbol]
 }
 
-func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.SymbolID, qty types.Quantity, side int8) error {
+func ReduceOnlyValidate(s *state.EngineState, userID types.UserID, symbol string, qty types.Quantity, side int8) error {
 	us, ok := s.Users[userID]
 	if !ok {
 		return errors.New("reduceOnly order requires an existing position")
@@ -130,72 +165,7 @@ func ReduceOnlyValidate(s *state.State, userID types.UserID, symbol types.Symbol
 	return nil
 }
 
-func AdjustReduceOnlyOrders(orderStore *memory.OrderStore, s *state.State, userID types.UserID, symbol types.SymbolID) {
-	us, ok := s.Users[userID]
-	if !ok {
-		return
-	}
-
-	pos, ok := us.Positions[symbol]
-	if !ok {
-		return
-	}
-
-	totalReduceOnly := types.Quantity(0)
-	userOrderIDs := orderStore.GetUserReduceOnlyOrders(userID)
-
-	for _, oid := range userOrderIDs {
-		order := orderStore.Get(oid)
-		if order == nil {
-			continue
-		}
-		if order.Filled < order.Quantity {
-			totalReduceOnly += order.Quantity - order.Filled
-		}
-	}
-
-	if totalReduceOnly <= pos.Size {
-		return
-	}
-
-	remainingToAdjust := totalReduceOnly - pos.Size
-
-	var toDelete []types.OrderID
-	ordersToModify := make(map[types.OrderID]types.Quantity)
-
-	for _, oid := range userOrderIDs {
-		order := orderStore.Get(oid)
-		if order == nil {
-			continue
-		}
-		if order.Filled < order.Quantity {
-			orderQty := order.Quantity - order.Filled
-			if orderQty <= remainingToAdjust {
-				remainingToAdjust -= orderQty
-				toDelete = append(toDelete, oid)
-				order.Status = constants.ORDER_STATUS_CANCELED
-			} else {
-				if remainingToAdjust > 0 {
-					ordersToModify[oid] = order.Quantity - remainingToAdjust
-					remainingToAdjust = 0
-				}
-			}
-		}
-	}
-
-	for _, oid := range toDelete {
-		orderStore.Remove(oid)
-		orderStore.RemoveReduceOnlyOrder(userID, oid)
-	}
-
-	for oid, newQty := range ordersToModify {
-		if order := orderStore.Get(oid); order != nil {
-			order.Quantity = newQty
-		}
-	}
-}
-
-func GetLeverage(s *state.State, userID types.UserID, symbol types.SymbolID) int8 {
+func GetLeverage(s *state.EngineState, userID types.UserID, symbol string) int8 {
 	pos := s.GetUserState(userID).Positions[symbol]
 	if pos != nil && pos.Leverage > 0 {
 		return pos.Leverage
