@@ -1,15 +1,12 @@
 package orderbook
 
 import (
-	"errors"
 	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/pool"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
-
-var ErrPostOnlyWouldCross = errors.New("post-only would cross")
 
 type IDGenerator interface {
 	Next() uint64
@@ -206,6 +203,8 @@ func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, matches []types.
 		trade.Price = lvl.price
 		trade.Quantity = exec
 		trade.ExecutedAt = types.NowNano()
+		trade.TakerLeverage = taker.Leverage
+		trade.MakerLeverage = maker.Leverage
 		matches = append(matches, types.Match{Trade: trade, Maker: maker})
 
 		if maker.Remaining() == 0 {
@@ -219,7 +218,7 @@ func (ob *OrderBook) nextTradeID() uint64 {
 	if ob.idGen != nil {
 		return ob.idGen.Next()
 	}
-	return types.NowNano()
+	return uint64(types.NowNano())
 }
 
 func (ob *OrderBook) AddResting(order *types.Order) {

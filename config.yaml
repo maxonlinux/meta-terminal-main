@@ -1,0 +1,59 @@
+# Meta Terminal Go Configuration
+# Event-Driven Microservices Architecture
+
+app:
+  shard: "BTCUSDT"  # Symbol handled by this OMS instance
+  node_id: 1
+
+nats:
+  url: "nats://localhost:4222"
+  stream_prefix: "META"
+
+database:
+  path: "data/snapshots.db"
+
+services:
+  oms:
+    enabled: true
+  portfolio:
+    enabled: true
+  marketdata:
+    enabled: true
+
+# Sharding Strategy
+#
+# OMS instances are sharded by SYMBOL (not category):
+#   oms-BTCUSDT handles both SPOT and LINEAR BTCUSDT
+#   oms-ETHUSDT handles both SPOT and LINEAR ETHUSDT
+#
+# Each OMS instance:
+#   - Subscribes to: orders.{shard}.>  (e.g., orders.BTCUSDT.>)
+#   - Manages orderbook for: {shard} (SPOT + LINEAR combined)
+#   - Publishes to: orders.{symbol}.PLACED/FILLED/CANCELLED
+#
+# NATS Subject Hierarchy
+#
+# ORDERS:
+#   orders.{symbol}.PLACED       # e.g., orders.BTCUSDT.PLACED
+#   orders.{symbol}.FILLED
+#   orders.{symbol}.CANCELLED
+#
+# CLEARING:
+#   clearing.{symbol}.TRADE_EXEC
+#   clearing.{symbol}.RESERVED
+#
+# BALANCES:
+#   balances.{userId}.RESERVED
+#   balances.{userId}.DEDUCTED
+#   balances.{userId}.ADDED
+#
+# POSITIONS:
+#   positions.{userId}.{symbol}.OPENED
+#   positions.{userId}.{symbol}.UPDATED
+#   positions.{userId}.{symbol}.CLOSED
+#
+# PRICES (from Node.js):
+#   prices.{symbol}  # e.g., prices.BTCUSDT
+#
+# EVENTS:
+#   events.{txId}.committed  # TX_COMMITTED marker

@@ -3,9 +3,8 @@ package types
 import "time"
 
 type OrderID uint64
-type UserID uint64
 type TradeID uint64
-
+type UserID uint64
 type Price int64
 type Quantity int64
 
@@ -13,7 +12,7 @@ func NowNano() uint64 { return uint64(time.Now().UnixNano()) }
 
 type Order struct {
 	ID       OrderID
-	UserID   UserID
+	UserID   uint64
 	Symbol   string
 	Category int8
 
@@ -44,8 +43,8 @@ type Trade struct {
 	Symbol   string
 	Category int8
 
-	TakerID      UserID
-	MakerID      UserID
+	TakerID      uint64
+	MakerID      uint64
 	TakerOrderID OrderID
 	MakerOrderID OrderID
 
@@ -53,6 +52,9 @@ type Trade struct {
 	Quantity Quantity
 
 	ExecutedAt uint64
+
+	TakerLeverage int8
+	MakerLeverage int8
 }
 
 type Match struct {
@@ -61,7 +63,7 @@ type Match struct {
 }
 
 type OrderInput struct {
-	UserID   UserID
+	UserID   uint64
 	Symbol   string
 	Category int8
 
