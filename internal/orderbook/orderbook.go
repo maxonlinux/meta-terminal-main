@@ -156,7 +156,7 @@ func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, n
 	return total
 }
 
-func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types.Trade, error) {
+func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]types.Match, error) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 
@@ -164,7 +164,7 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types
 		return nil, nil
 	}
 
-	var trades []*types.Trade
+	var matches []types.Match
 
 	if taker.Side == constants.ORDER_SIDE_BUY {
 		for taker.Remaining() > 0 && ob.bestAsk != nil {
@@ -172,9 +172,9 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types
 			if limitPrice > 0 && lvl.price > limitPrice {
 				break
 			}
-			trades = ob.matchLevel(taker, lvl, trades)
+			matches = ob.matchLevel(taker, lvl, matches)
 		}
-		return trades, nil
+		return matches, nil
 	}
 
 	for taker.Remaining() > 0 && ob.bestBid != nil {
@@ -182,12 +182,12 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types
 		if limitPrice > 0 && lvl.price < limitPrice {
 			break
 		}
-		trades = ob.matchLevel(taker, lvl, trades)
+		matches = ob.matchLevel(taker, lvl, matches)
 	}
-	return trades, nil
+	return matches, nil
 }
 
-func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, trades []*types.Trade) []*types.Trade {
+func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, matches []types.Match) []types.Match {
 	for taker.Remaining() > 0 && lvl.head != nil {
 		makerNode := lvl.head
 		maker := makerNode.order
@@ -217,13 +217,13 @@ func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, trades []*types.
 		trade.Price = lvl.price
 		trade.Quantity = exec
 		trade.ExecutedAt = types.NowNano()
-		trades = append(trades, trade)
+		matches = append(matches, types.Match{Trade: trade, Maker: maker})
 
 		if maker.Remaining() == 0 {
 			ob.removeNode(makerNode)
 		}
 	}
-	return trades
+	return matches
 }
 
 func (ob *OrderBook) nextTradeID() int64 {

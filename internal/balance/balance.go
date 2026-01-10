@@ -56,21 +56,10 @@ func CalculateLiquidationPrice(entryPrice int64, leverage int8, side int8) int64
 	}
 
 	if side == constants.SIDE_LONG {
-		// Long: liquidation when price drops
-		// Liq = Entry × (1 - 1/L + MM_RATIO)
 		ratio := 1.0/float64(leverage) - constants.MM_RATIO
 		return int64(float64(entryPrice) * (1 - ratio))
 	} else {
-		// Short: liquidation when price rises
-		// Liq = Entry × (1 + 1/L - MM_RATIO)
 		ratio := 1.0/float64(leverage) - constants.MM_RATIO
 		return int64(float64(entryPrice) * (1 + ratio))
 	}
-}
-
-func CalculateRPNL(size int64, entryPrice int64, exitPrice int64, side int8) int64 {
-	if side == constants.SIDE_LONG {
-		return (exitPrice - entryPrice) * size
-	}
-	return (entryPrice - exitPrice) * size
 }

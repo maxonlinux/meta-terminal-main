@@ -82,8 +82,8 @@ func TestOrderBook_Match(t *testing.T) {
 	if len(trades) != 1 {
 		t.Fatalf("expected 1 trade, got %d", len(trades))
 	}
-	if trades[0].Quantity != 5 {
-		t.Errorf("expected trade qty 5, got %d", trades[0].Quantity)
+	if trades[0].Trade.Quantity != 5 {
+		t.Errorf("expected trade qty 5, got %d", trades[0].Trade.Quantity)
 	}
 	if buyer.Filled != 5 {
 		t.Errorf("expected buyer filled 5, got %d", buyer.Filled)

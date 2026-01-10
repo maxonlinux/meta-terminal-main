@@ -436,7 +436,7 @@ func (r *Repository) Close() error {
 	return r.db.Close()
 }
 
-func (r *Repository) BatchInsertOutboxOrders(entries []*OutboxOrderEntry) error {
+func (r *Repository) BatchInsertOutboxOrders(entries []*types.Order) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -451,8 +451,8 @@ func (r *Repository) BatchInsertOutboxOrders(entries []*OutboxOrderEntry) error 
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO orders (id, user_id, symbol, category, side, type, tif, status, price, quantity, filled, trigger_price, reduce_only, created_at, updated_at, closed_at, stop_order_type, close_on_trigger)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO orders (id, user_id, symbol, category, side, type, tif, status, price, quantity, filled, trigger_price, reduce_only, created_at, updated_at, closed_at, stop_order_type, close_on_trigger, is_conditional, order_link_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	`)
 	if err != nil {
 		return err
@@ -463,7 +463,7 @@ func (r *Repository) BatchInsertOutboxOrders(entries []*OutboxOrderEntry) error 
 		_, err := stmt.Exec(
 			e.ID, e.UserID, e.Symbol, e.Category, e.Side, e.Type, e.TIF,
 			e.Status, e.Price, e.Quantity, e.Filled, e.TriggerPrice,
-			e.ReduceOnly, e.CreatedAt, e.UpdatedAt, e.ClosedAt, e.StopOrderType, e.CloseOnTrigger,
+			e.ReduceOnly, e.CreatedAt, e.UpdatedAt, e.ClosedAt, e.StopOrderType, e.CloseOnTrigger, e.IsConditional, e.OrderLinkId,
 		)
 		if err != nil {
 			return err
@@ -473,7 +473,7 @@ func (r *Repository) BatchInsertOutboxOrders(entries []*OutboxOrderEntry) error 
 	return tx.Commit()
 }
 
-func (r *Repository) BatchInsertOutboxTrades(entries []*OutboxTradeEntry) error {
+func (r *Repository) BatchInsertOutboxTrades(entries []*types.Trade) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -509,7 +509,7 @@ func (r *Repository) BatchInsertOutboxTrades(entries []*OutboxTradeEntry) error 
 	return tx.Commit()
 }
 
-func (r *Repository) BatchInsertOutboxRPNL(entries []*OutboxRPNLEntry) error {
+func (r *Repository) BatchInsertOutboxRPNL(entries []*types.RPNLEvent) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -545,58 +545,11 @@ func (r *Repository) BatchInsertOutboxRPNL(entries []*OutboxRPNLEntry) error {
 	return tx.Commit()
 }
 
-type OutboxOrderEntry struct {
-	ID             types.OrderID
-	UserID         types.UserID
-	Symbol         string
-	Category       int8
-	Side           int8
-	Type           int8
-	TIF            int8
-	Status         int8
-	Price          types.Price
-	Quantity       types.Quantity
-	Filled         types.Quantity
-	TriggerPrice   types.Price
-	ReduceOnly     bool
-	CreatedAt      uint64
-	UpdatedAt      uint64
-	ClosedAt       uint64
-	StopOrderType  int8
-	CloseOnTrigger bool
-}
-
-type OutboxTradeEntry struct {
-	ID           types.TradeID
-	Symbol       string
-	Category     int8
-	TakerID      types.UserID
-	MakerID      types.UserID
-	TakerOrderID types.OrderID
-	MakerOrderID types.OrderID
-	Price        types.Price
-	Quantity     types.Quantity
-	ExecutedAt   uint64
-}
-
-type OutboxRPNLEntry struct {
-	ID           uint64
-	UserID       types.UserID
-	Symbol       string
-	Category     int8
-	RealizedPnl  int64
-	PositionSize int64
-	PositionSide int8
-	EntryPrice   types.Price
-	ExitPrice    types.Price
-	ExecutedAt   uint64
-}
-
-func DecodeOutboxOrders(data []byte) ([]*OutboxOrderEntry, error) {
-	var entries []*OutboxOrderEntry
+func DecodeOutboxOrders(data []byte) ([]*types.Order, error) {
+	var entries []*types.Order
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	for {
-		var e OutboxOrderEntry
+		var e types.Order
 		if err := dec.Decode(&e); err != nil {
 			break
 		}
@@ -605,11 +558,11 @@ func DecodeOutboxOrders(data []byte) ([]*OutboxOrderEntry, error) {
 	return entries, nil
 }
 
-func DecodeOutboxTrades(data []byte) ([]*OutboxTradeEntry, error) {
-	var entries []*OutboxTradeEntry
+func DecodeOutboxTrades(data []byte) ([]*types.Trade, error) {
+	var entries []*types.Trade
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	for {
-		var e OutboxTradeEntry
+		var e types.Trade
 		if err := dec.Decode(&e); err != nil {
 			break
 		}
@@ -618,11 +571,11 @@ func DecodeOutboxTrades(data []byte) ([]*OutboxTradeEntry, error) {
 	return entries, nil
 }
 
-func DecodeOutboxRPNLs(data []byte) ([]*OutboxRPNLEntry, error) {
-	var entries []*OutboxRPNLEntry
+func DecodeOutboxRPNLs(data []byte) ([]*types.RPNLEvent, error) {
+	var entries []*types.RPNLEvent
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	for {
-		var e OutboxRPNLEntry
+		var e types.RPNLEvent
 		if err := dec.Decode(&e); err != nil {
 			break
 		}

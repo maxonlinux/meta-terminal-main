@@ -15,6 +15,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/persistence/duckdb"
+	"github.com/anomalyco/meta-terminal-go/internal/snowflake"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
@@ -82,8 +83,9 @@ func New(cfg Config) (*FileOutbox, error) {
 }
 
 func (fo *FileOutbox) startSubscriptions(ctx context.Context) {
-	fo.cfg.NATS.SubscribeGob(ctx, messaging.OrderEventTopic(""), "outbox-order", fo.handleOrderEvent)
-	fo.cfg.NATS.SubscribeGob(ctx, messaging.SubjectClearingTrade, "outbox-trade", fo.handleTradeEvent)
+	fo.cfg.NATS.Subscribe(ctx, messaging.OrderEventTopic(""), "outbox-order", fo.handleOrderEvent)
+	fo.cfg.NATS.Subscribe(ctx, messaging.SubjectClearingTrade, "outbox-trade", fo.handleTradeEvent)
+	fo.cfg.NATS.Subscribe(ctx, messaging.SubjectPositionReduced, "outbox-rpnl", fo.handleRPNLEvent)
 }
 
 func (fo *FileOutbox) handleOrderEvent(data []byte) {
@@ -133,6 +135,28 @@ func (fo *FileOutbox) handleTradeEvent(data []byte) {
 		ExecutedAt:   event.ExecutedAt,
 	}
 	fo.WriteTrade(context.Background(), trade)
+}
+
+func (fo *FileOutbox) handleRPNLEvent(data []byte) {
+	var event types.PositionReducedEvent
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&event); err != nil {
+		return
+	}
+
+	rpnl := &types.RPNLEvent{
+		ID:           uint64(snowflake.Next()),
+		UserID:       event.UserID,
+		Symbol:       event.Symbol,
+		Category:     event.Category,
+		RealizedPnl:  event.RPNL,
+		PositionSize: event.PositionSize,
+		PositionSide: event.PositionSide,
+		EntryPrice:   0,
+		ExitPrice:    event.ExitPrice,
+		ExecutedAt:   event.ExecutedAt,
+	}
+	fo.WriteRPNL(context.Background(), rpnl)
 }
 
 func outboxFileName(t OutboxType) string {

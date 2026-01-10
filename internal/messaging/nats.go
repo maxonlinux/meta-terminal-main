@@ -6,7 +6,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 	"github.com/nats-io/nats.go"
@@ -75,14 +74,6 @@ func (n *NATS) PublishBytes(ctx context.Context, subject string, data []byte) er
 	return err
 }
 
-func (n *NATS) RequestReply(ctx context.Context, subject string, data []byte, timeout time.Duration) ([]byte, error) {
-	msg, err := n.conn.RequestWithContext(ctx, subject, data)
-	if err != nil {
-		return nil, err
-	}
-	return msg.Data, nil
-}
-
 type Subscription struct {
 	cancel context.CancelFunc
 }
@@ -135,8 +126,4 @@ func (n *NATS) Subscribe(ctx context.Context, subject, name string, handler func
 	}()
 
 	return &Subscription{cancel: cancel}
-}
-
-func (n *NATS) SubscribeGob(ctx context.Context, subject, name string, handler func([]byte)) *Subscription {
-	return n.Subscribe(ctx, subject, name, handler)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
@@ -13,26 +14,6 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	ErrLeverageTooHigh     = errors.New("leverage would cause immediate liquidation")
 )
-
-func getBaseAsset(symbol string) string {
-	quotes := []string{"USDT", "USD", "USDC", "BUSD"}
-	for _, q := range quotes {
-		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
-			return symbol[:len(symbol)-len(q)]
-		}
-	}
-	return symbol
-}
-
-func getQuoteAsset(symbol string) string {
-	quotes := []string{"USDT", "USD", "USDC", "BUSD"}
-	for _, q := range quotes {
-		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
-			return q
-		}
-	}
-	return "USD"
-}
 
 type Config struct {
 	NATS *messaging.NATS
@@ -104,8 +85,8 @@ func (s *Service) ExecuteTrade(trade *types.Trade, taker, maker *types.Order) {
 }
 
 func (s *Service) executeSpotTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
-	baseAsset := getBaseAsset(trade.Symbol)
-	quoteAsset := getQuoteAsset(trade.Symbol)
+	baseAsset := balance.GetBaseAsset(trade.Symbol)
+	quoteAsset := balance.GetQuoteAsset(trade.Symbol)
 
 	var takerGets, takerPays string
 	var makerGets, makerPays string
@@ -230,7 +211,20 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 				b.Available += rpnl
 			}
 
-			s.publishPositionReduced(userID, trade.Symbol, trade.Category, closedQty, int64(trade.Price), rpnl, pos)
+			if s.nats != nil {
+				event := &types.PositionReducedEvent{
+					UserID:       userID,
+					Symbol:       trade.Symbol,
+					Category:     trade.Category,
+					ClosedQty:    closedQty,
+					ExitPrice:    int64(trade.Price),
+					RPNL:         rpnl,
+					PositionSize: pos.Size,
+					PositionSide: pos.Side,
+					ExecutedAt:   types.NowNano(),
+				}
+				s.nats.PublishGob(context.Background(), messaging.PositionReducedTopic(trade.Symbol), event)
+			}
 		}
 
 		remaining := pos.Size - size*int64(1-side*2)
@@ -243,25 +237,6 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 			pos.Size = remaining
 		}
 	}
-}
-
-func (s *Service) publishPositionReduced(userID types.UserID, symbol string, category int8, closedQty, exitPrice, rpnl int64, pos *types.Position) {
-	if s.nats == nil {
-		return
-	}
-
-	event := &types.PositionReducedEvent{
-		UserID:       userID,
-		Symbol:       symbol,
-		Category:     category,
-		ClosedQty:    closedQty,
-		ExitPrice:    exitPrice,
-		RPNL:         rpnl,
-		PositionSize: pos.Size,
-		PositionSide: pos.Side,
-		ExecutedAt:   types.NowNano(),
-	}
-	s.nats.PublishGob(context.Background(), messaging.PositionReducedTopic(symbol), event)
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {
@@ -295,23 +270,6 @@ func (s *Service) GetLiquidationPrice(pos *types.Position) int64 {
 		return pos.EntryPrice * int64(100-pos.Leverage*10) / 100
 	}
 	return pos.EntryPrice * int64(100+pos.Leverage*10) / 100
-}
-
-func (s *Service) CalculateRPNL(userID types.UserID, symbol string, exitPrice int64, size int64) int64 {
-	userPositions, ok := s.Positions[userID]
-	if !ok {
-		return 0
-	}
-
-	pos, ok := userPositions[symbol]
-	if !ok || pos.Size == 0 {
-		return 0
-	}
-
-	if pos.Side == constants.ORDER_SIDE_BUY {
-		return (exitPrice - pos.EntryPrice) * size
-	}
-	return (pos.EntryPrice - exitPrice) * size
 }
 
 func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage int8, currentPrice int64) error {

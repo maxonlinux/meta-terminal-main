@@ -122,16 +122,3 @@ func (s *Service) GetLiquidationPrice(pos *types.Position) int64 {
 	}
 	return pos.EntryPrice * int64(100+pos.Leverage*10) / 100
 }
-
-func (s *Service) CalculateRPNL(userID types.UserID, symbol string, exitPrice int64, size int64) int64 {
-	positions := s.portfolio.GetPositions(userID)
-	for _, p := range positions {
-		if p.Symbol == symbol {
-			if p.Side == constants.ORDER_SIDE_BUY {
-				return (exitPrice - p.EntryPrice) * size
-			}
-			return (p.EntryPrice - exitPrice) * size
-		}
-	}
-	return 0
-}
