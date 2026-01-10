@@ -84,6 +84,8 @@ type Monitor struct {
 	buyTriggers  *BuyHeap
 	sellTriggers *SellHeap
 	orders       map[types.OrderID]*types.Order
+	buyPos       map[types.OrderID]int
+	sellPos      map[types.OrderID]int
 }
 
 func New() *Monitor {
@@ -91,6 +93,8 @@ func New() *Monitor {
 		buyTriggers:  &BuyHeap{},
 		sellTriggers: &SellHeap{},
 		orders:       make(map[types.OrderID]*types.Order),
+		buyPos:       make(map[types.OrderID]int),
+		sellPos:      make(map[types.OrderID]int),
 	}
 	heap.Init(m.buyTriggers)
 	heap.Init(m.sellTriggers)
@@ -112,8 +116,10 @@ func (m *Monitor) Add(order *types.Order) {
 
 	if order.Side == constants.ORDER_SIDE_BUY {
 		heap.Push(m.buyTriggers, node)
+		m.buyPos[order.ID] = len(*m.buyTriggers) - 1
 	} else {
 		heap.Push(m.sellTriggers, node)
+		m.sellPos[order.ID] = len(*m.sellTriggers) - 1
 	}
 }
 
@@ -126,8 +132,54 @@ func (m *Monitor) Remove(orderID types.OrderID) bool {
 		return false
 	}
 
+	if order.Side == constants.ORDER_SIDE_BUY {
+		pos, ok := m.buyPos[orderID]
+		if !ok {
+			return false
+		}
+		m.removeBuyAt(pos)
+		delete(m.buyPos, orderID)
+	} else {
+		pos, ok := m.sellPos[orderID]
+		if !ok {
+			return false
+		}
+		m.removeSellAt(pos)
+		delete(m.sellPos, orderID)
+	}
+
 	delete(m.orders, orderID)
 	return true
+}
+
+func (m *Monitor) removeBuyAt(pos int) {
+	h := m.buyTriggers
+	last := len(*h) - 1
+
+	if pos != last {
+		removedOrderID := (*h)[pos].orderID
+		(*h)[pos], (*h)[last] = (*h)[last], (*h)[pos]
+		heap.Fix(h, pos)
+		m.buyPos[(*h)[pos].orderID] = pos
+		delete(m.buyPos, removedOrderID)
+	}
+
+	heap.Pop(h)
+}
+
+func (m *Monitor) removeSellAt(pos int) {
+	h := m.sellTriggers
+	last := len(*h) - 1
+
+	if pos != last {
+		removedOrderID := (*h)[pos].orderID
+		(*h)[pos], (*h)[last] = (*h)[last], (*h)[pos]
+		heap.Fix(h, pos)
+		m.sellPos[(*h)[pos].orderID] = pos
+		delete(m.sellPos, removedOrderID)
+	}
+
+	heap.Pop(h)
 }
 
 func (m *Monitor) Check(currentPrice types.Price) []types.OrderID {
@@ -142,8 +194,8 @@ func (m *Monitor) Check(currentPrice types.Price) []types.OrderID {
 			break
 		}
 		heap.Pop(m.buyTriggers)
+		delete(m.buyPos, node.orderID)
 		triggered = append(triggered, node.orderID)
-		delete(m.orders, node.orderID)
 	}
 
 	for m.sellTriggers.Len() > 0 {
@@ -152,8 +204,8 @@ func (m *Monitor) Check(currentPrice types.Price) []types.OrderID {
 			break
 		}
 		heap.Pop(m.sellTriggers)
+		delete(m.sellPos, node.orderID)
 		triggered = append(triggered, node.orderID)
-		delete(m.orders, node.orderID)
 	}
 
 	return triggered

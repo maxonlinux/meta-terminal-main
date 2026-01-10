@@ -1,265 +1,53 @@
 # META-TERMINAL-GO Architecture
 
-## Configuration
+USE SNOWFLAKE FOR EVERY ID GENERATION ESPECIALLY IF THIS DATA IS GOING TO BE PERSISTED OR SENT TO USERS!!!!!!
 
-Configure via environment variables or `.env` file using `godotenv`:
+## Symbol Registry (HTTP Loader)
 
-```bash
-# Required
-NATS_URL=nats://localhost:4222
-STREAM_PREFIX=meta
-JWT_SECRET=your-secret-key
-
-# OMS shards (comma-separated, 1 shard per symbol)
-SHARDS=BTCUSDT,ETHUSDT,SOLUSDT,...
-
-# Optional
-PORT=8080
 ```
+Assets URL: http://146.103.123.216:3000/assets
+Multiplexer URL: http://localhost:3333/proxy/multiplexer
+Sync Interval: 5 minutes
 
-## Performance Targets
+LoadAssets():
+1. GET Assets URL → [{symbol: "BTCUSDT"]}, {symbol: "ETHUSDT"}, ...]
+2. For each symbol:
+   a. GET Multiplexer URL/prices?symbol=XXX
+   b. If price == null or 404 → skip symbol
+   c. If price received:
+      - instruments[symbol] = FromSymbol(symbol, price)
+      - lastPrices[symbol] = price
 
-| Operation | Target Latency | Actual | Status |
-|-----------|----------------|--------|--------|
-| PlaceOrder | < 500μs | **264ns** | ✓ EXCELLENT |
-| MatchOrder | < 200μs | **38.5ns** | ✓ EXCELLENT |
-| TradeExec | < 300μs | **-** | TODO |
-| PriceTick | < 100μs | **-** | TODO |
+Start():
+- LoadAssets()
+- Start periodic sync every 5 minutes
 
-## Overview
+## Market Isolation (SPOT vs LINEAR)
 
-High-performance trading engine with SPOT and LINEAR markets, written in Go.
+**CRITICAL: SPOT and LINEAR markets are completely isolated!**
 
-- For every single implementation you must create bench test that tests all actions so I can see performance.
+### SPOT Market (Category = 0)
+- **NO reduceOnly** - not applicable
+- **NO trigger/conditional orders** - not supported
+- **NO positions** - only balance changes
+- **Balance flow**: Available ↔ Locked (no Margin)
+- **Reserve formula**: BUY = Qty × Price, SELL = Qty
+
+### LINEAR Market (Category = 1)
+- **HAS reduceOnly** - can only reduce position
+- **HAS trigger/conditional orders** - TriggerPrice supported
+- **HAS positions** - Size, Side, EntryPrice, Leverage
+- **Balance flow**: Available ↔ Locked ↔ Margin
+- **Reserve formula**: (Qty × Price) / Leverage
+
+### Trade Event Fields
+- `Category` determines market type (0 = SPOT, 1 = LINEAR)
+- Trade execution logic MUST check Category and branch accordingly
+- **Leverage is NOT in Trade event** - only Clearing knows about leverage
+- **SPOT**: No leverage, no positions, just balance transfer (Available ↔ Locked)
+- **LINEAR**: Leverage calculated from user's position by Clearing service
 
 ---
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              API Layer                                       │
-│                         (HTTP Handlers + WebSocket)                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Matching Engine (OMS)                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                       │  │
-│  │   PlaceOrder(input OrderInput) → OrderResult                         │  │
-│  │   CancelOrder(userID, orderID) → error                               │  │
-│  │   OnPriceTick(symbol string, price Price)                            │  │
-│  │                                                                       │  │
-│  │   ─────────────────────────────────────────────────────────────────  │  │
-│  │   OMS Shard = 1 symbol (e.g., BTCUSDT)                               │  │
-│  │   Contains 2 OrderBooks: orderbooks[category]                         │  │
-│  │     - category=0: SPOT orderbook                                      │  │
-│  │     - category=1: LINEAR orderbook                                    │  │
-│  │                                                                       │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│         │                                                                  │
-│         ▼                                                                  │
-│  ┌──────────────────────────┐                                              │
-│  │   OrderBook State        │                                              │
-│  │   orderbooks[category]   │                                              │
-│  │   → *OrderBook (O(1))    │                                              │
-│  └──────────────────────────┘                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            Global State                                      │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Users State (Portfolio Service)                                      │  │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │ map[UserID]*UserState                                           │  │  │
-│  │  │   ├── Balances: map[asset]*UserBalance                         │  │  │
-│  │  │   │   └── Buckets: [AVAILABLE=0, LOCKED=1, MARGIN=2]           │  │  │
-│  │  │   └── Positions: map[symbol]*Position                          │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  OrderStore (OMS Service)                                             │  │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │ map[UserID]map[OrderID]*Order                                   │  │  │
-│  │  │   - Normal orders                                               │  │  │
-│  │  │   - Conditional orders (TriggerPrice > 0, status=UNTRIGGERED)  │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Registry                                                            │  │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │ Instruments: map[symbol]*Instrument                             │  │  │
-│  │  │ LastPrices: map[symbol]Price                                    │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Trigger State (COMMON INDEX)                                        │  │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │ map[symbol]*TriggerMonitor                                      │  │  │
-│  │  │   - buyTriggers: MIN heap (price, orderID)                      │  │  │
-│  │  │   - sellTriggers: MAX heap (price, orderID)                     │  │  │
-│  │  │   NO LOGIC! Just stores indices and returns triggered orderIDs  │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            Price Feed (NATS)                                 │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  *PriceFeed                                                          │  │
-│  │                                                                       │  │
-│  │  OnMessage(symbol string, price Price):                              │  │
-│  │      1. registry.SetLastPrice(symbol, price)                        │  │
-│  │      2. log.Printf("Checking liquidations for %s @ %d", ...)        │  │
-│  │      3. engine.OnPriceTick(symbol, price)                           │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Key Interfaces
-
-### Market Interface
-
-### Validator Interface
-
-```go
-type Validator interface {
-    Validate(input *OrderInput) error
-}
-```
-
-### Clearing Interface
-
-```go
-type Clearing interface {
-    Reserve(userID UserID, symbol string, qty Quantity, price Price) error
-    Release(userID UserID, symbol string, qty Quantity, price Price)
-    ExecuteTrade(trade *Trade, taker *Order, maker *Order)
-}
-```
-
-```go
-type TriggerMonitor struct {
-    buyTriggers  *TriggerHeap  // MIN heap: BUY activate when price ≤ trigger
-    sellTriggers *TriggerHeap  // MAX heap: SELL activate when price ≥ trigger
-}
-
-func (m *TriggerMonitor) Add(order *Order)
-func (m *TriggerMonitor) Remove(orderID OrderID)
-func (m *TriggerMonitor) Check(currentPrice Price) []OrderID  // Returns triggered orderIDs
-```
-
----
-
-## Order Types
-
-| Type | TriggerPrice | CloseOnTrigger | Description |
-|------|--------------|----------------|-------------|
-| **Normal** | = 0 | false | Regular LIMIT/MARKET order |
-| **Conditional** | > 0 | false | Waits for trigger → creates identical order (without trigger) → status=TRIGGERED |
-| **CloseOnTrigger** | > 0 | true | Waits for trigger → creates reduceOnly order with qty=position_size if LIMIT or market NON-reduceOnly order with qty=position_size if MARKET → becomes itself status=TRIGGERED |
-
----
-
-## Constants
-```go
-package constants
-
-const (
-	CATEGORY_SPOT   = 0
-	CATEGORY_LINEAR = 1
-
-	ORDER_TYPE_LIMIT  = 0
-	ORDER_TYPE_MARKET = 1
-
-	ORDER_SIDE_BUY  = 0
-	ORDER_SIDE_SELL = 1
-
-	TIF_GTC       = 0
-	TIF_IOC       = 1
-	TIF_FOK       = 2
-	TIF_POST_ONLY = 3
-
-	ORDER_STATUS_NEW                       = 0
-	ORDER_STATUS_PARTIALLY_FILLED          = 1
-	ORDER_STATUS_FILLED                    = 2
-	ORDER_STATUS_CANCELED                  = 3
-	ORDER_STATUS_PARTIALLY_FILLED_CANCELED = 4
-	ORDER_STATUS_UNTRIGGERED               = 5
-	ORDER_STATUS_TRIGGERED                 = 6
-	ORDER_STATUS_DEACTIVATED               = 7
-
-	STOP_ORDER_TYPE_NORMAL      = 0
-	STOP_ORDER_TYPE_STOP        = 1
-	STOP_ORDER_TYPE_TP          = 2
-	STOP_ORDER_TYPE_SL          = 3
-	STOP_ORDER_TYPE_LIQUIDATION = 4
-
-	MAINTENANCE_MARGIN_RATIO = 10
-)
-````
-
-## Balance Flow (FIX Protocol Inspired - Pre-Reservation Model)
-
-Based on FIX protocol and traditional exchange practices, we use **pre-reservation** model:
-- **Reserve BEFORE placing order** (not after matching)
-- Error on Reserve = Order Rejection (no need for separate balance check)
-- **Simple, consistent flow** - same logic for LIMIT and MARKET orders
-
-### Key Principles (FIX Protocol)
-
-1. **Pre-Trade Reservation**: Balance is locked BEFORE order enters matching engine
-2. **Lock Amount Calculation**: Based on order parameters, not execution details
-3. **Trade Execution**: Always from Locked bucket (never from Available directly)
-4. **No Maker/Taker Distinction for Locking**: Both lock the same way
-5. **Refund on Cancel**: Unfilled locked amount returns to Available
-
-### Balance Buckets
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              User Balance                                    │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  AVAILABLE (0)                                                      │    │
-│  │  - Free funds for new orders                                        │    │
-│  │  - Can be withdrawn                                                 │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                  │                                           │
-│                                  ▼                                           │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  LOCKED (1)                                                         │    │
-│  │  - Reserved for open orders                                         │    │
-│  │  - Deducted from Available on order placement                       │    │
-│  │  - Source of funds for trade execution                              │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                  │                                           │
-│                    ┌─────────────┴─────────────┐                            │
-│                    ▼                             ▼                            │
-│  ┌─────────────────────────────┐   ┌─────────────────────────────┐          │
-│  │  SPOT:                      │   │  LINEAR:                    │          │
-│  │  Locked → Available         │   │  Locked → Margin            │          │
-│  │  (trade execution)          │   │  (trade execution)          │          │
-│  └─────────────────────────────┘   └─────────────────────────────┘          │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  MARGIN (2) [LINEAR only]                                           │    │
-│  │  - Collateral for open positions                                    │    │
-│  │  - Calculated as (Price × Qty) / Leverage                           │    │
-│  │  - Released when position is closed                                 │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
 ### Order Reservation Formulas
 
@@ -286,13 +74,11 @@ LINEAR ORDER RESERVATION:
 ```
 SPOT TRADE EXECUTION (per trade):
 ├── BUY (taker or maker):
-│   Locked[quote] → Margin[quote] (for LINEAR) OR Locked[quote] → Available[quote] (for SPOT)
 │   Actually: Locked → Available (refund locked portion)
 │              Available → Deduct (trade_price × trade_qty)
 │              Maker: Add (trade_qty) to base asset
 │
 ├── SELL (taker or maker):
-│   Locked[base] → Margin[base] (for LINEAR) OR Locked[base] → Available[base] (for SPOT)
 │   Actually: Locked → Available (refund locked portion)
 │              Available → Deduct (trade_qty)
 │              Maker: Add (trade_price × trade_qty) to quote asset
@@ -300,120 +86,8 @@ SPOT TRADE EXECUTION (per trade):
 LINEAR TRADE EXECUTION (per trade):
 ├── BUY/SELL (taker or maker):
 │   Locked → Margin (amount = trade_price × trade_qty / leverage)
-│   UpdatePosition(trade_size, trade_price, side, leverage)
+│   UpdatePosition
 ```
-
-### Simplified Flow Diagrams
-
-#### PlaceOrder → Clearing → Reserve → Match → Execute
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           PlaceOrder Flow                                    │
-│                                                                              │
-│  1. OMS receives OrderInput                                                  │
-│     │                                                                        │
-│     ▼                                                                        │
-│  2. OMS publishes to "clearing.reserve" (RAW: symbol, category, side,       │
-│     qty, price, leverage)                                                    │
-│     │                                                                        │
-│     ▼                                                                        │
-│  3. Clearing receives request                                                │
-│     │                                                                        │
-│     ▼                                                                        │
-│  4. Clearing.CalculateReserveAmount() → amount, asset                       │
-│     │                                                                        │
-│     ▼                                                                        │
-│  5. Clearing → Portfolio.Reserve(amount, asset)                             │
-│     │                                                                        │
-│     ├──────────────────────────────────────────────────────────────────┐     │
-│     │ IF error (insufficient balance):                                 │     │
-│     │     → Clearing returns error to OMS                             │     │
-│     │     → OMS rejects order                                         │     │
-│     │                                                                  │     │
-│     │ IF success:                                                      │     │
-│     │     → Portfolio: Available -= amount                            │     │
-│     │     → Portfolio: Locked += amount                               │     │
-│     │     → Clearing returns success to OMS                           │     │
-│     ▼                                                                  │     │
-│  6. OMS proceeds with matching                                            │     │
-│     │                                                                  │     │
-│     ▼                                                                  │     │
-│  7. Match order against orderbook                                        │     │
-│     │                                                                  │     │
-│     ├──────────────────────────────────────────────────────────────┐   │     │
-│     │ FOR EACH TRADE:                                                │   │     │
-│     │     a. Publish trade to "clearing.trade"                      │   │     │
-│     │                                                                  │     │
-│     │     b. Clearing processes trade:                               │   │     │
-│     │        - SPOT: Balance updates (Deduct/Add)                    │   │     │
-│     │        - LINEAR: Margin updates + Position updates             │   │     │
-│     │                                                                  │     │
-│     │ IF order remaining > 0:                                        │   │     │
-│     │     Add to orderbook (GTC/POST_ONLY)                           │   │     │
-│     │                                                                  │     │
-│     │ IF order fully filled OR IOC/FOK partial:                      │   │     │
-│     │     OMS publishes to "clearing.release" (RAW: remaining)       │   │     │
-│     │     → Clearing calculates amount                               │   │     │
-│     │     → Clearing → Portfolio.Release(amount)                     │   │     │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-│     └──────────────────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-#### CancelOrder → Release
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CancelOrder Flow                                   │
-│                                                                              │
-│  1. CancelOrder(userID, orderID)                                             │
-│     │                                                                        │
-│     ▼                                                                        │
-│  2. Get order from orderbook/store                                           │
-│     │                                                                        │
-│     ▼                                                                        │
-│  3. Calculate remaining locked amount                                        │
-│     remaining = order.qty - order.filled                                     │
-│     │                                                                        │
-│     ▼                                                                        │
-│  4. Release(remaining locked amount)                                         │
-│     │                                                                        │
-│     ▼                                                                        │
-│  5. Locked -= remaining                                                      │
-│     Available += remaining                                                   │
-│     │                                                                        │
-│     ▼                                                                        │
-│  6. Remove order from orderbook                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Position Update Formulas (LINEAR)
-
-```
-UpdatePosition(userID, symbol, size, price, side, leverage):
-├── NEW POSITION (current size = 0):
-│   Position = {Size: size, Side: side, EntryPrice: price, Leverage: leverage}
-│
-├── SAME SIDE (current side = new side):
-│   total_size = |current_size| + |size|
-│   new_entry_price = (current_entry × current_size + price × size) / total_size
-│   Position = {Size: total_size, Side: same, EntryPrice: new_entry_price}
-│
-├── OPPOSITE SIDE (current side ≠ new side):
-│   reduced_size = |current_size| - |size|
-│   IF reduced_size > 0:
-│       Position = {Size: reduced_size, Side: current_side, EntryPrice: current_entry}
-│   ELSE (position closed or flipped):
-│       Position = {Size: |reduced_size|, Side: opposite, EntryPrice: price}
-│
-└── CLOSING TRADE (reduced_size = 0):
-    Release all margin to Available
-    Delete position
-```
-
-### Example: Complete Trade Lifecycle
 
 ```
 Scenario: User places BUY 1 BTC @ 50000 USDT LIMIT GTC
@@ -447,227 +121,374 @@ Scenario: User places BUY 1 BTC @ 50000 USDT LIMIT GTC
    Position: +1 BTC @ 50000
 ```
 
-### Margin Requirements (LINEAR)
+## API Contract
 
+### PlaceOrder Request
+
+```json
+POST /api/v1/order
+{
+  "symbol": "BTCUSDT",
+  "category": 1,        // 0=SPOT, 1=LINEAR
+  "side": 0,            // 0=Buy, 1=Sell
+  "type": 0,            // 0=Limit, 1=Market
+  "tif": 0,             // 0=GTC, 1=IOC, 2=FOK, 3=PostOnly
+  "quantity": 1.0,
+  "price": 50000,       // Required for LIMIT, ignored for MARKET
+  "triggerPrice": 0,    // >0 makes order conditional
+  "reduceOnly": false,  // Only LINEAR, cannot increase position
+  "closeOnTrigger": false, // Only LINEAR, requires existing position
+  "stopOrderType": 0,   // 0=NORMAL, 1=STOP, 2=TAKE_PROFIT, 3=STOP_LOSS, 4=TRAILING, 5=OCO
+
+  // OCO (One-Cancels-the-Other) - Only LINEAR
+  "oco": {
+    "quantity": 0,      // 0 = use full position size, >0 = specific qty
+    "takeProfit": {
+      "triggerPrice": 55000,
+      "price": 54900,   // 0 = Market order when triggered
+      "reduceOnly": true
+    },
+    "stopLoss": {
+      "triggerPrice": 45000,
+      "price": 45100,
+      "reduceOnly": true
+    }
+  }
+}
 ```
-Initial Margin = (Price × Qty) / Leverage
-Maintenance Margin = Initial Margin × Maintenance Margin Ratio (0.5%)
 
-Liquidation Check:
-├── LONG Position:
-│   Liquidation Price = EntryPrice × (1 - 1/Leverage + MMR)
-│   Example (L=10, MMR=0.005): Liq = Entry × 0.905
-│
-└── SHORT Position:
-    Liquidation Price = EntryPrice × (1 + 1/Leverage - MMR)
-    Example (L=10, MMR=0.005): Liq = Entry × 1.095
+### PlaceOrder Response
+
+**ALWAYS returns an array of orders**, even for single orders:
+
+```json
+// Single order response
+{
+  "orders": [{
+    "id": 12345,
+    "symbol": "BTCUSDT",
+    "category": 1,
+    "side": 0,
+    "type": 0,
+    "status": 0,
+    "price": 50000,
+    "quantity": 1,
+    "filled": 0,
+    "triggerPrice": 0,
+    "reduceOnly": false,
+    "closeOnTrigger": false,
+    "stopOrderType": 0,
+    "orderLinkId": -1,
+    "isConditional": false,
+    "createdAt": 1234567890
+  }],
+  "filled": 0,
+  "remaining": 1,
+  "status": 0
+}
+
+// OCO order response (2 orders created)
+{
+  "orders": [
+    {
+      "id": 12346,
+      "symbol": "BTCUSDT",
+      "side": 1,
+      "type": 0,
+      "status": 5,  // UNTRIGGERED
+      "price": 54900,
+      "quantity": 0,  // 0 = full position close at trigger
+      "triggerPrice": 55000,
+      "stopOrderType": 2,  // TAKE_PROFIT
+      "closeOnTrigger": true,
+      "reduceOnly": true,
+      "orderLinkId": 999999999999,
+      "isConditional": true
+    },
+    {
+      "id": 12347,
+      "symbol": "BTCUSDT",
+      "side": 1,
+      "type": 0,
+      "status": 5,  // UNTRIGGERED
+      "price": 45100,
+      "quantity": 0,
+      "triggerPrice": 45000,
+      "stopOrderType": 3,  // STOP_LOSS
+      "closeOnTrigger": true,
+      "reduceOnly": true,
+      "orderLinkId": 999999999999,
+      "isConditional": true
+    }
+  ],
+  "filled": 0,
+  "remaining": 1,  // Position size
+  "status": 5
+}
 ```
 
 ---
 
-## Critical Rules
+## OrderInput Type (internal/types/types.go)
 
-**ORDERBOOKS ARE SEPARATE FOR SPOT AND LINEAR!!!**
-- Store separate orderbooks for each symbol and each market (linear and spot), access to orderbook MUST be O(1)
+```go
+// OrderInput — входные данные для создания ордера
+//
+// orderLinkId (опционально):
+//   Пользовательский идентификатор ордера. Макс 36 символов.
+//   Позволяет клиенту связать свой внутренний ID с системным orderId.
+//   Для OCO: orderLinkId родительского ордера связывает TP и SL ордера.
+//   В нашей системе: >0 = snowflake ID группы, -1 = нет группы
+//
+// isConditional (автоматически):
+//   true если TriggerPrice > 0
+//   Устанавливается при валидации для удобства в коде
+//
+type OrderInput struct {
+    UserID   UserID
+    Symbol   string
+    Category int8
 
-**BALANCES ARE COMMON FOR SPOT AND LINEAR!!!**
-- All users share the same balance system
-- SPOT uses Available/Locked buckets
-- LINEAR uses Available/Locked/MARGIN buckets
+    Side int8
+    Type int8
+    TIF  int8
 
-**RESERVATION IS PRE-TRADE (FIX Protocol)!!!**
-- Reserve() called BEFORE matching
-- Error from Reserve = Order Rejection
-- No separate balance check needed
+    Quantity Quantity
+    Price    Price
+
+    TriggerPrice   Price
+    ReduceOnly     bool
+    CloseOnTrigger bool
+    StopOrderType  int8
+
+    // IsConditional — true если TriggerPrice > 0
+    // Устанавливается автоматически при валидации
+    IsConditional bool
+
+    OCO *OCOInput `json:"oco,omitempty"`
+}
+
+// OCOInput — параметры OCO (One-Cancels-the-Other)
+// Создаёт 2 связанных ордера: Take Profit + Stop Loss
+//
+// Правила OCO:
+//   1. Quantity=0 → auto-use position size + reduceOnly=true
+//   2. Оба ордера создаются как CloseOnTrigger=true
+//   3. Оба ордера получают одинаковый OrderLinkId (snowflake ID)
+//   4. При срабатывании TP → SL автоматически cancelled
+//   5. При срабатывании SL → TP автоматически cancelled
+//   6. Если позиция закрыта другим способом → оба cancelled
+//   7. LONG: TP trigger > SL trigger
+//   8. SHORT: TP trigger < SL trigger
+//
+type OCOInput struct {
+    Quantity   Quantity    // 0 = auto, use position size
+    TakeProfit OCOChildOrder
+    StopLoss   OCOChildOrder
+}
+
+type OCOChildOrder struct {
+    TriggerPrice Price  // TP или SL trigger price
+    Price        Price  // Limit price для TP/SL (0 = Market)
+    ReduceOnly   bool   // Всегда true для OCO
+}
+
+// OrderResult — результат PlaceOrder
+// ВСЕГДА возвращается массив orders[] (1 элемент для single, 2+ для OCO/batch)
+type OrderResult struct {
+    Orders    []*Order   // Все созданные ордера (1 = single, 2 = OCO)
+    Trades    []*Trade   // Сделки если были
+    Filled    Quantity   // Сумма filled для primary order
+    Remaining Quantity   // Сумма remaining для primary order / позиции
+    Status    int8       // Статус primary order / группы
+}
+```
 
 ---
 
-**Common logic**
-- All orders (LIMIT and MARKET) reserve balance BEFORE matching
-- Only POST_ONLY/GTC orders can go to orderbook
-- Only LIMIT orders can be POST_ONLY/GTC
-- MARKET orders can only be IOC/FOK
-- LIMIT orders can also be IOC/FOK but they do not go to orderbook and act like MARKET but with fixed price limit
-- IOC/FOK are only executed if there is immediate liquidity available
-- FOK order MUST be executed entirely or cancelled
-- IOC order can be executed partially and remaining is canceled.
-- IOC/FOK DO reserve balance (unlike old model) - we always reserve now
+## Order Type (internal/types/types.go)
+
+```go
+// Order — торговая заявка в системе
+//
+// OrderLinkId — группа связанных ордеров (OCO, TP+SL)
+//   > 0 = snowflake ID группы (все ордера в группе имеют одинаковый ID)
+//   -1 = нет группы (обычные ордера, одиночные conditional)
+//
+// Пример: OCO создаёт 2 ордера с одинаковым OrderLinkId = snowflake.Next()
+// При срабатывании одного — второй отменяется по этому ID
+//
+type Order struct {
+    ID       OrderID
+    UserID   UserID
+    Symbol   string
+    Category int8
+
+    Side int8
+    Type int8
+    TIF  int8
+
+    Status int8
+
+    Price    Price
+    Quantity Quantity
+    Filled   Quantity
+
+    TriggerPrice   Price
+    ReduceOnly     bool
+    CloseOnTrigger bool
+    StopOrderType  int8
+
+    // IsConditional — true если ордер conditional (TriggerPrice > 0)
+    // Для удобства проверки типа ордера в коде
+    IsConditional bool
+
+    // OrderLinkId — группа OCO/TP/SL
+    // > 0 = snowflake ID группы
+    // -1 = нет группы
+    OrderLinkId int64
+
+    CreatedAt uint64
+    UpdatedAt uint64
+    ClosedAt  uint64
+}
+```
 
 ---
 
+## StopOrderType Constants (internal/constants/constants.go)
+
+```go
+// Stop Order Types (Bybit-compatible)
+// OCO, TP, SL — все CloseOnTrigger=true, различаются только stopOrderType
+STOP_ORDER_TYPE_NORMAL       = 0  // Standard conditional order (Stop)
+STOP_ORDER_TYPE_STOP         = 1  // Standard stop order
+STOP_ORDER_TYPE_TAKE_PROFIT  = 2  // Take profit order
+STOP_ORDER_TYPE_STOP_LOSS    = 3  // Stop loss order
+STOP_ORDER_TYPE_TRAILING     = 4  // Trailing stop (future)
+STOP_ORDER_TYPE_OCO          = 5  // OCO order (TP + SL pair)
+```
+
 ---
 
-## Order Flow
+## Order Types Summary
 
-### PlaceOrder(input OrderInput) → OrderResult
+| Type | TriggerPrice | CloseOnTrigger | Quantity=0 | Description |
+|------|--------------|----------------|------------|-------------|
+| **Normal** | = 0 | false | ❌ | Regular LIMIT/MARKET order |
+| **Conditional** | > 0 | false | ✅ | Waits for trigger → creates identical order without trigger |
+| **CloseOnTrigger** | > 0 | true | ✅ | Waits for trigger → creates reduceOnly order to close position |
+| **OCO (TP+SL)** | > 0 | true | ✅ | Two linked orders, one cancels the other when triggered |
 
-```
-1. Validate(input)
-   - SPOT: reject reduceOnly, closeOnTrigger, trigger (conditional) orders
-   - LINEAR: validate reduceOnly
-   - MARKET: must be IOC or FOK
+**Quantity=0 meaning:**
+- For conditional/closeOnTrigger orders: "use position size at trigger time"
+- For regular orders: **NOT allowed** (returns ErrInvalidQuantity)
 
-2. If TriggerPrice > 0:
-   - Create Order with status = UNTRIGGERED
-   - Add to orderStore
-   - Add to triggerMonitor
-   - Return OrderResult with status = UNTRIGGERED
-   - END (no matching, no reserve)
+---
 
-3. Calculate Reserve Amount:
-   - SPOT BUY: Qty × Price
-   - SPOT SELL: Qty
-   - LINEAR: (Qty × Price) / Leverage
+## Validation Rules (internal/oms/service.go)
 
-4. Reserve(userID, symbol, category, amount)
-   - IF error (insufficient balance):
-     → REJECT ORDER (return error to client)
+### Field Validation (always applied)
 
-   - IF success:
-     Available -= amount
-     Locked += amount
-
-5. Match order against orderbook:
-   - For GTC/POST_ONLY: trades + possibly add rest to book
-   - For IOC/FOK: immediate trades only, no book
-
-6. For each trade:
-   - ExecuteTrade(trade, taker, maker)
-     * SPOT: Locked → Available (refund), Available → Deduct
-     * LINEAR: Locked → Margin
-
-7. If order remaining > 0 and TIF=GTC/POST_ONLY:
-   - Add rest to orderbook
-
-8. If order fully filled OR IOC/FOK partial:
-   - Release remaining locked amount
-     Locked -= remaining
-     Available += remaining
-
-9. Set OrderStatus by TIF:
-   - GTC/POST_ONLY: FILLED / PARTIALLY_FILLED / NEW
-   - IOC: FILLED / PARTIALLY_FILLED_CANCELED / CANCELED
-   - FOK: FILLED / CANCELED
-
-10. Return OrderResult
+```go
+// Errors
+ErrInvalidQuantity      = errors.New("quantity must be greater than 0")
+ErrInvalidPrice         = errors.New("price must be >= 0 for LIMIT orders")
+ErrInvalidSymbol        = errors.New("invalid symbol format")
+ErrInvalidCategory      = errors.New("invalid category: must be 0 (SPOT) or 1 (LINEAR)")
+ErrInvalidSide          = errors.New("invalid side: must be 0 (BUY) or 1 (SELL)")
+ErrInvalidOrderType     = errors.New("invalid order type: must be 0 (LIMIT) or 1 (MARKET)")
+ErrInvalidTIF           = errors.New("invalid time in force")
+ErrInvalidStopOrderType = errors.New("invalid stop order type")
 ```
 
-### CancelOrder(orderID OrderID, userID UserID) → error
+**Checks:**
+- `Quantity` > 0 for regular orders, = 0 allowed for conditional/closeOnTrigger
+- `Price` >= 0 for LIMIT orders
+- `Symbol` - valid format (BTCUSDT, ETHUSDT, etc.)
+- `Category` - only 0 (SPOT) or 1 (LINEAR)
+- `Side` - only 0 (BUY) or 1 (SELL)
+- `Type` - only 0 (LIMIT) or 1 (MARKET)
+- `TIF` - GTC, IOC, FOK, POST_ONLY
 
-```
-1. order := orderStore.Get(userID, orderID)
-2. If order == nil or userID mismatch → return nil
+### SPOT-specific Validation
 
-3. If order.Status == UNTRIGGERED:
-   - triggerMonitor.Remove(orderID)
-
-4. If order.Status == NEW or PARTIALLY_FILLED:
-   - Get locked amount for order
-   - Release(userID, symbol, locked_amount)
-     Locked -= locked_amount
-     Available += locked_amount
-   - Remove from orderbook
-
-5. order.Status = CANCELED
-6. orderStore.Remove(userID, orderID)
-7. Return nil
+```go
+ErrReduceOnlySpot    = errors.New("reduceOnly not allowed for SPOT")
+ErrConditionalSpot   = errors.New("conditional orders not allowed for SPOT")
+ErrCloseOnTriggerSpot = errors.New("closeOnTrigger not allowed for SPOT")
 ```
 
-### OnPriceTick(symbol string, price Price)
+### LINEAR-specific Validation
 
-```
-1. registry.SetPrice(symbol, price)
-
-2. checkLiquidations(price)
-   - For each position in positions:
-     - Calculate liquidation price
-     - IF liquidation condition met:
-       → Publish liquidation event
-
-3. orderIDs := triggerMonitor.Check(price)
-
-4. For each orderID in orderIDs:
-   order := orderStore.GetByID(orderID)
-   if order == nil → continue
-
-   if order.CloseOnTrigger:
-      handleCloseOnTrigger(order)
-   else:
-      handleConditional(order)
-
-   triggerMonitor.Remove(orderID)
+```go
+ErrMarketTIF                    = errors.New("market orders must be IOC or FOK")
+ErrCloseOnTriggerNoPosition     = errors.New("closeOnTrigger requires an existing position")
+ErrReduceOnlyNoPosition         = errors.New("reduceOnly not allowed without position")
+ErrReduceOnlyCommitmentExceeded = errors.New("reduceOnly commitment exceeds position")
+ErrInvalidTriggerPrice          = errors.New("invalid trigger price: BUY trigger must be below current price, SELL trigger must be above")
 ```
 
-### handleConditional(order *Order)
+### OCO Validation
 
-```
-1. order.Status = TRIGGERED
-
-2. Create OrderInput from order:
-   - UserID, Symbol, Category, Side, Type, Quantity, Price = from order
-   - TriggerPrice = 0
-   - CloseOnTrigger = false
-   - TIF = preserve original TIF
-
-3. Reserve(userID, symbol, category, calculated_amount)
-   - IF error → order.Status = REJECTED, return
-
-4. PlaceOrder(input) → executes the twin order
-
-5. Original order stays as TRIGGERED (for record)
+```go
+ErrOCOSpot           = errors.New("OCO orders not allowed for SPOT")
+ErrOCONoPosition     = errors.New("OCO orders require an existing position")
+ErrOCOTPTriggerInvalid  = errors.New("OCO TP trigger must be > SL trigger for LONG positions")
+ErrOCOSLTriggerInvalid  = errors.New("OCO SL trigger must be < TP trigger for SHORT positions")
 ```
 
-### handleCloseOnTrigger(order *Order) — LINEAR only
+**OCO rules:**
+- LONG position: `TakeProfit.TriggerPrice > StopLoss.TriggerPrice`
+- SHORT position: `TakeProfit.TriggerPrice < StopLoss.TriggerPrice`
 
-```
-1. pos := positions.Get(order.UserID, order.Symbol)
-2. If pos.Size == 0:
-   - order.Status = TRIGGERED
-   - Return
+### Self-Match Prevention
 
-3. side := opposite(pos.Side)  // LONG → SELL, SHORT → BUY
-
-4. qty := pos.Size  // ENTIRE position!
-
-5. Create OrderInput:
-   - UserID, Symbol, Category
-   - Side = opposite
-   - Quantity = qty
-   - Type = same from order
-   - Price = (if LIMIT) from order.Price
-   - ReduceOnly = true
-   - TIF = same
-
-6. Reserve(userID, symbol, category, calculated_amount)
-   - IF error → order.Status = REJECTED, return
-
-7. PlaceOrder(input) → executes close order
-
-8. order.Status = TRIGGERED
+```go
+ErrSelfMatch = errors.New("self-match prevention: order would match with own order")
 ```
 
+Prevents placing orders that would execute against own orders in the orderbook.
+
+---
+
+## Self-Match Prevention
+
+Prevents orders from executing against own orders in the orderbook:
+
+```go
+func (s *Service) checkSelfMatch(input *types.OrderInput) error
 ```
-1. pos := positions.Get(order.UserID, order.Symbol)
-2. If pos.Size == 0:
-   - order.Status = TRIGGERED
-   - Return
 
-3. side := opposite(pos.Side)  // LONG → SELL, SHORT → BUY
+**Rules:**
+- Conditional and closeOnTrigger orders are excluded (don't go to orderbook)
+- For LIMIT orders: checks if best bid/ask would match user's own order
+- For MARKET orders: checks if any orders exist on opposite side
 
-4. Create OrderInput:
-   - UserID, Symbol, Category
-   - Side - opposite
-   - Quantity = pos.Size  // ENTIRE position!
-   - Type = same from order
-   - Price = (if LIMIT) from order.Price
-   - ReduceOnly = if limit = true, if market = false
-   - TIF = same
+---
 
-5. linear := GetMarket(CATEGORY_LINEAR)
+## ID Generation
 
-6. engine.executeOrder(input, linear.Validator, linear.Clearing, orderbook)
+**Snowflake Algorithm Implementation** (`internal/snowflake/snowflake.go`)
 
-7. order.Status = TRIGGERED
+```go
+var counter int64
+
+func Next() int64 {
+    return atomic.AddInt64(&counter, 1)
+}
+```
+
+**Performance:**
+- **~1.8 ns/op** for ID generation
+- Lock-free with atomic operations (zero contention)
+- No external dependencies, no time calculation
+
+**Usage:**
+```go
+order.ID = types.OrderID(snowflake.Next())
+trade.ID = types.TradeID(snowflake.Next())
+orderLinkId = snowflake.Next()  // For OCO groups
 ```
 
 ---
@@ -694,13 +515,14 @@ TIF_FOK       = 2
 TIF_POST_ONLY = 3
 
 // Order Status
-ORDER_STATUS_NEW                     = 0
-ORDER_STATUS_PARTIALLY_FILLED        = 1
-ORDER_STATUS_FILLED                  = 2
-ORDER_STATUS_CANCELED                = 3
+ORDER_STATUS_NEW                       = 0
+ORDER_STATUS_PARTIALLY_FILLED          = 1
+ORDER_STATUS_FILLED                    = 2
+ORDER_STATUS_CANCELED                  = 3
 ORDER_STATUS_PARTIALLY_FILLED_CANCELED = 4
-ORDER_STATUS_UNTRIGGERED             = 5
-ORDER_STATUS_TRIGGERED               = 6
+ORDER_STATUS_UNTRIGGERED               = 5
+ORDER_STATUS_TRIGGERED                 = 6
+ORDER_STATUS_DEACTIVATED               = 7
 
 // Balance Buckets
 BUCKET_AVAILABLE = 0
@@ -711,59 +533,161 @@ BUCKET_MARGIN    = 2
 SIDE_NONE  = -1
 SIDE_LONG  = 0
 SIDE_SHORT = 1
+
+// Stop Order Types
+STOP_ORDER_TYPE_NORMAL       = 0
+STOP_ORDER_TYPE_STOP         = 1
+STOP_ORDER_TYPE_TAKE_PROFIT  = 2
+STOP_ORDER_TYPE_STOP_LOSS    = 3
+STOP_ORDER_TYPE_TRAILING     = 4
+STOP_ORDER_TYPE_OCO          = 5
 ```
 
 ---
 
-## Symbol Registry (HTTP Loader)
+## Configure via environment variables
 
-```
-Assets URL: http://146.103.123.216:3000/assets
-Multiplexer URL: http://localhost:3333/proxy/multiplexer
-Sync Interval: 5 minutes
+```bash
+# Required
+NATS_URL=nats://localhost:4222
+STREAM_PREFIX=meta
+JWT_SECRET=your-secret-key
 
-LoadAssets():
-1. GET Assets URL → [{symbol: "BTCUSDT"]}, {symbol: "ETHUSDT"}, ...]
-2. For each symbol:
-   a. GET Multiplexer URL/prices?symbol=XXX
-   b. If price == null or 404 → skip symbol
-   c. If price received:
-      - instruments[symbol] = FromSymbol(symbol, price)
-      - lastPrices[symbol] = price
-
-Start():
-- LoadAssets()
-- Start periodic sync every 5 minutes
-```
-
----
-
-## Price Feed (NATS)
-
-```
-NATS_ADDR: <placeholder>
-
-OnMessage(symbol string, price Price):
-1. registry.SetLastPrice(symbol, price)
-2. log liquidation check
-3. triggers.OnPriceTick(symbol, price)
+# Optional
+PORT=8080
 ```
 
 ---
 
 ## Performance Targets
 
-| Operation | Target | Actual | Status |
-|-----------|--------|--------|--------|
+| Operation | Target Latency | Actual | Status |
+|-----------|----------------|--------|--------|
 | PlaceOrder | < 500μs | **264ns** | ✓ EXCELLENT |
 | MatchOrder | < 200μs | **38.5ns** | ✓ EXCELLENT |
 | CancelOrder | < 100μs | **6.3ns** | ✓ EXCELLENT |
 | BestBidAsk | < 10μs | **7.7ns** | ✓ EXCELLENT |
 | ConcurrentMatch | < 200μs | **116ns** | ✓ EXCELLENT |
 | Pool GetOrder | < 10μs | **7.3ns** | ✓ EXCELLENT |
-| WAL Save | < 100μs | **668ns** | ✓ EXCELLENT |
-| WAL Load | < 50μs | **128ns** | ⚠ OPTIMIZE |
-| WAL SaveTx | < 100μs | **437ns** | ✓ EXCELLENT |
+
+---
+
+## Key Interfaces
+
+### Clearing Interface
+
+```go
+type Clearing interface {
+    Reserve(userID UserID, symbol string, category int8, side int8, qty Quantity, price Price) error
+    Release(userID UserID, symbol string, category int8, side int8, qty Quantity, price Price)
+    ExecuteTrade(trade *Trade, taker *Order, maker *Order)
+}
+```
+
+---
+
+## Trigger Monitor
+
+```go
+type TriggerMonitor struct {
+    buyTriggers  *TriggerHeap  // MIN heap: BUY activate when price ≤ trigger
+    sellTriggers *TriggerHeap  // MAX heap: SELL activate when price ≥ trigger
+}
+
+func (m *TriggerMonitor) Add(order *Order)
+func (m *TriggerMonitor) Remove(orderID OrderID)
+func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
+```
+
+---
+
+## Critical Rules
+
+1. **ORDERBOOKS ARE SEPARATE FOR SPOT AND LINEAR!!!**
+   - Store separate orderbooks for each symbol and each market
+   - Access to orderbook MUST be O(1)
+
+2. **BALANCES ARE COMMON FOR SPOT AND LINEAR!!!**
+   - All users share the same balance system
+   - SPOT uses Available/Locked buckets
+   - LINEAR uses Available/Locked/MARGIN buckets
+
+3. **RESERVATION IS PRE-TRADE (FIX Protocol)!!!**
+   - Reserve() called BEFORE matching
+   - Error from Reserve = Order Rejection
+
+4. **OCO ORDERS ARE CLOSE ON TRIGGER!!!**
+   - OCO always has CloseOnTrigger = true
+   - OCO always has ReduceOnly = true
+   - Quantity = 0 means "close full position at trigger"
+
+5. **OrderLinkId GROUPS OCO ORDERS!!!**
+   - Both TP and SL orders get the same OrderLinkId
+   - When one triggers, the other is cancelled by OrderLinkId
+
+6. **QUANTITY=0 HAS SPECIAL MEANING!!!**
+   - Regular orders: NOT allowed (ErrInvalidQuantity)
+   - Conditional/CloseOnTrigger: use position size at trigger time
+
+7. **SELF-MATCH PREVENTION!!!**
+   - Orders cannot execute against own orders in the book
+   - Checked before order is placed
+
+8. **ALL VALIDATIONS ARE IN ONE PLACE!!!**
+   - `validateOrder()` function in OMS handles all validation
+   - Both field validation and business logic validation
+
+---
+
+## Order Flow
+
+### PlaceOrder → OrderResult (ALWAYS ARRAY)
+
+```
+1. Validate(input)
+   - Field validation (quantity, price, symbol, etc.)
+   - SPOT/LINEAR specific validation
+   - OCO validation (TP > SL for LONG, TP < SL for SHORT)
+   - Self-match prevention
+   - Set IsConditional if TriggerPrice > 0
+
+2. If OCO:
+   - Validate position exists
+   - Validate TP/SL trigger prices
+   - Create TP and SL orders with Quantity=0
+   - Both get CloseOnTrigger=true, ReduceOnly=true
+   - Both get same OrderLinkId
+   - Return: Orders=[tp, sl], Status=UNTRIGGERED
+
+3. If TriggerPrice > 0 (Conditional):
+   - Create Order with status=UNTRIGGERED
+   - Add to triggerMonitor
+   - Return: Orders=[order], Status=UNTRIGGERED
+
+4. If Regular order:
+   - Reserve balance
+   - Match against orderbook
+   - Return: Orders=[order], Trades=[...], Status=...
+```
+
+### OnPriceTick
+
+```
+1. registry.SetPrice(symbol, price)
+
+2. orderIDs := triggerMonitor.Check(price)
+
+3. For each orderID:
+   - Get order from store
+   - If CloseOnTrigger:
+     - Get current position size
+     - If Quantity=0, use position size
+     - Create reduceOnly order to close position
+   - Else (Conditional):
+     - Create twin order without trigger
+     - Execute normal order flow
+   - Cancel linked OCO order by OrderLinkId
+```
 
 ---
 
@@ -782,7 +706,6 @@ func GetOrder() *Order {
 func PutOrder(o *Order) {
     o.ID = 0
     o.UserID = 0
-    // reset fields
     orderPool.Put(o)
 }
 ```

@@ -14,15 +14,15 @@ import (
 )
 
 func init() {
+	// Register all types that will be sent via Gob
 	gob.Register(types.Order{})
 	gob.Register(types.Trade{})
 	gob.Register(types.Match{})
 	gob.Register(types.OrderInput{})
 	gob.Register(types.OrderEvent{})
-	gob.Register(types.TradeEvent{})
-	gob.Register(types.RPNLEvent{})
-	gob.Register(types.Position{})
-	gob.Register(types.UserBalance{})
+	gob.Register(types.OrderCancelled{})
+	gob.Register(types.PositionEvent{})
+	gob.Register(types.PriceTick{})
 }
 
 type Config struct {
@@ -54,6 +54,7 @@ func New(cfg Config) (*NATS, error) {
 func (n *NATS) Close()                  { n.conn.Close() }
 func (n *NATS) JS() jetstream.JetStream { return n.js }
 
+// PublishGob encodes any value using gob and publishes it.
 func (n *NATS) PublishGob(ctx context.Context, subject string, v any) error {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -64,6 +65,7 @@ func (n *NATS) PublishGob(ctx context.Context, subject string, v any) error {
 	return err
 }
 
+// DecodeGob decodes gob-encoded data into v.
 func DecodeGob(data []byte, v any) error {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
@@ -137,6 +139,8 @@ func (n *NATS) Subscribe(ctx context.Context, subject, name string, handler func
 	return &Subscription{cancel: cancel}
 }
 
+// SubscribeGob subscribes to a subject and passes raw bytes to handler.
+// Use DecodeGob to convert []byte into your type.
 func (n *NATS) SubscribeGob(ctx context.Context, subject, name string, handler func([]byte)) *Subscription {
 	return n.Subscribe(ctx, subject, name, handler)
 }

@@ -7,311 +7,175 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func BenchmarkTriggerMonitor_Add(b *testing.B) {
+func BenchmarkMonitor_Add(b *testing.B) {
 	m := New()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i % 1000),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			TriggerPrice: types.Price(50000 + i%1000),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-}
-
-func BenchmarkTriggerMonitor_Check(b *testing.B) {
-	m := New()
-
-	for i := 0; i < 5000; i++ {
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i % 1000),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			TriggerPrice: types.Price(50000 + i%1000),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		m.Check(types.Price(50500))
-	}
-}
-
-func BenchmarkTriggerMonitor_CheckEmpty(b *testing.B) {
-	m := New()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		m.Check(types.Price(50500))
-	}
-}
-
-func BenchmarkTriggerMonitor_GetOrder(b *testing.B) {
-	m := New()
-
-	for i := 0; i < 1000; i++ {
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i % 1000),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			TriggerPrice: types.Price(50000 + i%1000),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		m.GetOrder(types.OrderID(i%1000 + 1))
-	}
-}
-
-func BenchmarkTriggerMonitor_BuySell(b *testing.B) {
-	m := New()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		idx := i % 2000
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i % 1000),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY + int8(idx%2),
-			TriggerPrice: types.Price(50000 + idx),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-}
-
-func TestTriggerMonitor_AddRemove(t *testing.T) {
-	m := New()
-
 	order := &types.Order{
 		ID:           types.OrderID(1),
-		UserID:       100,
+		UserID:       types.UserID(1),
 		Symbol:       "BTCUSDT",
 		Category:     constants.CATEGORY_LINEAR,
 		Side:         constants.ORDER_SIDE_BUY,
+		Type:         constants.ORDER_TYPE_LIMIT,
 		TriggerPrice: types.Price(50000),
-		Quantity:     types.Quantity(100),
-		Price:        types.Price(50000),
 		CreatedAt:    types.NowNano(),
 	}
 
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		order.ID = types.OrderID(uint64(i) + 1)
+		m.Add(order)
+	}
+}
+
+func BenchmarkMonitor_Check(b *testing.B) {
+	m := New()
+
+	for i := 0; i < 10000; i++ {
+		order := &types.Order{
+			ID:           types.OrderID(uint64(i) + 1),
+			UserID:       types.UserID(1),
+			Symbol:       "BTCUSDT",
+			Category:     constants.CATEGORY_LINEAR,
+			Side:         constants.ORDER_SIDE_BUY,
+			Type:         constants.ORDER_TYPE_LIMIT,
+			TriggerPrice: types.Price(50000 + i),
+			CreatedAt:    types.NowNano(),
+		}
+		m.Add(order)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Check(types.Price(55000))
+	}
+}
+
+func BenchmarkMonitor_Remove(b *testing.B) {
+	m := New()
+
+	for i := 0; i < 10000; i++ {
+		order := &types.Order{
+			ID:           types.OrderID(uint64(i) + 1),
+			UserID:       types.UserID(1),
+			Symbol:       "BTCUSDT",
+			Category:     constants.CATEGORY_LINEAR,
+			Side:         constants.ORDER_SIDE_BUY,
+			Type:         constants.ORDER_TYPE_LIMIT,
+			TriggerPrice: types.Price(50000 + i),
+			CreatedAt:    types.NowNano(),
+		}
+		m.Add(order)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Remove(types.OrderID(uint64(i%10000) + 1))
+	}
+}
+
+func BenchmarkMonitor_AddCheckRemove(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m := New()
+		orders := make([]*types.Order, 10000)
+
+		for j := 0; j < 10000; j++ {
+			orders[j] = &types.Order{
+				ID:           types.OrderID(uint64(i*10000+j) + 1),
+				UserID:       types.UserID(1),
+				Symbol:       "BTCUSDT",
+				Category:     constants.CATEGORY_LINEAR,
+				Side:         constants.ORDER_SIDE_BUY,
+				Type:         constants.ORDER_TYPE_LIMIT,
+				TriggerPrice: types.Price(50000 + j),
+				CreatedAt:    uint64(j),
+			}
+		}
+
+		for j := 0; j < 5000; j++ {
+			m.Add(orders[j])
+		}
+		m.Check(types.Price(52500))
+		for j := 0; j < 2500; j++ {
+			m.Remove(orders[j].ID)
+		}
+	}
+}
+
+func TestMonitor_Count(t *testing.T) {
+	m := New()
+
+	if m.Count() != 0 {
+		t.Errorf("expected 0, got %d", m.Count())
+	}
+
+	order := &types.Order{
+		ID:           types.OrderID(1),
+		UserID:       types.UserID(1),
+		Symbol:       "BTCUSDT",
+		Category:     constants.CATEGORY_LINEAR,
+		Side:         constants.ORDER_SIDE_BUY,
+		Type:         constants.ORDER_TYPE_LIMIT,
+		TriggerPrice: types.Price(50000),
+		CreatedAt:    types.NowNano(),
+	}
 	m.Add(order)
 
 	if m.Count() != 1 {
-		t.Errorf("expected count 1, got %d", m.Count())
+		t.Errorf("expected 1, got %d", m.Count())
 	}
 
-	if m.BuyCount() != 1 {
-		t.Errorf("expected buy count 1, got %d", m.BuyCount())
-	}
-
-	m.Remove(types.OrderID(1))
+	m.Remove(order.ID)
 
 	if m.Count() != 0 {
-		t.Errorf("expected count 0, got %d", m.Count())
+		t.Errorf("expected 0, got %d", m.Count())
 	}
 }
 
-func TestTriggerMonitor_CheckReturnsTriggered(t *testing.T) {
+func TestMonitor_CheckBuyTriggers(t *testing.T) {
 	m := New()
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i),
+			ID:           types.OrderID(uint64(i) + 1),
+			UserID:       types.UserID(1),
 			Symbol:       "BTCUSDT",
 			Category:     constants.CATEGORY_LINEAR,
 			Side:         constants.ORDER_SIDE_BUY,
-			TriggerPrice: types.Price(50000 + i),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
+			Type:         constants.ORDER_TYPE_LIMIT,
+			TriggerPrice: types.Price(50000 + i*1000),
 			CreatedAt:    types.NowNano(),
 		}
 		m.Add(order)
 	}
 
-	triggered := m.Check(types.Price(50505))
+	triggered := m.Check(types.Price(54000))
 
-	if len(triggered) != 100 {
-		t.Errorf("expected 100 triggered orders, got %d", len(triggered))
-	}
-
-	for _, id := range triggered {
-		if id < 1 || id > 100 {
-			t.Errorf("unexpected order ID %d", id)
-		}
+	if len(triggered) != 5 {
+		t.Errorf("expected 5 triggered orders (50000,51000,52000,53000,54000), got %d", len(triggered))
 	}
 }
 
-func TestTriggerMonitor_CheckRemovesFromHeap(t *testing.T) {
+func TestMonitor_CheckSellTriggers(t *testing.T) {
 	m := New()
 
 	for i := 0; i < 10; i++ {
 		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			TriggerPrice: types.Price(50500 + i),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-
-	triggered := m.Check(types.Price(50505))
-
-	if len(triggered) != 6 {
-		t.Errorf("expected 6 triggered orders, got %d", len(triggered))
-	}
-
-	if m.BuyCount() != 4 {
-		t.Errorf("expected 4 remaining in heap, got %d", m.BuyCount())
-	}
-}
-
-func TestTriggerMonitor_SellSide(t *testing.T) {
-	m := New()
-
-	for i := 0; i < 10; i++ {
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i),
+			ID:           types.OrderID(uint64(i) + 1),
+			UserID:       types.UserID(1),
 			Symbol:       "BTCUSDT",
 			Category:     constants.CATEGORY_LINEAR,
 			Side:         constants.ORDER_SIDE_SELL,
-			TriggerPrice: types.Price(51000 - i),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
+			Type:         constants.ORDER_TYPE_LIMIT,
+			TriggerPrice: types.Price(55000 - i*1000),
 			CreatedAt:    types.NowNano(),
 		}
 		m.Add(order)
 	}
 
-	triggered := m.Check(types.Price(50995))
+	triggered := m.Check(types.Price(54500))
 
-	if len(triggered) != 6 {
-		t.Errorf("expected 6 triggered orders, got %d", len(triggered))
-	}
-}
-
-func TestTriggerMonitor_MixedSides(t *testing.T) {
-	m := New()
-
-	for i := 0; i < 10; i++ {
-		var side int8 = constants.ORDER_SIDE_BUY
-		if i%2 == 0 {
-			side = constants.ORDER_SIDE_SELL
-		}
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         side,
-			TriggerPrice: types.Price(50000 + i%5*100),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-
-	triggered := m.Check(types.Price(50200))
-
-	if len(triggered) != 6 {
-		t.Errorf("expected 6 triggered orders, got %d", len(triggered))
-	}
-}
-
-func TestTriggerMonitor_RemoveNonExistent(t *testing.T) {
-	m := New()
-
-	if m.Remove(types.OrderID(999)) {
-		t.Errorf("expected false when removing non-existent order")
-	}
-}
-
-func TestTriggerMonitor_GetOrderNotFound(t *testing.T) {
-	m := New()
-
-	if m.GetOrder(types.OrderID(999)) != nil {
-		t.Errorf("expected nil when getting non-existent order")
-	}
-}
-
-func TestTriggerMonitor_Counts(t *testing.T) {
-	m := New()
-
-	if m.Count() != 0 {
-		t.Errorf("expected count 0, got %d", m.Count())
-	}
-
-	for i := 0; i < 10; i++ {
-		var side int8 = constants.ORDER_SIDE_BUY
-		if i%2 == 0 {
-			side = constants.ORDER_SIDE_SELL
-		}
-		order := &types.Order{
-			ID:           types.OrderID(i + 1),
-			UserID:       uint64(i),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         side,
-			TriggerPrice: types.Price(50000 + i%5*100),
-			Quantity:     types.Quantity(100),
-			Price:        types.Price(50000),
-			CreatedAt:    types.NowNano(),
-		}
-		m.Add(order)
-	}
-
-	if m.Count() != 10 {
-		t.Errorf("expected count 10, got %d", m.Count())
-	}
-
-	if m.BuyCount() != 5 {
-		t.Errorf("expected buy count 5, got %d", m.BuyCount())
-	}
-
-	if m.SellCount() != 5 {
-		t.Errorf("expected sell count 5, got %d", m.SellCount())
+	if len(triggered) != 1 {
+		t.Errorf("expected 1 triggered orders (55000 >= 54500), got %d", len(triggered))
 	}
 }

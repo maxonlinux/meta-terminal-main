@@ -5,12 +5,11 @@ import (
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/pool"
-	"github.com/anomalyco/meta-terminal-go/internal/snowflake"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 type IDGenerator interface {
-	Next() int64
+	Next() uint64
 }
 
 type level struct {
@@ -66,13 +65,6 @@ func (ob *OrderBook) SetIDGenerator(idGen IDGenerator) {
 	ob.idGen = idGen
 }
 
-func (ob *OrderBook) generateID() types.OrderID {
-	if ob.idGen != nil {
-		return types.OrderID(ob.idGen.Next())
-	}
-	return types.OrderID(snowflake.Next())
-}
-
 func (ob *OrderBook) WouldCross(side int8, price types.Price) bool {
 	ob.mu.RLock()
 	defer ob.mu.RUnlock()
@@ -101,31 +93,26 @@ func (ob *OrderBook) BestAsk() (price types.Price, qty types.Quantity, ok bool) 
 	return ob.bestAsk.price, ob.bestAsk.total, true
 }
 
-func (ob *OrderBook) Depth(limit int) ([]types.Price, []types.Quantity, []types.Price, []types.Quantity) {
+func (ob *OrderBook) Depth(side int8, limit int) []int64 {
 	ob.mu.RLock()
 	defer ob.mu.RUnlock()
 
 	if limit <= 0 {
-		return nil, nil, nil, nil
+		return nil
 	}
 
-	bidPrices := make([]types.Price, 0, limit)
-	bidQtys := make([]types.Quantity, 0, limit)
-
-	for lvl := ob.bestBid; lvl != nil && len(bidPrices) < limit; lvl = lvl.next {
-		bidPrices = append(bidPrices, lvl.price)
-		bidQtys = append(bidQtys, lvl.total)
+	out := make([]int64, 0, limit*2)
+	if side == constants.ORDER_SIDE_BUY {
+		for lvl := ob.bestBid; lvl != nil && len(out) < limit*2; lvl = lvl.next {
+			out = append(out, int64(lvl.price), int64(lvl.total))
+		}
+		return out
 	}
 
-	askPrices := make([]types.Price, 0, limit)
-	askQtys := make([]types.Quantity, 0, limit)
-
-	for lvl := ob.bestAsk; lvl != nil && len(askPrices) < limit; lvl = lvl.next {
-		askPrices = append(askPrices, lvl.price)
-		askQtys = append(askQtys, lvl.total)
+	for lvl := ob.bestAsk; lvl != nil && len(out) < limit*2; lvl = lvl.next {
+		out = append(out, int64(lvl.price), int64(lvl.total))
 	}
-
-	return bidPrices, bidQtys, askPrices, askQtys
+	return out
 }
 
 func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, needed types.Quantity) types.Quantity {
@@ -156,7 +143,11 @@ func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, n
 	return total
 }
 
-func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types.Trade, error) {
+func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]types.Match, error) {
+	return ob.MatchInto(taker, limitPrice, nil)
+}
+
+func (ob *OrderBook) MatchInto(taker *types.Order, limitPrice types.Price, matches []types.Match) ([]types.Match, error) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 
@@ -164,17 +155,15 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types
 		return nil, nil
 	}
 
-	var trades []*types.Trade
-
 	if taker.Side == constants.ORDER_SIDE_BUY {
 		for taker.Remaining() > 0 && ob.bestAsk != nil {
 			lvl := ob.bestAsk
 			if limitPrice > 0 && lvl.price > limitPrice {
 				break
 			}
-			trades = ob.matchLevel(taker, lvl, trades)
+			matches = ob.matchLevel(taker, lvl, matches)
 		}
-		return trades, nil
+		return matches, nil
 	}
 
 	for taker.Remaining() > 0 && ob.bestBid != nil {
@@ -182,12 +171,12 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]*types
 		if limitPrice > 0 && lvl.price < limitPrice {
 			break
 		}
-		trades = ob.matchLevel(taker, lvl, trades)
+		matches = ob.matchLevel(taker, lvl, matches)
 	}
-	return trades, nil
+	return matches, nil
 }
 
-func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, trades []*types.Trade) []*types.Trade {
+func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, matches []types.Match) []types.Match {
 	for taker.Remaining() > 0 && lvl.head != nil {
 		makerNode := lvl.head
 		maker := makerNode.order
@@ -197,10 +186,7 @@ func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, trades []*types.
 			continue
 		}
 
-		exec := makerRemaining
-		if taker.Remaining() < makerRemaining {
-			exec = taker.Remaining()
-		}
+		exec := min(makerRemaining, taker.Remaining())
 
 		maker.Filled += exec
 		taker.Filled += exec
@@ -217,23 +203,25 @@ func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, trades []*types.
 		trade.Price = lvl.price
 		trade.Quantity = exec
 		trade.ExecutedAt = types.NowNano()
-		trades = append(trades, trade)
+		trade.TakerLeverage = taker.Leverage
+		trade.MakerLeverage = maker.Leverage
+		matches = append(matches, types.Match{Trade: trade, Maker: maker})
 
 		if maker.Remaining() == 0 {
 			ob.removeNode(makerNode)
 		}
 	}
-	return trades
+	return matches
 }
 
-func (ob *OrderBook) nextTradeID() int64 {
+func (ob *OrderBook) nextTradeID() uint64 {
 	if ob.idGen != nil {
 		return ob.idGen.Next()
 	}
-	return snowflake.Next()
+	return uint64(types.NowNano())
 }
 
-func (ob *OrderBook) Add(order *types.Order) {
+func (ob *OrderBook) AddResting(order *types.Order) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 
@@ -272,10 +260,9 @@ func (ob *OrderBook) Add(order *types.Order) {
 	lvl.tail = n
 }
 
-func (ob *OrderBook) Remove(orderID types.OrderID) bool {
+func (ob *OrderBook) RemoveResting(orderID types.OrderID) bool {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
-
 	n := ob.orders[orderID]
 	if n == nil {
 		return false
@@ -284,21 +271,20 @@ func (ob *OrderBook) Remove(orderID types.OrderID) bool {
 	return true
 }
 
-func (ob *OrderBook) Adjust(orderID types.OrderID, newRemaining types.Quantity) bool {
+func (ob *OrderBook) AdjustResting(orderID types.OrderID, newRemaining types.Quantity) bool {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
-
 	n := ob.orders[orderID]
 	if n == nil || n.order == nil {
 		return false
 	}
-
 	curRemaining := n.order.Remaining()
-	if newRemaining >= curRemaining {
-		delta := newRemaining - curRemaining
-		n.level.total += delta
+	delta := newRemaining - curRemaining
+	if delta == 0 {
+		return true
 	}
-	n.order.Quantity = n.order.Filled + newRemaining
+	n.level.total += delta
+	n.order.Quantity = max(n.order.Filled+newRemaining, n.order.Filled)
 	return true
 }
 

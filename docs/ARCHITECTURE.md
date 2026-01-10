@@ -116,14 +116,6 @@ type Order struct {
 }
 ```
 
-#### Symbol Sharding
-```go
-// Distribute 1000+ markets across CPU cores
-shardIndex := symbolHash % config.OrderbookShards
-shard := orderbookShards[shardIndex]
-// Each shard runs on separate goroutine with dedicated CPU
-```
-
 #### User Queue Serialization
 ```go
 // Per-user operation queue prevents race conditions
@@ -261,10 +253,9 @@ Disk: Minimal (WAL + snapshots + outbox)
 ### Future Scaling
 
 ```
-1. Increase shards (16-32) for more CPU cores
-2. Hot/cold market separation (active markets in memory)
-3. Distributed cache for user state
-4. Read replicas for analytics
+1. Hot/cold market separation (active markets in memory)
+2. Distributed cache for user state
+3. Read replicas for analytics
 ```
 
 ## Error Handling
