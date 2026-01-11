@@ -73,7 +73,7 @@ type Trade struct {
 }
 
 type Match struct {
-	Trade *Trade
+	Trade Trade
 	Maker *Order
 }
 
@@ -158,7 +158,9 @@ type OCOChildOrder struct {
 //	}
 type OrderResult struct {
 	Orders    []*Order // Все созданные ордера (1 = single, 2 = OCO)
-	Trades    []*Trade // Сделки если были (для primary order)
+	OrdersBuf [2]*Order
+	Trades    []Trade // Сделки если были (для primary order)
+	TradesBuf [8]Trade
 	Filled    Quantity // Сумма filled для primary order
 	Remaining Quantity // Сумма remaining для primary order
 	Status    int8     // Статус primary order
@@ -208,6 +210,7 @@ type OrderEvent struct {
 	Filled       Quantity
 	TriggerPrice Price
 	ReduceOnly   bool
+	OrderLinkId  int64
 	CreatedAt    uint64
 	UpdatedAt    uint64
 }

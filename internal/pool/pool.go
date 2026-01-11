@@ -64,6 +64,12 @@ func GetOrderResult() *types.OrderResult {
 func PutOrderResult(r *types.OrderResult) {
 	r.Orders = nil
 	r.Trades = nil
+	for i := range r.OrdersBuf {
+		r.OrdersBuf[i] = nil
+	}
+	for i := range r.TradesBuf {
+		r.TradesBuf[i] = types.Trade{}
+	}
 	orderResultPool.Put(r)
 }
 

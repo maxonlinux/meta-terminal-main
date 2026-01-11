@@ -2,11 +2,23 @@ package risk
 
 import (
 	"context"
+	"io"
+	"log"
+	"os"
 	"testing"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
+
+func TestMain(m *testing.M) {
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	code := m.Run()
+	log.SetOutput(prev)
+	os.Exit(code)
+}
 
 type MockOMS struct {
 	orders []*types.OrderInput
@@ -216,6 +228,10 @@ func TestRemovePosition(t *testing.T) {
 }
 
 func BenchmarkCheckLiquidations(b *testing.B) {
+	b.ReportAllocs()
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(prev)
 	s := &Service{
 		positions:  make(map[types.UserID]map[string]*types.Position),
 		lastPrices: make(map[string]types.Price),
@@ -244,15 +260,31 @@ func BenchmarkCheckLiquidations(b *testing.B) {
 }
 
 func BenchmarkHandlePositionUpdate(b *testing.B) {
+	b.ReportAllocs()
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(prev)
 	s := &Service{
 		positions:  make(map[types.UserID]map[string]*types.Position),
 		lastPrices: make(map[string]types.Price),
 	}
 
-	data := []byte{
-		1, 66, 84, 67, 85, 83, 68, 84, 0, 0, 0, 0, 0, 0, 0, 1,
-		0, 0, 0, 0, 0, 0, 194, 133, 10, 0, 0, 0, 0, 0, 0, 0,
+	update := struct {
+		UserID     types.UserID
+		Symbol     string
+		NewSize    int64
+		NewSide    int8
+		EntryPrice int64
+		Leverage   int8
+	}{
+		UserID:     1,
+		Symbol:     "BTCUSDT",
+		NewSize:    1,
+		NewSide:    constants.ORDER_SIDE_BUY,
+		EntryPrice: 50000,
+		Leverage:   10,
 	}
+	data, _ := messaging.EncodeGob(update)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -14,6 +14,7 @@ var (
 	ErrCloseOnTriggerNoPosition     = errors.New("closeOnTrigger requires an existing position")
 	ErrMarketTIF                    = errors.New("market orders must be IOC or FOK")
 	ErrReduceOnlyNoPosition         = errors.New("reduceOnly not allowed without position")
+	ErrReduceOnlySide               = errors.New("reduceOnly side would not reduce position")
 	ErrReduceOnlyCommitmentExceeded = errors.New("reduceOnly commitment exceeds position")
 	ErrSelfMatch                    = errors.New("self-match prevention: order would match with own order")
 	ErrOCOSpot                      = errors.New("OCO orders not allowed for SPOT")
@@ -31,6 +32,7 @@ var (
 	ErrOCOTPTriggerInvalid          = errors.New("OCO TP trigger must be > SL trigger for LONG positions")
 	ErrOCOSLTriggerInvalid          = errors.New("OCO SL trigger must be < TP trigger for SHORT positions")
 	ErrFOKInsufficientLiquidity     = errors.New("FOK: insufficient liquidity in orderbook")
+	ErrPostOnlyWouldCross           = errors.New("post-only would immediately match")
 )
 
 func (s *Service) validateOrder(input *types.OrderInput) error {
@@ -73,7 +75,8 @@ func (s *Service) validateOrder(input *types.OrderInput) error {
 		return ErrInvalidPrice
 	}
 
-	if input.Category == constants.CATEGORY_SPOT {
+	switch input.Category {
+	case constants.CATEGORY_SPOT:
 		if input.ReduceOnly {
 			return ErrReduceOnlySpot
 		}
@@ -83,17 +86,18 @@ func (s *Service) validateOrder(input *types.OrderInput) error {
 		if input.CloseOnTrigger {
 			return ErrCloseOnTriggerSpot
 		}
-	} else {
-		if input.Type == constants.ORDER_TYPE_MARKET {
-			if input.TIF != constants.TIF_IOC && input.TIF != constants.TIF_FOK {
-				return ErrMarketTIF
-			}
+	case constants.CATEGORY_LINEAR:
+		if input.Type == constants.ORDER_TYPE_MARKET && input.TIF != constants.TIF_IOC && input.TIF != constants.TIF_FOK {
+			return ErrMarketTIF
 		}
 
 		if input.CloseOnTrigger {
 			pos := s.portfolio.GetPosition(input.UserID, input.Symbol)
 			if pos == nil || pos.Size == 0 {
 				return ErrCloseOnTriggerNoPosition
+			}
+			if input.TriggerPrice <= 0 {
+				return ErrInvalidTriggerPrice
 			}
 		}
 
@@ -102,10 +106,15 @@ func (s *Service) validateOrder(input *types.OrderInput) error {
 			if pos == nil || pos.Size == 0 {
 				return ErrReduceOnlyNoPosition
 			}
+			if (pos.Side == constants.SIDE_LONG && input.Side == constants.ORDER_SIDE_BUY) ||
+				(pos.Side == constants.SIDE_SHORT && input.Side == constants.ORDER_SIDE_SELL) {
+				return ErrReduceOnlySide
+			}
 
 			currentCommitment := s.reduceOnlyCommitment[input.UserID][input.Symbol]
+			maxCommitment := absInt64(pos.Size)
 			newCommitment := currentCommitment + int64(input.Quantity)
-			if newCommitment > pos.Size {
+			if newCommitment > maxCommitment {
 				return ErrReduceOnlyCommitmentExceeded
 			}
 		}
@@ -123,7 +132,24 @@ func (s *Service) validateOrder(input *types.OrderInput) error {
 		}
 	}
 
+	if input.TIF == constants.TIF_POST_ONLY {
+		if input.Type != constants.ORDER_TYPE_LIMIT {
+			return ErrMarketTIF
+		}
+		ob := s.getOrderBook(input.Category, input.Symbol)
+		if ob.WouldCross(input.Side, input.Price) {
+			return ErrPostOnlyWouldCross
+		}
+	}
+
 	return nil
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (s *Service) isValidSymbolFormat(symbol string) bool {
@@ -167,22 +193,9 @@ func (s *Service) checkSelfMatch(input *types.OrderInput) error {
 	ob := s.getOrderBook(input.Category, input.Symbol)
 
 	if input.Side == constants.ORDER_SIDE_BUY {
-		_, _, askPrices, askQtys := ob.Depth(1)
-		if len(askPrices) > 0 && len(askQtys) > 0 && askQtys[0] > 0 {
-			if s.userHasOrderAtPriceOrBetter(input.UserID, input.Symbol, constants.ORDER_SIDE_SELL, askPrices[0]) {
-				return ErrSelfMatch
-			}
-		}
-	} else {
-		bidPrices, _, _, _ := ob.Depth(1)
-		if len(bidPrices) > 0 && bidPrices[0] > 0 {
-			if s.userHasOrderAtPriceOrBetter(input.UserID, input.Symbol, constants.ORDER_SIDE_BUY, bidPrices[0]) {
-				return ErrSelfMatch
-			}
-		}
+		return s.checkSelfMatchLimitSide(input, ob.BestAsk, constants.ORDER_SIDE_SELL)
 	}
-
-	return nil
+	return s.checkSelfMatchLimitSide(input, ob.BestBid, constants.ORDER_SIDE_BUY)
 }
 
 func (s *Service) checkSelfMatchMarket(input *types.OrderInput) error {
@@ -199,6 +212,17 @@ func (s *Service) checkSelfMatchMarket(input *types.OrderInput) error {
 		}
 	}
 
+	return nil
+}
+
+func (s *Service) checkSelfMatchLimitSide(input *types.OrderInput, bestFn func() (types.Price, types.Quantity, bool), oppositeSide int8) error {
+	price, qty, ok := bestFn()
+	if !ok || qty <= 0 || price <= 0 {
+		return nil
+	}
+	if s.userHasOrderAtPriceOrBetter(input.UserID, input.Symbol, oppositeSide, price) {
+		return ErrSelfMatch
+	}
 	return nil
 }
 
@@ -241,7 +265,7 @@ func (s *Service) validateOCO(input *types.OrderInput) error {
 	}
 
 	pos := s.portfolio.GetPosition(input.UserID, input.Symbol)
-	if pos.Size == 0 {
+	if pos == nil || pos.Size == 0 {
 		return ErrOCONoPosition
 	}
 

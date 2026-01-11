@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
-	"github.com/anomalyco/meta-terminal-go/internal/pool"
 	"github.com/anomalyco/meta-terminal-go/internal/snowflake"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -164,7 +163,28 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]types.
 		return nil, nil
 	}
 
+	return ob.matchInto(taker, limitPrice, nil), nil
+}
+
+func (ob *OrderBook) MatchInto(taker *types.Order, limitPrice types.Price, out []types.Match) ([]types.Match, error) {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
+	if taker.Remaining() <= 0 {
+		if out != nil {
+			return out[:0], nil
+		}
+		return nil, nil
+	}
+
+	return ob.matchInto(taker, limitPrice, out), nil
+}
+
+func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out []types.Match) []types.Match {
 	var matches []types.Match
+	if out != nil {
+		matches = out[:0]
+	}
 
 	if taker.Side == constants.ORDER_SIDE_BUY {
 		for taker.Remaining() > 0 && ob.bestAsk != nil {
@@ -174,7 +194,7 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]types.
 			}
 			matches = ob.matchLevel(taker, lvl, matches)
 		}
-		return matches, nil
+		return matches
 	}
 
 	for taker.Remaining() > 0 && ob.bestBid != nil {
@@ -184,7 +204,7 @@ func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price) ([]types.
 		}
 		matches = ob.matchLevel(taker, lvl, matches)
 	}
-	return matches, nil
+	return matches
 }
 
 func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, matches []types.Match) []types.Match {
@@ -206,17 +226,18 @@ func (ob *OrderBook) matchLevel(taker *types.Order, lvl *level, matches []types.
 		taker.Filled += exec
 		lvl.total -= exec
 
-		trade := pool.GetTrade()
-		trade.ID = types.TradeID(ob.nextTradeID())
-		trade.Symbol = taker.Symbol
-		trade.Category = taker.Category
-		trade.TakerID = taker.UserID
-		trade.MakerID = maker.UserID
-		trade.TakerOrderID = taker.ID
-		trade.MakerOrderID = maker.ID
-		trade.Price = lvl.price
-		trade.Quantity = exec
-		trade.ExecutedAt = types.NowNano()
+		trade := types.Trade{
+			ID:           types.TradeID(ob.nextTradeID()),
+			Symbol:       taker.Symbol,
+			Category:     taker.Category,
+			TakerID:      taker.UserID,
+			MakerID:      maker.UserID,
+			TakerOrderID: taker.ID,
+			MakerOrderID: maker.ID,
+			Price:        lvl.price,
+			Quantity:     exec,
+			ExecutedAt:   types.NowNano(),
+		}
 		matches = append(matches, types.Match{Trade: trade, Maker: maker})
 
 		if maker.Remaining() == 0 {
@@ -294,7 +315,7 @@ func (ob *OrderBook) Adjust(orderID types.OrderID, newRemaining types.Quantity) 
 	}
 
 	curRemaining := n.order.Remaining()
-	if newRemaining >= curRemaining {
+	if newRemaining != curRemaining {
 		delta := newRemaining - curRemaining
 		n.level.total += delta
 	}

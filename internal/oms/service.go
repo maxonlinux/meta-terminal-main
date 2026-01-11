@@ -5,9 +5,11 @@ import (
 	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/events"
 	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
 	"github.com/anomalyco/meta-terminal-go/internal/pool"
+	"github.com/anomalyco/meta-terminal-go/internal/snowflake"
 	"github.com/anomalyco/meta-terminal-go/internal/triggers"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -27,6 +29,7 @@ type Clearing interface {
 type Config struct {
 	NATSURL      string
 	StreamPrefix string
+	Sink         events.Sink
 }
 
 type Service struct {
@@ -38,17 +41,30 @@ type Service struct {
 	clearing   Clearing
 
 	reduceOnlyCommitment map[types.UserID]map[string]int64
+	reduceOnlyByOrder    map[types.OrderID]int64
 	lastPrices           map[string]types.Price
 	orderLinkIds         map[types.OrderID]int64
 	linkedOrders         map[int64][]types.OrderID
+	sink                 events.Sink
+	matchBufPool         sync.Pool
+	triggerBufPool       sync.Pool
 
-	mu sync.RWMutex
+	mu    sync.RWMutex
+	posMu sync.Mutex
 }
 
 func New(cfg Config, portfolio Portfolio, clearing Clearing) (*Service, error) {
-	n, err := messaging.New(messaging.Config{URL: cfg.NATSURL, StreamPrefix: cfg.StreamPrefix})
-	if err != nil {
-		return nil, err
+	var n *messaging.NATS
+	if cfg.NATSURL != "" {
+		var err error
+		n, err = messaging.New(messaging.Config{URL: cfg.NATSURL, StreamPrefix: cfg.StreamPrefix})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sink := cfg.Sink
+	if sink == nil {
+		sink = events.NopSink{}
 	}
 
 	return &Service{
@@ -62,13 +78,24 @@ func New(cfg Config, portfolio Portfolio, clearing Clearing) (*Service, error) {
 		portfolio:            portfolio,
 		clearing:             clearing,
 		reduceOnlyCommitment: make(map[types.UserID]map[string]int64),
+		reduceOnlyByOrder:    make(map[types.OrderID]int64),
 		lastPrices:           make(map[string]types.Price),
 		orderLinkIds:         make(map[types.OrderID]int64),
 		linkedOrders:         make(map[int64][]types.OrderID),
+		sink:                 sink,
+		matchBufPool: sync.Pool{New: func() interface{} {
+			return make([]types.Match, 0, 32)
+		}},
+		triggerBufPool: sync.Pool{New: func() interface{} {
+			return make([]*types.Order, 0, 32)
+		}},
 	}, nil
 }
 
 func (s *Service) Start(ctx context.Context) error {
+	if s.nats == nil {
+		return nil
+	}
 	s.nats.Subscribe(ctx, messaging.OrderPlaceTopic(""), "oms-place", s.handleOrderPlace)
 	s.nats.Subscribe(ctx, messaging.OrderEventTopic(""), "oms-events", s.handleOrderEvent)
 	s.nats.Subscribe(ctx, messaging.PriceTickTopic(""), "oms-price", s.handlePriceTick)
@@ -166,12 +193,13 @@ func (s *Service) PlaceOrder(ctx context.Context, input *types.OrderInput) (*typ
 		s.triggerMon.Add(order)
 		s.storeOrder(order)
 		s.publishOrderEvent(order)
-		return &types.OrderResult{
-			Orders:    []*types.Order{order},
+		result := &types.OrderResult{
 			Filled:    0,
 			Remaining: order.Quantity,
 			Status:    order.Status,
-		}, nil
+		}
+		setOrderResultOrders(result, order)
+		return result, nil
 	}
 
 	return s.executeOrder(order)
@@ -203,11 +231,11 @@ func (s *Service) placeOCOOrder(ctx context.Context, input *types.OrderInput) (*
 	s.triggerMon.Add(slOrder)
 
 	tpResult := &types.OrderResult{
-		Orders:    []*types.Order{tpOrder, slOrder},
 		Filled:    0,
 		Remaining: types.Quantity(input.Quantity),
 		Status:    tpOrder.Status,
 	}
+	setOrderResultOrders(tpResult, tpOrder, slOrder)
 
 	if input.OCO.Quantity > 0 {
 		tpOrder.Quantity = input.OCO.Quantity
@@ -269,7 +297,9 @@ func (s *Service) executeOrder(order *types.Order) (*types.OrderResult, error) {
 
 	s.storeOrder(order)
 
-	trades := s.matchOrder(order)
+	result := &types.OrderResult{}
+	setOrderResultOrders(result, order)
+	s.matchOrderInto(order, result)
 
 	order.Filled = order.Quantity - order.Remaining()
 	order.UpdatedAt = types.NowNano()
@@ -291,33 +321,35 @@ func (s *Service) executeOrder(order *types.Order) (*types.OrderResult, error) {
 	}
 	if order.Status == constants.ORDER_STATUS_NEW {
 		s.publishOrderEvent(order)
+		if order.ReduceOnly && !order.IsConditional && !order.CloseOnTrigger {
+			s.updateReduceOnlyCommitment(order, int64(order.Remaining()))
+		}
+	} else if order.Status == constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED || order.Status == constants.ORDER_STATUS_CANCELED {
+		if order.ReduceOnly && !order.IsConditional && !order.CloseOnTrigger {
+			s.updateReduceOnlyCommitment(order, 0)
+		}
 		if order.Remaining() > 0 {
 			s.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, order.Remaining(), order.Price)
 		}
-		s.cancelOrder(order)
-	} else if order.Status == constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED {
 		s.publishOrderEvent(order)
 		s.mu.Lock()
 		if userOrders, ok := s.orders[order.UserID]; ok {
 			delete(userOrders, order.ID)
-			if len(userOrders) == 0 {
-				delete(s.orders, order.UserID)
-			}
 		}
 		s.mu.Unlock()
 	}
-	return &types.OrderResult{
-		Orders:    []*types.Order{order},
-		Trades:    trades,
-		Filled:    order.Filled,
-		Remaining: order.Remaining(),
-		Status:    order.Status,
-	}, nil
+	result.Filled = order.Filled
+	result.Remaining = order.Remaining()
+	result.Status = order.Status
+	return result, nil
 }
 
 func (s *Service) cancelOrder(order *types.Order) {
 	if order.Status == constants.ORDER_STATUS_UNTRIGGERED {
 		s.triggerMon.Remove(order.ID)
+	}
+	if order.ReduceOnly && !order.IsConditional && !order.CloseOnTrigger {
+		s.updateReduceOnlyCommitment(order, 0)
 	}
 
 	ob := s.getOrderBookIfExists(order.Category, order.Symbol)
@@ -328,9 +360,6 @@ func (s *Service) cancelOrder(order *types.Order) {
 	s.mu.Lock()
 	if userOrders, ok := s.orders[order.UserID]; ok {
 		delete(userOrders, order.ID)
-		if len(userOrders) == 0 {
-			delete(s.orders, order.UserID)
-		}
 	}
 	s.mu.Unlock()
 
@@ -351,23 +380,23 @@ func (s *Service) OnPriceTick(symbol string, price types.Price) {
 	s.lastPrices[symbol] = price
 	s.mu.Unlock()
 
-	triggered := s.triggerMon.Check(price)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, orderID := range triggered {
-		order := s.triggerMon.GetOrder(orderID)
-		if order == nil {
+	bufAny := s.triggerBufPool.Get()
+	buf, _ := bufAny.([]*types.Order)
+	triggered := s.triggerMon.CheckInto(price, buf)
+	for _, order := range triggered {
+		if order.Status == constants.ORDER_STATUS_DEACTIVATED {
 			continue
 		}
-
 		if order.OrderLinkId > 0 {
 			s.deactivateLinkedOrders(order)
 		}
 
 		s.handleTrigger(order)
 	}
+	for i := range triggered {
+		triggered[i] = nil
+	}
+	s.triggerBufPool.Put(triggered[:0])
 }
 
 func (s *Service) handleTrigger(order *types.Order) {
@@ -391,7 +420,9 @@ func (s *Service) createChildOrderInput(triggered *types.Order) *types.OrderInpu
 
 		qty := triggered.Quantity
 		if qty == 0 {
-			qty = types.Quantity(pos.Size)
+			qty = types.Quantity(absInt64(pos.Size))
+		} else if int64(qty) > absInt64(pos.Size) {
+			qty = types.Quantity(absInt64(pos.Size))
 		}
 
 		var tif int8
@@ -403,11 +434,15 @@ func (s *Service) createChildOrderInput(triggered *types.Order) *types.OrderInpu
 			price = triggered.Price
 		}
 
+		side := int8(constants.ORDER_SIDE_SELL)
+		if pos.Side == constants.SIDE_SHORT {
+			side = constants.ORDER_SIDE_BUY
+		}
 		return &types.OrderInput{
 			UserID:     triggered.UserID,
 			Symbol:     triggered.Symbol,
 			Category:   triggered.Category,
-			Side:       1 - triggered.Side,
+			Side:       side,
 			Type:       triggered.Type,
 			TIF:        tif,
 			Quantity:   qty,
@@ -474,6 +509,10 @@ func (s *Service) deactivateLinkedOrders(triggered *types.Order) {
 
 func (s *Service) publishOrderEvent(order *types.Order) {
 	if s.nats == nil {
+		if !s.hasSink() {
+			return
+		}
+		s.publishOrderToSink(order)
 		return
 	}
 	event := &types.OrderEvent{
@@ -490,10 +529,41 @@ func (s *Service) publishOrderEvent(order *types.Order) {
 		Filled:       order.Filled,
 		TriggerPrice: order.TriggerPrice,
 		ReduceOnly:   order.ReduceOnly,
+		OrderLinkId:  order.OrderLinkId,
 		CreatedAt:    order.CreatedAt,
 		UpdatedAt:    order.UpdatedAt,
 	}
 	s.nats.PublishGob(context.Background(), messaging.OrderEventTopic(order.Symbol), event)
+	if s.hasSink() {
+		s.sink.OnOrderEvent(event)
+	}
+}
+
+func (s *Service) publishOrderToSink(order *types.Order) {
+	event := &types.OrderEvent{
+		OrderID:      order.ID,
+		UserID:       order.UserID,
+		Symbol:       order.Symbol,
+		Category:     order.Category,
+		Side:         order.Side,
+		Type:         order.Type,
+		TIF:          order.TIF,
+		Status:       order.Status,
+		Price:        order.Price,
+		Quantity:     order.Quantity,
+		Filled:       order.Filled,
+		TriggerPrice: order.TriggerPrice,
+		ReduceOnly:   order.ReduceOnly,
+		OrderLinkId:  order.OrderLinkId,
+		CreatedAt:    order.CreatedAt,
+		UpdatedAt:    order.UpdatedAt,
+	}
+	s.sink.OnOrderEvent(event)
+}
+
+func (s *Service) hasSink() bool {
+	_, ok := s.sink.(events.NopSink)
+	return !ok
 }
 
 func (s *Service) getOrderBook(category int8, symbol string) *orderbook.OrderBook {
@@ -601,8 +671,156 @@ func (s *Service) CancelOrder(ctx context.Context, userID types.UserID, orderID 
 	return nil
 }
 
-func (s *Service) OnPositionUpdate(userID types.UserID, symbol string, newSize int64, newSide int8) {}
+func (s *Service) OnPositionUpdate(userID types.UserID, symbol string, newSize int64, newSide int8) {
+	s.posMu.Lock()
+	defer s.posMu.Unlock()
+	var toDeactivate []*types.Order
+	var groups []int64
+	var reduceOnlyOrders []*types.Order
+	var closeOnTriggerOrders []*types.Order
+	allowed := absInt64(newSize)
+
+	s.mu.Lock()
+	if userOrders, ok := s.orders[userID]; ok {
+		for _, order := range userOrders {
+			if order.Symbol != symbol {
+				continue
+			}
+			if order.Status != constants.ORDER_STATUS_UNTRIGGERED {
+				if order.ReduceOnly && order.Status == constants.ORDER_STATUS_NEW {
+					reduceOnlyOrders = append(reduceOnlyOrders, order)
+				}
+				continue
+			}
+			if order.OrderLinkId <= 0 && !order.CloseOnTrigger {
+				continue
+			}
+			if order.CloseOnTrigger && order.Quantity > 0 {
+				closeOnTriggerOrders = append(closeOnTriggerOrders, order)
+			}
+			toDeactivate = append(toDeactivate, order)
+			if order.OrderLinkId > 0 {
+				groups = append(groups, order.OrderLinkId)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if len(reduceOnlyOrders) > 0 {
+		s.adjustReduceOnlyOrders(userID, symbol, reduceOnlyOrders, allowed)
+	}
+	if len(closeOnTriggerOrders) > 0 {
+		s.adjustCloseOnTriggerOrders(closeOnTriggerOrders, allowed)
+	}
+
+	if newSize != 0 {
+		return
+	}
+
+	for _, order := range toDeactivate {
+		s.triggerMon.Remove(order.ID)
+		order.Status = constants.ORDER_STATUS_DEACTIVATED
+		order.UpdatedAt = types.NowNano()
+		s.publishOrderEvent(order)
+	}
+
+	if len(groups) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	for _, groupID := range groups {
+		if ids := s.linkedOrders[groupID]; len(ids) > 0 {
+			for _, id := range ids {
+				delete(s.orderLinkIds, id)
+			}
+		}
+		delete(s.linkedOrders, groupID)
+	}
+	s.mu.Unlock()
+}
 
 func poolGetOrderID() uint64 {
-	return uint64(types.NowNano())
+	return uint64(snowflake.Next())
+}
+
+func setOrderResultOrders(result *types.OrderResult, orders ...*types.Order) {
+	if result == nil {
+		return
+	}
+	if len(orders) <= len(result.OrdersBuf) {
+		result.Orders = result.OrdersBuf[:len(orders)]
+		copy(result.Orders, orders)
+		return
+	}
+	result.Orders = make([]*types.Order, len(orders))
+	copy(result.Orders, orders)
+}
+
+func (s *Service) updateReduceOnlyCommitment(order *types.Order, newValue int64) {
+	if order == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.reduceOnlyByOrder[order.ID]
+	if newValue == old {
+		return
+	}
+	if newValue == 0 {
+		delete(s.reduceOnlyByOrder, order.ID)
+	} else {
+		s.reduceOnlyByOrder[order.ID] = newValue
+	}
+	if _, ok := s.reduceOnlyCommitment[order.UserID]; !ok {
+		s.reduceOnlyCommitment[order.UserID] = make(map[string]int64)
+	}
+	s.reduceOnlyCommitment[order.UserID][order.Symbol] += newValue - old
+	if s.reduceOnlyCommitment[order.UserID][order.Symbol] < 0 {
+		s.reduceOnlyCommitment[order.UserID][order.Symbol] = 0
+	}
+}
+
+func (s *Service) adjustReduceOnlyOrders(userID types.UserID, symbol string, orders []*types.Order, allowed int64) {
+	if allowed < 0 {
+		allowed = 0
+	}
+	for _, order := range orders {
+		if allowed == 0 {
+			allowed = 0
+		}
+		remaining := int64(order.Remaining())
+		newRemaining := remaining
+		if remaining > allowed {
+			newRemaining = allowed
+		}
+		allowed -= newRemaining
+		if newRemaining != remaining {
+			ob := s.getOrderBook(order.Category, order.Symbol)
+			_ = ob.Adjust(order.ID, types.Quantity(newRemaining))
+			order.UpdatedAt = types.NowNano()
+		}
+		s.updateReduceOnlyCommitment(order, newRemaining)
+	}
+}
+
+func (s *Service) adjustCloseOnTriggerOrders(orders []*types.Order, allowed int64) {
+	if allowed < 0 {
+		allowed = 0
+	}
+	for _, order := range orders {
+		if order.Quantity == 0 {
+			continue
+		}
+		remaining := int64(order.Quantity)
+		newRemaining := remaining
+		if remaining > allowed {
+			newRemaining = allowed
+		}
+		allowed -= newRemaining
+		if newRemaining != remaining {
+			order.Quantity = types.Quantity(newRemaining)
+			order.UpdatedAt = types.NowNano()
+		}
+	}
 }

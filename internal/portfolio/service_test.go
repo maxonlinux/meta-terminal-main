@@ -149,6 +149,7 @@ func TestGetPosition_NoPosition(t *testing.T) {
 }
 
 func BenchmarkSpotTrade(b *testing.B) {
+	b.ReportAllocs()
 	s := New(Config{})
 	userID := types.UserID(1)
 	s.Balances[userID] = make(map[string]*types.UserBalance)
@@ -195,6 +196,7 @@ func BenchmarkSpotTrade(b *testing.B) {
 }
 
 func BenchmarkLinearTrade(b *testing.B) {
+	b.ReportAllocs()
 	s := New(Config{})
 	userID := types.UserID(1)
 	s.Balances[userID] = make(map[string]*types.UserBalance)
@@ -236,6 +238,196 @@ func BenchmarkLinearTrade(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.ExecuteTrade(trade, taker, maker)
+	}
+}
+
+func TestSpotTrade_Conservation(t *testing.T) {
+	s := New(Config{})
+
+	userA := types.UserID(1)
+	userB := types.UserID(2)
+
+	s.Balances[userA] = map[string]*types.UserBalance{
+		"BTC":  {Asset: "BTC", Available: 5, Locked: 0, Margin: 0},
+		"USDT": {Asset: "USDT", Available: 100000, Locked: 0, Margin: 0},
+	}
+	s.Balances[userB] = map[string]*types.UserBalance{
+		"BTC":  {Asset: "BTC", Available: 3, Locked: 0, Margin: 0},
+		"USDT": {Asset: "USDT", Available: 50000, Locked: 0, Margin: 0},
+	}
+
+	baseTotalBefore := s.Balances[userA]["BTC"].Available + s.Balances[userB]["BTC"].Available
+	quoteTotalBefore := s.Balances[userA]["USDT"].Available + s.Balances[userB]["USDT"].Available
+
+	trades := []*types.Trade{
+		{ID: 1, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, TakerID: userA, MakerID: userB, TakerOrderID: 10, MakerOrderID: 11, Price: 10000, Quantity: 1},
+		{ID: 2, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, TakerID: userB, MakerID: userA, TakerOrderID: 12, MakerOrderID: 13, Price: 12000, Quantity: 2},
+		{ID: 3, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, TakerID: userA, MakerID: userB, TakerOrderID: 14, MakerOrderID: 15, Price: 9000, Quantity: 1},
+	}
+
+	for _, trade := range trades {
+		taker := &types.Order{
+			ID:       trade.TakerOrderID,
+			UserID:   trade.TakerID,
+			Symbol:   trade.Symbol,
+			Category: trade.Category,
+			Side:     constants.ORDER_SIDE_BUY,
+			Price:    trade.Price,
+			Quantity: trade.Quantity,
+		}
+		maker := &types.Order{
+			ID:       trade.MakerOrderID,
+			UserID:   trade.MakerID,
+			Symbol:   trade.Symbol,
+			Category: trade.Category,
+			Side:     constants.ORDER_SIDE_SELL,
+			Price:    trade.Price,
+			Quantity: trade.Quantity,
+		}
+		s.ExecuteTrade(trade, taker, maker)
+	}
+
+	baseTotalAfter := s.Balances[userA]["BTC"].Available + s.Balances[userB]["BTC"].Available
+	quoteTotalAfter := s.Balances[userA]["USDT"].Available + s.Balances[userB]["USDT"].Available
+
+	if baseTotalBefore != baseTotalAfter {
+		t.Fatalf("base total changed: before %d after %d", baseTotalBefore, baseTotalAfter)
+	}
+	if quoteTotalBefore != quoteTotalAfter {
+		t.Fatalf("quote total changed: before %d after %d", quoteTotalBefore, quoteTotalAfter)
+	}
+}
+
+func TestLinearTrade_Conservation(t *testing.T) {
+	s := New(Config{})
+
+	userA := types.UserID(1)
+	userB := types.UserID(2)
+
+	s.Balances[userA] = map[string]*types.UserBalance{
+		"USDT": {Asset: "USDT", Available: 100000, Locked: 0, Margin: 0},
+	}
+	s.Balances[userB] = map[string]*types.UserBalance{
+		"USDT": {Asset: "USDT", Available: 80000, Locked: 0, Margin: 0},
+	}
+	s.Positions[userA] = map[string]*types.Position{
+		"BTCUSDT": {Symbol: "BTCUSDT", Size: 0, Side: -1, Leverage: 5},
+	}
+	s.Positions[userB] = map[string]*types.Position{
+		"BTCUSDT": {Symbol: "BTCUSDT", Size: 0, Side: -1, Leverage: 5},
+	}
+
+	totalBefore := sumUSDT(s.Balances[userA]) + sumUSDT(s.Balances[userB])
+
+	trade := &types.Trade{
+		ID:           1,
+		Symbol:       "BTCUSDT",
+		Category:     constants.CATEGORY_LINEAR,
+		TakerID:      userA,
+		MakerID:      userB,
+		TakerOrderID: 10,
+		MakerOrderID: 11,
+		Price:        10000,
+		Quantity:     2,
+	}
+	taker := &types.Order{
+		ID:       10,
+		UserID:   userA,
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Price:    trade.Price,
+		Quantity: trade.Quantity,
+	}
+	maker := &types.Order{
+		ID:       11,
+		UserID:   userB,
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_SELL,
+		Price:    trade.Price,
+		Quantity: trade.Quantity,
+	}
+
+	s.ExecuteTrade(trade, taker, maker)
+
+	totalAfter := sumUSDT(s.Balances[userA]) + sumUSDT(s.Balances[userB])
+	if totalBefore != totalAfter {
+		t.Fatalf("USDT total changed: before %d after %d", totalBefore, totalAfter)
+	}
+}
+
+func sumUSDT(balances map[string]*types.UserBalance) int64 {
+	if balances == nil {
+		return 0
+	}
+	if b := balances["USDT"]; b != nil {
+		return b.Available + b.Locked + b.Margin
+	}
+	return 0
+}
+
+func TestNoNegativeBalancesAfterTrades(t *testing.T) {
+	s := New(Config{})
+
+	userA := types.UserID(1)
+	userB := types.UserID(2)
+
+	s.Balances[userA] = map[string]*types.UserBalance{
+		"BTC":  {Asset: "BTC", Available: 5, Locked: 0, Margin: 0},
+		"USDT": {Asset: "USDT", Available: 95000, Locked: 5000, Margin: 0},
+	}
+	s.Balances[userB] = map[string]*types.UserBalance{
+		"BTC":  {Asset: "BTC", Available: 5, Locked: 0, Margin: 0},
+		"USDT": {Asset: "USDT", Available: 95000, Locked: 5000, Margin: 0},
+	}
+	s.Positions[userA] = map[string]*types.Position{
+		"BTCUSDT": {Symbol: "BTCUSDT", Size: 0, Side: -1, Leverage: 5},
+	}
+	s.Positions[userB] = map[string]*types.Position{
+		"BTCUSDT": {Symbol: "BTCUSDT", Size: 0, Side: -1, Leverage: 5},
+	}
+
+	trades := []struct {
+		trade *types.Trade
+		taker *types.Order
+		maker *types.Order
+	}{
+		{
+			trade: &types.Trade{ID: 1, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, TakerID: userA, MakerID: userB, Price: 10000, Quantity: 1},
+			taker: &types.Order{ID: 10, UserID: userA, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, Side: constants.ORDER_SIDE_BUY, Price: 10000, Quantity: 1},
+			maker: &types.Order{ID: 11, UserID: userB, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, Side: constants.ORDER_SIDE_SELL, Price: 10000, Quantity: 1},
+		},
+		{
+			trade: &types.Trade{ID: 2, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, TakerID: userB, MakerID: userA, Price: 9000, Quantity: 2},
+			taker: &types.Order{ID: 12, UserID: userB, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, Side: constants.ORDER_SIDE_BUY, Price: 9000, Quantity: 2},
+			maker: &types.Order{ID: 13, UserID: userA, Symbol: "BTCUSDT", Category: constants.CATEGORY_SPOT, Side: constants.ORDER_SIDE_SELL, Price: 9000, Quantity: 2},
+		},
+		{
+			trade: &types.Trade{ID: 3, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, TakerID: userA, MakerID: userB, Price: 12000, Quantity: 1},
+			taker: &types.Order{ID: 14, UserID: userA, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, Side: constants.ORDER_SIDE_BUY, Price: 12000, Quantity: 1},
+			maker: &types.Order{ID: 15, UserID: userB, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, Side: constants.ORDER_SIDE_SELL, Price: 12000, Quantity: 1},
+		},
+		{
+			trade: &types.Trade{ID: 4, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, TakerID: userB, MakerID: userA, Price: 11000, Quantity: 1},
+			taker: &types.Order{ID: 16, UserID: userB, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, Side: constants.ORDER_SIDE_BUY, Price: 11000, Quantity: 1},
+			maker: &types.Order{ID: 17, UserID: userA, Symbol: "BTCUSDT", Category: constants.CATEGORY_LINEAR, Side: constants.ORDER_SIDE_SELL, Price: 11000, Quantity: 1},
+		},
+	}
+
+	for _, item := range trades {
+		s.ExecuteTrade(item.trade, item.taker, item.maker)
+		assertNoNegative(t, s.Balances[userA])
+		assertNoNegative(t, s.Balances[userB])
+	}
+}
+
+func assertNoNegative(t *testing.T, balances map[string]*types.UserBalance) {
+	t.Helper()
+	for asset, bal := range balances {
+		if bal.Available < 0 || bal.Locked < 0 || bal.Margin < 0 {
+			t.Fatalf("negative balance for %s: %+v", asset, bal)
+		}
 	}
 }
 
@@ -404,6 +596,7 @@ func TestSetLeverage_MaxLeverage(t *testing.T) {
 }
 
 func BenchmarkSetLeverage(b *testing.B) {
+	b.ReportAllocs()
 	s := New(Config{})
 	userID := types.UserID(1)
 	s.Balances[userID] = make(map[string]*types.UserBalance)

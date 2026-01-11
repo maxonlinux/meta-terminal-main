@@ -112,6 +112,7 @@ func TestValidateOrder_CloseOnTriggerWithPosition(t *testing.T) {
 		TIF:            constants.TIF_GTC,
 		Quantity:       1,
 		Price:          45000,
+		TriggerPrice:   44000,
 		CloseOnTrigger: true,
 	}
 
@@ -387,6 +388,7 @@ func TestCloseOnTrigger_QuantityZeroFullClose(t *testing.T) {
 }
 
 func BenchmarkPlaceOrder_Conditional(b *testing.B) {
+	b.ReportAllocs()
 	s, portfolio := newTestService()
 	portfolio.addPosition(1, "BTCUSDT", 10, constants.SIDE_LONG)
 
@@ -406,11 +408,15 @@ func BenchmarkPlaceOrder_Conditional(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.PlaceOrder(context.Background(), input)
+		result, _ := s.PlaceOrder(context.Background(), input)
+		if result != nil && len(result.Orders) == 1 {
+			s.cancelOrder(result.Orders[0])
+		}
 	}
 }
 
 func BenchmarkSelfMatchCheck(b *testing.B) {
+	b.ReportAllocs()
 	s, _ := newTestService()
 
 	ob := orderbook.New()
@@ -507,6 +513,7 @@ func TestValidateOrder_QuantityZeroForCloseOnTrigger(t *testing.T) {
 		TIF:            constants.TIF_GTC,
 		Quantity:       0,
 		Price:          45000,
+		TriggerPrice:   44000,
 		CloseOnTrigger: true,
 	}
 

@@ -151,14 +151,12 @@ func (s *Service) Stop() {
 }
 
 func (s *Service) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
@@ -176,19 +174,16 @@ func (s *Service) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func (s *Service) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
 
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
@@ -208,9 +203,8 @@ func (s *Service) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleGetOrders(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
@@ -218,19 +212,16 @@ func (s *Service) handleGetOrders(w http.ResponseWriter, r *http.Request) {
 
 	orders := s.oms.GetOrders(userID)
 	if orders == nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]*types.Order{})
+		writeJSON(w, []*types.Order{})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(orders)
+	writeJSON(w, orders)
 }
 
 func (s *Service) handleGetBalance(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
@@ -240,31 +231,26 @@ func (s *Service) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	balance := s.portfolio.GetBalance(userID, asset)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(balance)
+	writeJSON(w, balance)
 }
 
 func (s *Service) handleGetPositions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
 	positions := s.portfolio.GetPositions(userID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(positions)
+	writeJSON(w, positions)
 }
 
 func (s *Service) handleSetLeverage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
@@ -288,12 +274,7 @@ func (s *Service) handleSetLeverage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleGetOrderbook(w http.ResponseWriter, r *http.Request) {
-	symbol := r.URL.Path[len("/api/v1/orderbook/"):]
-	var category int8 = constants.CATEGORY_LINEAR
-	if len(symbol) >= 4 && symbol[len(symbol)-4:] == "SPOT" {
-		category = constants.CATEGORY_SPOT
-		symbol = symbol[:len(symbol)-4]
-	}
+	symbol, category := parseOrderbookPath(r.URL.Path)
 
 	bidPrice, bidQty, askPrice, askQty := s.oms.GetOrderBook(category, symbol)
 
@@ -306,21 +287,12 @@ func (s *Service) handleGetOrderbook(w http.ResponseWriter, r *http.Request) {
 		"ask_qty":   askQty,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 func (s *Service) handleGetOrderbookDepth(w http.ResponseWriter, r *http.Request) {
-	symbol := r.URL.Path[len("/api/v1/orderbook/"):]
-	limit := 10
-	if l := r.URL.Query().Get("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
-	}
-	var category int8 = constants.CATEGORY_LINEAR
-	if len(symbol) >= 4 && symbol[len(symbol)-4:] == "SPOT" {
-		category = constants.CATEGORY_SPOT
-		symbol = symbol[:len(symbol)-4]
-	}
+	symbol, category := parseOrderbookPath(r.URL.Path)
+	limit := parseLimit(r, 10)
 
 	bidPrices, bidQtys, askPrices, askQtys := s.oms.GetOrderBookDepth(category, symbol, limit)
 
@@ -331,22 +303,17 @@ func (s *Service) handleGetOrderbookDepth(w http.ResponseWriter, r *http.Request
 		"asks":     map[string]interface{}{"prices": askPrices, "quantities": askQtys},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 func (s *Service) handleGetTrades(w http.ResponseWriter, r *http.Request) {
-	userID, ok := getUserIDFromContext(r.Context())
+	userID, ok := requireUser(w, r)
 	if !ok {
-		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
 	symbol := r.URL.Query().Get("symbol")
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
-	}
+	limit := parseLimit(r, 100)
 
 	trades, err := s.history.GetTradeHistory(r.Context(), userID, symbol, limit)
 	if err != nil {
@@ -354,8 +321,7 @@ func (s *Service) handleGetTrades(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(trades)
+	writeJSON(w, trades)
 }
 
 func (s *Service) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +342,44 @@ func (s *Service) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	go s.writePump(client)
 	s.readPump(client, conn)
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return false
+}
+
+func requireUser(w http.ResponseWriter, r *http.Request) (types.UserID, bool) {
+	userID, ok := getUserIDFromContext(r.Context())
+	if ok {
+		return userID, true
+	}
+	http.Error(w, "user not authenticated", http.StatusUnauthorized)
+	return 0, false
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func parseOrderbookPath(path string) (string, int8) {
+	symbol := path[len("/api/v1/orderbook/"):]
+	if len(symbol) >= 4 && symbol[len(symbol)-4:] == "SPOT" {
+		return symbol[:len(symbol)-4], constants.CATEGORY_SPOT
+	}
+	return symbol, constants.CATEGORY_LINEAR
+}
+
+func parseLimit(r *http.Request, def int) int {
+	limit := def
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	return limit
 }
 
 func (s *Service) readPump(client *wsClient, conn *websocket.Conn) {

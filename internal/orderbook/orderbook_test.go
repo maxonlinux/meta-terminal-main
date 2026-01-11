@@ -151,6 +151,7 @@ func TestOrderBook_WouldCross(t *testing.T) {
 }
 
 func BenchmarkOrderBook_Match(b *testing.B) {
+	b.ReportAllocs()
 	ob := New()
 
 	for i := 0; i < 1000; i++ {

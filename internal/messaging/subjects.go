@@ -1,31 +1,31 @@
 package messaging
 
 const (
-	SubjectOrderPlace  = "order.place"
-	SubjectOrderEvent  = "order.event"
-	SubjectOrderCancel = "order.cancel"
+	SUBJECT_ORDER_PLACE  = "order.place"
+	SUBJECT_ORDER_EVENT  = "order.event"
+	SUBJECT_ORDER_CANCEL = "order.cancel"
 
-	SubjectClearingTrade   = "clearing.trade"
-	SubjectClearingReserve = "clearing.reserve"
-	SubjectClearingRelease = "clearing.release"
+	SUBJECT_CLEARING_TRADE   = "clearing.trade"
+	SUBJECT_CLEARING_RESERVE = "clearing.reserve"
+	SUBJECT_CLEARING_RELEASE = "clearing.release"
 
-	SubjectPortfolioReserve = "portfolio.reserve"
-	SubjectPortfolioRelease = "portfolio.release"
-	SubjectPortfolioMargin  = "portfolio.margin"
-	SubjectPositionsEvent   = "positions.event"
+	SUBJECT_PORTFOLIO_RESERVE = "portfolio.reserve"
+	SUBJECT_PORTFOLIO_RELEASE = "portfolio.release"
+	SUBJECT_PORTFOLIO_MARGIN  = "portfolio.margin"
+	SUBJECT_POSITIONS_EVENT   = "positions.event"
 
-	SubjectPriceTick          = "price.tick"
-	SubjectMarketDataSnapshot = "marketdata.snapshot"
+	SUBJECT_PRICE_TICK          = "price.tick"
+	SUBJECT_MARKETDATA_SNAPSHOT = "marketdata.snapshot"
 
-	SubjectUserRegistered = "user.registered"
-	SubjectPortfolioQuery = "portfolio.query"
-	SubjectOMSQuery       = "oms.query"
+	SUBJECT_USER_REGISTERED = "user.registered"
+	SUBJECT_PORTFOLIO_QUERY = "portfolio.query"
+	SUBJECT_OMS_QUERY       = "oms.query"
 
-	SubjectOutboxOrder = "outbox.order"
-	SubjectOutboxTrade = "outbox.trade"
-	SubjectOutboxRPNL  = "outbox.rpnl"
+	SUBJECT_OUTBOX_ORDER = "outbox.order"
+	SUBJECT_OUTBOX_TRADE = "outbox.trade"
+	SUBJECT_OUTBOX_RPNL  = "outbox.rpnl"
 
-	SubjectPositionReduced = "position.reduced"
+	SUBJECT_POSITION_REDUCED = "position.reduced"
 )
 
 func OrderPlaceTopic(symbol string) string         { return "order.place." + symbol }

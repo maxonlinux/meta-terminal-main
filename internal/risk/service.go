@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -48,8 +49,8 @@ func New(cfg Config, portfolioService Portfolio, omsService OMS) (*Service, erro
 }
 
 func (s *Service) Start(ctx context.Context) error {
-	s.nats.Subscribe(ctx, messaging.SubjectPriceTick, "risk", s.handlePriceTick)
-	s.nats.Subscribe(ctx, messaging.SubjectPositionsEvent, "risk-positions", s.handlePositionUpdate)
+	s.nats.Subscribe(ctx, messaging.SUBJECT_PRICE_TICK, "risk", s.handlePriceTick)
+	s.nats.Subscribe(ctx, messaging.SUBJECT_POSITIONS_EVENT, "risk-positions", s.handlePositionUpdate)
 	log.Println("risk service started")
 	return nil
 }
@@ -106,28 +107,10 @@ func (s *Service) checkLiquidations(symbol string, currentPrice types.Price) {
 
 	for userID, positions := range s.positions {
 		for _, pos := range positions {
-			if pos.Symbol != symbol {
+			if !s.shouldLiquidate(pos, symbol, currentPrice) {
 				continue
 			}
-			if pos.Size == 0 {
-				continue
-			}
-
-			liqPrice := s.calculateLiquidationPrice(pos)
-			if liqPrice == 0 {
-				continue
-			}
-
-			shouldLiquidate := false
-			if pos.Side == 0 && types.Price(liqPrice) >= currentPrice {
-				shouldLiquidate = true
-			} else if pos.Side == 1 && types.Price(liqPrice) <= currentPrice {
-				shouldLiquidate = true
-			}
-
-			if shouldLiquidate {
-				s.liquidatePosition(userID, pos)
-			}
+			s.liquidatePosition(userID, pos)
 		}
 	}
 }
@@ -137,7 +120,7 @@ func (s *Service) calculateLiquidationPrice(pos *types.Position) int64 {
 		return 0
 	}
 
-	if pos.Side == 0 {
+	if pos.Side == constants.ORDER_SIDE_BUY {
 		return pos.EntryPrice * int64(100-pos.Leverage*5) / 100
 	}
 	return pos.EntryPrice + pos.EntryPrice*int64(pos.Leverage*5)/100
@@ -147,18 +130,11 @@ func (s *Service) liquidatePosition(userID types.UserID, pos *types.Position) {
 	log.Printf("risk: liquidating position user=%d symbol=%s size=%d side=%d entry=%d",
 		userID, pos.Symbol, pos.Size, pos.Side, pos.EntryPrice)
 
-	var side int8
-	if pos.Side == 0 {
-		side = 1
-	} else {
-		side = 0
-	}
-
 	input := &types.OrderInput{
 		UserID:     userID,
 		Symbol:     pos.Symbol,
 		Category:   1,
-		Side:       side,
+		Side:       oppositeOrderSide(pos.Side),
 		Type:       1,
 		Quantity:   types.Quantity(pos.Size),
 		Price:      0,
@@ -173,6 +149,30 @@ func (s *Service) liquidatePosition(userID types.UserID, pos *types.Position) {
 	}
 
 	log.Printf("risk: liquidation order placed id=%d status=%d", result.Orders[0].ID, result.Orders[0].Status)
+}
+
+func (s *Service) shouldLiquidate(pos *types.Position, symbol string, currentPrice types.Price) bool {
+	if pos.Symbol != symbol || pos.Size == 0 {
+		return false
+	}
+	liqPrice := s.calculateLiquidationPrice(pos)
+	if liqPrice == 0 {
+		return false
+	}
+	if pos.Side == constants.ORDER_SIDE_BUY {
+		return types.Price(liqPrice) >= currentPrice
+	}
+	if pos.Side == constants.ORDER_SIDE_SELL {
+		return types.Price(liqPrice) <= currentPrice
+	}
+	return false
+}
+
+func oppositeOrderSide(side int8) int8 {
+	if side == constants.ORDER_SIDE_BUY {
+		return constants.ORDER_SIDE_SELL
+	}
+	return constants.ORDER_SIDE_BUY
 }
 
 func (s *Service) UpdatePosition(userID types.UserID, pos *types.Position) {

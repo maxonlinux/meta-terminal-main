@@ -8,7 +8,7 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func (s *Service) matchOrder(order *types.Order) []*types.Trade {
+func (s *Service) matchOrderInto(order *types.Order, result *types.OrderResult) []types.Trade {
 	ob := s.getOrderBook(order.Category, order.Symbol)
 
 	var limitPrice types.Price
@@ -16,20 +16,34 @@ func (s *Service) matchOrder(order *types.Order) []*types.Trade {
 		limitPrice = order.Price
 	}
 
-	matches, _ := ob.Match(order, limitPrice)
+	bufAny := s.matchBufPool.Get()
+	matchesBuf, _ := bufAny.([]types.Match)
+	matches, _ := ob.MatchInto(order, limitPrice, matchesBuf)
 
-	trades := make([]*types.Trade, 0, len(matches))
-	for _, match := range matches {
-		trades = append(trades, match.Trade)
-		s.clearing.ExecuteTrade(match.Trade, order, match.Maker)
-		s.publishTrade(match.Trade)
+	var trades []types.Trade
+	if result != nil && len(matches) <= len(result.TradesBuf) {
+		trades = result.TradesBuf[:0]
+	} else {
+		trades = make([]types.Trade, 0, len(matches))
 	}
 
+	for i := range matches {
+		trades = append(trades, matches[i].Trade)
+		tradePtr := &trades[len(trades)-1]
+		s.clearing.ExecuteTrade(tradePtr, order, matches[i].Maker)
+		s.publishTrade(tradePtr)
+		matches[i] = types.Match{}
+	}
+	s.matchBufPool.Put(matches[:0])
+
+	if result != nil {
+		result.Trades = trades
+	}
 	return trades
 }
 
 func (s *Service) publishTrade(trade *types.Trade) {
-	if s.nats == nil {
+	if s.nats == nil && !s.hasSink() {
 		return
 	}
 	event := &types.TradeEvent{
@@ -44,5 +58,10 @@ func (s *Service) publishTrade(trade *types.Trade) {
 		Quantity:     trade.Quantity,
 		ExecutedAt:   trade.ExecutedAt,
 	}
-	s.nats.PublishGob(context.Background(), messaging.SubjectClearingTrade, event)
+	if s.nats != nil {
+		s.nats.PublishGob(context.Background(), messaging.SUBJECT_CLEARING_TRADE, event)
+	}
+	if s.hasSink() {
+		s.sink.OnTradeEvent(event)
+	}
 }

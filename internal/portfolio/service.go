@@ -6,6 +6,7 @@ import (
 
 	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/events"
 	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -17,27 +18,32 @@ var (
 
 type Config struct {
 	NATS *messaging.NATS
+	Sink events.Sink
 }
 
 type Service struct {
 	Balances  map[types.UserID]map[string]*types.UserBalance
 	Positions map[types.UserID]map[string]*types.Position
 	nats      *messaging.NATS
+	sink      events.Sink
 }
 
 func New(cfg Config) *Service {
+	sink := cfg.Sink
+	if sink == nil {
+		sink = events.NopSink{}
+	}
 	return &Service{
 		Balances:  make(map[types.UserID]map[string]*types.UserBalance),
 		Positions: make(map[types.UserID]map[string]*types.Position),
 		nats:      cfg.NATS,
+		sink:      sink,
 	}
 }
 
 func (s *Service) GetBalance(userID types.UserID, asset string) *types.UserBalance {
-	if userBalances, ok := s.Balances[userID]; ok {
-		if b, ok := userBalances[asset]; ok {
-			return b
-		}
+	if b := s.balanceEntry(userID, asset); b != nil {
+		return b
 	}
 	return &types.UserBalance{Asset: asset}
 }
@@ -65,15 +71,15 @@ func (s *Service) Reserve(userID types.UserID, asset string, amount int64) error
 }
 
 func (s *Service) Release(userID types.UserID, asset string, amount int64) {
-	if userBalances, ok := s.Balances[userID]; ok {
-		if b, ok := userBalances[asset]; ok {
-			b.Locked -= amount
-			if b.Locked < 0 {
-				b.Locked = 0
-			}
-			b.Available += amount
-		}
+	b := s.balanceEntry(userID, asset)
+	if b == nil {
+		return
 	}
+	b.Locked -= amount
+	if b.Locked < 0 {
+		b.Locked = 0
+	}
+	b.Available += amount
 }
 
 func (s *Service) ExecuteTrade(trade *types.Trade, taker, maker *types.Order) {
@@ -125,18 +131,8 @@ func (s *Service) executeSpotTrade(trade *types.Trade, taker *types.Order, maker
 }
 
 func (s *Service) executeLinearTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
-	var takerPos, makerPos *types.Position
-
-	if userPositions, ok := s.Positions[taker.UserID]; ok {
-		if pos, ok := userPositions[trade.Symbol]; ok {
-			takerPos = pos
-		}
-	}
-	if userPositions, ok := s.Positions[maker.UserID]; ok {
-		if pos, ok := userPositions[trade.Symbol]; ok {
-			makerPos = pos
-		}
-	}
+	takerPos := s.positionEntry(taker.UserID, trade.Symbol)
+	makerPos := s.positionEntry(maker.UserID, trade.Symbol)
 	if takerPos == nil {
 		takerPos = &types.Position{Symbol: trade.Symbol, Size: 0, Side: -1}
 	}
@@ -170,17 +166,11 @@ func (s *Service) executeLinearTrade(trade *types.Trade, taker *types.Order, mak
 }
 
 func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order *types.Order) {
-	userPositions, ok := s.Positions[userID]
-	if !ok {
-		userPositions = make(map[string]*types.Position)
-		s.Positions[userID] = userPositions
-	}
-
-	key := trade.Symbol
-	pos, ok := userPositions[key]
-	if !ok {
+	userPositions := s.ensurePositions(userID)
+	pos := userPositions[trade.Symbol]
+	if pos == nil {
 		pos = &types.Position{Symbol: trade.Symbol}
-		userPositions[key] = pos
+		userPositions[trade.Symbol] = pos
 	}
 
 	side := order.Side
@@ -189,7 +179,9 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 	if pos.Size == 0 {
 		pos.Size = size * int64(1-side*2)
 		pos.EntryPrice = int64(trade.Price)
-		pos.Leverage = constants.DEFAULT_LEVERAGE
+		if pos.Leverage <= 0 {
+			pos.Leverage = constants.DEFAULT_LEVERAGE
+		}
 		pos.Side = side
 	} else if (pos.Size > 0 && side == constants.ORDER_SIDE_BUY) || (pos.Size < 0 && side == constants.ORDER_SIDE_SELL) {
 		totalSize := pos.Size + size*int64(1-side*2)
@@ -211,20 +203,21 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 				b.Available += rpnl
 			}
 
+			event := &types.PositionReducedEvent{
+				UserID:       userID,
+				Symbol:       trade.Symbol,
+				Category:     trade.Category,
+				ClosedQty:    closedQty,
+				ExitPrice:    int64(trade.Price),
+				RPNL:         rpnl,
+				PositionSize: pos.Size,
+				PositionSide: pos.Side,
+				ExecutedAt:   types.NowNano(),
+			}
 			if s.nats != nil {
-				event := &types.PositionReducedEvent{
-					UserID:       userID,
-					Symbol:       trade.Symbol,
-					Category:     trade.Category,
-					ClosedQty:    closedQty,
-					ExitPrice:    int64(trade.Price),
-					RPNL:         rpnl,
-					PositionSize: pos.Size,
-					PositionSide: pos.Side,
-					ExecutedAt:   types.NowNano(),
-				}
 				s.nats.PublishGob(context.Background(), messaging.PositionReducedTopic(trade.Symbol), event)
 			}
+			s.sink.OnPositionReduced(event)
 		}
 
 		remaining := pos.Size - size*int64(1-side*2)
@@ -237,6 +230,29 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 			pos.Size = remaining
 		}
 	}
+}
+
+func (s *Service) balanceEntry(userID types.UserID, asset string) *types.UserBalance {
+	if userBalances := s.Balances[userID]; userBalances != nil {
+		return userBalances[asset]
+	}
+	return nil
+}
+
+func (s *Service) positionEntry(userID types.UserID, symbol string) *types.Position {
+	if userPositions := s.Positions[userID]; userPositions != nil {
+		return userPositions[symbol]
+	}
+	return nil
+}
+
+func (s *Service) ensurePositions(userID types.UserID) map[string]*types.Position {
+	userPositions := s.Positions[userID]
+	if userPositions == nil {
+		userPositions = make(map[string]*types.Position)
+		s.Positions[userID] = userPositions
+	}
+	return userPositions
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {

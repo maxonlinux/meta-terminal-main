@@ -63,9 +63,17 @@ func (n *NATS) PublishGob(ctx context.Context, subject string, v any) error {
 	return err
 }
 
+func EncodeGob(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func DecodeGob(data []byte, v any) error {
-	buf := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(buf)
+	dec := gob.NewDecoder(bytes.NewReader(data))
 	return dec.Decode(v)
 }
 

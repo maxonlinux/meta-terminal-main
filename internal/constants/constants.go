@@ -42,6 +42,7 @@ const (
 	// Stop Order Types (Bybit-compatible)
 	// OCO, TP, SL — все CloseOnTrigger=true, различаются только stopOrderType
 	STOP_ORDER_TYPE_NORMAL      = 0 // Standard conditional order (Stop)
+	STOP_ORDER_TYPE_STOP        = 1 // Standard stop order
 	STOP_ORDER_TYPE_TAKE_PROFIT = 2 // Take profit order
 	STOP_ORDER_TYPE_STOP_LOSS   = 3 // Stop loss order
 	STOP_ORDER_TYPE_OCO         = 5 // OCO order (TP + SL pair)

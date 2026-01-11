@@ -3,6 +3,7 @@ package clearing
 import (
 	"sync"
 
+	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -36,10 +37,12 @@ func (s *Service) Release(userID types.UserID, symbol string, category int8, sid
 
 func (s *Service) calculateReserveAmount(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) (int64, string) {
 	if category == constants.CATEGORY_SPOT {
+		base := balance.GetBaseAsset(symbol)
+		quote := balance.GetQuoteAsset(symbol)
 		if side == constants.ORDER_SIDE_BUY {
-			return int64(qty) * int64(price), "USDT"
+			return int64(qty) * int64(price), quote
 		}
-		return int64(qty), symbol
+		return int64(qty), base
 	}
 
 	pos := s.portfolio.GetPosition(userID, symbol)
@@ -47,7 +50,8 @@ func (s *Service) calculateReserveAmount(userID types.UserID, symbol string, cat
 	if leverage <= 0 {
 		leverage = constants.DEFAULT_LEVERAGE
 	}
-	return (int64(qty) * int64(price)) / int64(leverage), "USDT"
+	quote := balance.GetQuoteAsset(symbol)
+	return (int64(qty) * int64(price)) / int64(leverage), quote
 }
 
 func (s *Service) ExecuteTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
@@ -59,56 +63,23 @@ func (s *Service) ExecuteTrade(trade *types.Trade, taker *types.Order, maker *ty
 }
 
 func (s *Service) executeSpotTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
-	if trade.TakerOrderID == taker.ID {
-		s.processSpotTaker(taker, maker, trade)
+	base := balance.GetBaseAsset(trade.Symbol)
+	quote := balance.GetQuoteAsset(trade.Symbol)
+	baseQty := int64(trade.Quantity)
+	quoteQty := int64(trade.Price) * int64(trade.Quantity)
+
+	if taker.Side == constants.ORDER_SIDE_BUY {
+		s.portfolio.Release(taker.UserID, quote, quoteQty)
+		s.portfolio.Release(maker.UserID, base, baseQty)
 	} else {
-		s.processSpotTaker(maker, taker, trade)
-	}
-}
-
-func (s *Service) processSpotTaker(taker *types.Order, maker *types.Order, trade *types.Trade) {
-	takerAsset := taker.Symbol
-	makerAsset := "USDT"
-
-	takerAmount := int64(trade.Quantity)
-	makerAmount := int64(trade.Price) * int64(trade.Quantity)
-
-	if taker.Side == constants.ORDER_SIDE_SELL {
-		takerAsset = "USDT"
-		makerAsset = taker.Symbol
-		takerAmount = int64(trade.Price) * int64(trade.Quantity)
-		makerAmount = int64(trade.Quantity)
+		s.portfolio.Release(taker.UserID, base, baseQty)
+		s.portfolio.Release(maker.UserID, quote, quoteQty)
 	}
 
-	s.portfolio.Release(taker.UserID, takerAsset, takerAmount)
-	s.portfolio.Release(maker.UserID, makerAsset, makerAmount)
-
-	s.portfolio.Reserve(taker.UserID, makerAsset, makerAmount)
-	s.portfolio.Reserve(maker.UserID, takerAsset, takerAmount)
+	s.portfolio.ExecuteTrade(trade, taker, maker)
 }
 
 func (s *Service) executeLinearTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
-	takerPos := s.portfolio.GetPosition(taker.UserID, trade.Symbol)
-	makerPos := s.portfolio.GetPosition(maker.UserID, trade.Symbol)
-
-	takerLeverage := takerPos.Leverage
-	if takerLeverage <= 0 {
-		takerLeverage = constants.DEFAULT_LEVERAGE
-	}
-	makerLeverage := makerPos.Leverage
-	if makerLeverage <= 0 {
-		makerLeverage = constants.DEFAULT_LEVERAGE
-	}
-
-	takerAmount := (int64(trade.Price) * int64(trade.Quantity)) / int64(takerLeverage)
-	makerAmount := (int64(trade.Price) * int64(trade.Quantity)) / int64(makerLeverage)
-
-	s.portfolio.Release(taker.UserID, "USDT", takerAmount)
-	s.portfolio.Release(maker.UserID, "USDT", makerAmount)
-
-	s.portfolio.Reserve(taker.UserID, "USDT", takerAmount)
-	s.portfolio.Reserve(maker.UserID, "USDT", makerAmount)
-
 	s.portfolio.ExecuteTrade(trade, taker, maker)
 }
 
