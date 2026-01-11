@@ -48,6 +48,18 @@ func (s *Service) GetBalance(userID types.UserID, asset string) *types.UserBalan
 	return &types.UserBalance{Asset: asset}
 }
 
+func (s *Service) GetBalances(userID types.UserID) []*types.UserBalance {
+	userBalances := s.Balances[userID]
+	if userBalances == nil {
+		return nil
+	}
+	balances := make([]*types.UserBalance, 0, len(userBalances))
+	for _, balance := range userBalances {
+		balances = append(balances, balance)
+	}
+	return balances
+}
+
 func (s *Service) Reserve(userID types.UserID, asset string, amount int64) error {
 	userBalances, ok := s.Balances[userID]
 	if !ok {
@@ -152,11 +164,12 @@ func (s *Service) executeLinearTrade(trade *types.Trade, taker *types.Order, mak
 	takerQty := (int64(trade.Price) * int64(trade.Quantity)) / int64(takerLeverage)
 	makerQty := (int64(trade.Price) * int64(trade.Quantity)) / int64(makerLeverage)
 
-	if b, ok := s.Balances[trade.TakerID]["USDT"]; ok {
+	quote := balance.GetQuoteAsset(trade.Symbol)
+	if b, ok := s.Balances[trade.TakerID][quote]; ok {
 		b.Locked -= takerQty
 		b.Margin += takerQty
 	}
-	if b, ok := s.Balances[trade.MakerID]["USDT"]; ok {
+	if b, ok := s.Balances[trade.MakerID][quote]; ok {
 		b.Locked -= makerQty
 		b.Margin += makerQty
 	}
@@ -199,7 +212,8 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 				rpnl = (pos.EntryPrice - int64(trade.Price)) * closedQty
 			}
 
-			if b, ok := s.Balances[userID]["USDT"]; ok {
+			quote := balance.GetQuoteAsset(trade.Symbol)
+			if b, ok := s.Balances[userID][quote]; ok {
 				b.Available += rpnl
 			}
 
@@ -215,7 +229,7 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 				ExecutedAt:   types.NowNano(),
 			}
 			if s.nats != nil {
-				s.nats.PublishGob(context.Background(), messaging.PositionReducedTopic(trade.Symbol), event)
+				_ = s.nats.PublishGob(context.Background(), messaging.PositionReducedTopic(trade.Symbol), event)
 			}
 			s.sink.OnPositionReduced(event)
 		}
@@ -230,6 +244,8 @@ func (s *Service) updatePosition(userID types.UserID, trade *types.Trade, order 
 			pos.Size = remaining
 		}
 	}
+
+	s.publishPositionEvent(userID, pos)
 }
 
 func (s *Service) balanceEntry(userID types.UserID, asset string) *types.UserBalance {
@@ -253,6 +269,28 @@ func (s *Service) ensurePositions(userID types.UserID) map[string]*types.Positio
 		s.Positions[userID] = userPositions
 	}
 	return userPositions
+}
+
+func (s *Service) publishPositionEvent(userID types.UserID, pos *types.Position) {
+	if s.nats == nil || pos == nil {
+		return
+	}
+	event := struct {
+		UserID     types.UserID
+		Symbol     string
+		NewSize    int64
+		NewSide    int8
+		EntryPrice int64
+		Leverage   int8
+	}{
+		UserID:     userID,
+		Symbol:     pos.Symbol,
+		NewSize:    pos.Size,
+		NewSide:    pos.Side,
+		EntryPrice: pos.EntryPrice,
+		Leverage:   pos.Leverage,
+	}
+	_ = s.nats.PublishGob(context.Background(), messaging.PositionsEventTopic(pos.Symbol), event)
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {

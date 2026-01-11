@@ -1,8 +1,6 @@
 package clearing
 
 import (
-	"sync"
-
 	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
@@ -18,7 +16,6 @@ type Portfolio interface {
 
 type Service struct {
 	portfolio Portfolio
-	mu        sync.RWMutex
 }
 
 func New(portfolio Portfolio) *Service {

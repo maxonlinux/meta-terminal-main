@@ -17,8 +17,12 @@ func (s *Service) matchOrderInto(order *types.Order, result *types.OrderResult) 
 	}
 
 	bufAny := s.matchBufPool.Get()
-	matchesBuf, _ := bufAny.([]types.Match)
-	matches, _ := ob.MatchInto(order, limitPrice, matchesBuf)
+	matchesBuf, _ := bufAny.(*[]types.Match)
+	if matchesBuf == nil {
+		empty := make([]types.Match, 0, 32)
+		matchesBuf = &empty
+	}
+	matches, _ := ob.MatchInto(order, limitPrice, *matchesBuf)
 
 	var trades []types.Trade
 	if result != nil && len(matches) <= len(result.TradesBuf) {
@@ -32,9 +36,20 @@ func (s *Service) matchOrderInto(order *types.Order, result *types.OrderResult) 
 		tradePtr := &trades[len(trades)-1]
 		s.clearing.ExecuteTrade(tradePtr, order, matches[i].Maker)
 		s.publishTrade(tradePtr)
+		if matches[i].Maker != nil && matches[i].Maker.Remaining() == 0 && matches[i].Maker.Status != constants.ORDER_STATUS_FILLED {
+			maker := matches[i].Maker
+			maker.Status = constants.ORDER_STATUS_FILLED
+			maker.UpdatedAt = types.NowNano()
+			if maker.ReduceOnly && !maker.IsConditional && !maker.CloseOnTrigger {
+				s.updateReduceOnlyCommitment(maker, 0)
+			}
+			s.publishOrderEvent(maker)
+			s.removeOrderFromMemory(maker)
+		}
 		matches[i] = types.Match{}
 	}
-	s.matchBufPool.Put(matches[:0])
+	*matchesBuf = matches[:0]
+	s.matchBufPool.Put(matchesBuf)
 
 	if result != nil {
 		result.Trades = trades
@@ -59,7 +74,7 @@ func (s *Service) publishTrade(trade *types.Trade) {
 		ExecutedAt:   trade.ExecutedAt,
 	}
 	if s.nats != nil {
-		s.nats.PublishGob(context.Background(), messaging.SUBJECT_CLEARING_TRADE, event)
+		_ = s.nats.PublishGob(context.Background(), messaging.SUBJECT_CLEARING_TRADE, event)
 	}
 	if s.hasSink() {
 		s.sink.OnTradeEvent(event)

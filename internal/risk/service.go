@@ -25,13 +25,26 @@ type OMS interface {
 	PlaceOrder(ctx context.Context, input *types.OrderInput) (*types.OrderResult, error)
 }
 
+type liquidationTask struct {
+	userID     types.UserID
+	symbol     string
+	size       int64
+	side       int8
+	entryPrice int64
+	leverage   int8
+}
+
 type Service struct {
 	nats *messaging.NATS
 	oms  OMS
 
-	mu         sync.RWMutex
-	positions  map[types.UserID]map[string]*types.Position
-	lastPrices map[string]types.Price
+	mu                sync.RWMutex
+	positionsByUser   map[types.UserID]map[string]*types.Position
+	positionsBySymbol map[string]map[types.UserID]*types.Position
+	lastPrices        map[string]types.Price
+	liquidationPool   sync.Pool
+	inputPool         sync.Pool
+	logLiquidations   bool
 }
 
 func New(cfg Config, portfolioService Portfolio, omsService OMS) (*Service, error) {
@@ -41,10 +54,16 @@ func New(cfg Config, portfolioService Portfolio, omsService OMS) (*Service, erro
 	}
 
 	return &Service{
-		nats:       n,
-		oms:        omsService,
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		nats:              n,
+		oms:               omsService,
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
+		liquidationPool: sync.Pool{New: func() interface{} {
+			buf := make([]liquidationTask, 0, 32)
+			return &buf
+		}},
+		inputPool: sync.Pool{New: func() interface{} { return &types.OrderInput{} }},
 	}, nil
 }
 
@@ -68,20 +87,7 @@ func (s *Service) handlePositionUpdate(data []byte) {
 		log.Printf("risk: failed to decode position update: %v", err)
 		return
 	}
-
-	pos := &types.Position{
-		Symbol:     update.Symbol,
-		Size:       update.NewSize,
-		Side:       update.NewSide,
-		EntryPrice: update.EntryPrice,
-		Leverage:   update.Leverage,
-	}
-
-	if update.NewSize == 0 {
-		s.RemovePosition(update.UserID, update.Symbol)
-	} else {
-		s.UpdatePosition(update.UserID, pos)
-	}
+	s.OnPositionUpdate(update.UserID, update.Symbol, update.NewSize, update.NewSide, update.EntryPrice, update.Leverage)
 }
 
 func (s *Service) handlePriceTick(data []byte) {
@@ -93,26 +99,55 @@ func (s *Service) handlePriceTick(data []byte) {
 		log.Printf("risk: failed to decode price tick: %v", err)
 		return
 	}
+	s.OnPriceTick(tick.Symbol, tick.Price)
+}
 
+func (s *Service) OnPriceTick(symbol string, price types.Price) {
 	s.mu.Lock()
-	s.lastPrices[tick.Symbol] = tick.Price
+	s.lastPrices[symbol] = price
 	s.mu.Unlock()
 
-	s.checkLiquidations(tick.Symbol, tick.Price)
+	s.checkLiquidations(symbol, price)
+}
+
+func (s *Service) OnPositionUpdate(userID types.UserID, symbol string, newSize int64, newSide int8, entryPrice int64, leverage int8) {
+	s.upsertPosition(userID, symbol, newSize, newSide, entryPrice, leverage)
 }
 
 func (s *Service) checkLiquidations(symbol string, currentPrice types.Price) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for userID, positions := range s.positions {
-		for _, pos := range positions {
-			if !s.shouldLiquidate(pos, symbol, currentPrice) {
-				continue
-			}
-			s.liquidatePosition(userID, pos)
-		}
+	bufAny := s.liquidationPool.Get()
+	buf, _ := bufAny.(*[]liquidationTask)
+	if buf == nil {
+		empty := make([]liquidationTask, 0, 32)
+		buf = &empty
 	}
+	tasks := (*buf)[:0]
+
+	s.mu.RLock()
+	positions := s.positionsBySymbol[symbol]
+	for userID, pos := range positions {
+		if !s.shouldLiquidate(pos, symbol, currentPrice) {
+			continue
+		}
+		tasks = append(tasks, liquidationTask{
+			userID:     userID,
+			symbol:     pos.Symbol,
+			size:       pos.Size,
+			side:       pos.Side,
+			entryPrice: pos.EntryPrice,
+			leverage:   pos.Leverage,
+		})
+	}
+	s.mu.RUnlock()
+
+	for i := range tasks {
+		s.liquidatePosition(tasks[i])
+	}
+	for i := range tasks {
+		tasks[i] = liquidationTask{}
+	}
+	*buf = tasks[:0]
+	s.liquidationPool.Put(buf)
 }
 
 func (s *Service) calculateLiquidationPrice(pos *types.Position) int64 {
@@ -126,29 +161,39 @@ func (s *Service) calculateLiquidationPrice(pos *types.Position) int64 {
 	return pos.EntryPrice + pos.EntryPrice*int64(pos.Leverage*5)/100
 }
 
-func (s *Service) liquidatePosition(userID types.UserID, pos *types.Position) {
-	log.Printf("risk: liquidating position user=%d symbol=%s size=%d side=%d entry=%d",
-		userID, pos.Symbol, pos.Size, pos.Side, pos.EntryPrice)
+func (s *Service) liquidatePosition(task liquidationTask) {
+	if s.logLiquidations {
+		log.Printf("risk: liquidating position user=%d symbol=%s size=%d side=%d entry=%d",
+			task.userID, task.symbol, task.size, task.side, task.entryPrice)
+	}
 
-	input := &types.OrderInput{
-		UserID:     userID,
-		Symbol:     pos.Symbol,
+	inputAny := s.inputPool.Get()
+	input, _ := inputAny.(*types.OrderInput)
+	if input == nil {
+		input = &types.OrderInput{}
+	}
+	*input = types.OrderInput{
+		UserID:     task.userID,
+		Symbol:     task.symbol,
 		Category:   1,
-		Side:       oppositeOrderSide(pos.Side),
+		Side:       oppositeOrderSide(task.side),
 		Type:       1,
-		Quantity:   types.Quantity(pos.Size),
+		Quantity:   types.Quantity(task.size),
 		Price:      0,
 		ReduceOnly: true,
 		TIF:        1,
 	}
 
 	result, err := s.oms.PlaceOrder(context.Background(), input)
+	*input = types.OrderInput{}
+	s.inputPool.Put(input)
 	if err != nil {
 		log.Printf("risk: liquidation order failed: %v", err)
 		return
 	}
-
-	log.Printf("risk: liquidation order placed id=%d status=%d", result.Orders[0].ID, result.Orders[0].Status)
+	if s.logLiquidations {
+		log.Printf("risk: liquidation order placed id=%d status=%d", result.Orders[0].ID, result.Orders[0].Status)
+	}
 }
 
 func (s *Service) shouldLiquidate(pos *types.Position, symbol string, currentPrice types.Price) bool {
@@ -179,18 +224,58 @@ func (s *Service) UpdatePosition(userID types.UserID, pos *types.Position) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.positions[userID]; !ok {
-		s.positions[userID] = make(map[string]*types.Position)
+	if _, ok := s.positionsByUser[userID]; !ok {
+		s.positionsByUser[userID] = make(map[string]*types.Position)
 	}
-	s.positions[userID][pos.Symbol] = pos
+	if _, ok := s.positionsBySymbol[pos.Symbol]; !ok {
+		s.positionsBySymbol[pos.Symbol] = make(map[types.UserID]*types.Position)
+	}
+	s.positionsByUser[userID][pos.Symbol] = pos
+	s.positionsBySymbol[pos.Symbol][userID] = pos
+}
+
+func (s *Service) upsertPosition(userID types.UserID, symbol string, size int64, side int8, entryPrice int64, leverage int8) {
+	if size == 0 {
+		s.RemovePosition(userID, symbol)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.positionsByUser[userID]; !ok {
+		s.positionsByUser[userID] = make(map[string]*types.Position)
+	}
+	if _, ok := s.positionsBySymbol[symbol]; !ok {
+		s.positionsBySymbol[symbol] = make(map[types.UserID]*types.Position)
+	}
+	pos := s.positionsByUser[userID][symbol]
+	if pos == nil {
+		pos = &types.Position{}
+		s.positionsByUser[userID][symbol] = pos
+		s.positionsBySymbol[symbol][userID] = pos
+	} else {
+		s.positionsBySymbol[symbol][userID] = pos
+	}
+	pos.Symbol = symbol
+	pos.Size = size
+	pos.Side = side
+	pos.EntryPrice = entryPrice
+	pos.Leverage = leverage
 }
 
 func (s *Service) RemovePosition(userID types.UserID, symbol string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.positions[userID]; ok {
-		delete(s.positions[userID], symbol)
+	if userPositions, ok := s.positionsByUser[userID]; ok {
+		delete(userPositions, symbol)
+	}
+	if symbolPositions, ok := s.positionsBySymbol[symbol]; ok {
+		delete(symbolPositions, userID)
+		if len(symbolPositions) == 0 {
+			delete(s.positionsBySymbol, symbol)
+		}
 	}
 }
 

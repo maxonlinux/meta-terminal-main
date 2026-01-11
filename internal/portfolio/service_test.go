@@ -612,6 +612,6 @@ func BenchmarkSetLeverage(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.SetLeverage(userID, "BTCUSDT", 5, 50000)
+		_ = s.SetLeverage(userID, "BTCUSDT", 5, 50000)
 	}
 }

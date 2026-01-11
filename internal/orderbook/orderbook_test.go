@@ -182,6 +182,6 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 		buyer.Quantity = types.Quantity(10)
 		buyer.Filled = 0
 		buyer.CreatedAt = types.NowNano()
-		ob.Match(buyer, buyer.Price)
+		_, _ = ob.Match(buyer, buyer.Price)
 	}
 }

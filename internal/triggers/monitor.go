@@ -1,7 +1,6 @@
 package triggers
 
 import (
-	"container/heap"
 	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
@@ -14,96 +13,42 @@ type TriggerNode struct {
 	side      int8
 	timestamp uint64
 	index     int
+	level     *priceLevel
 }
 
 var nodePool = sync.Pool{
 	New: func() interface{} { return &TriggerNode{} },
 }
 
-type BuyHeap []*TriggerNode
-
-func (h BuyHeap) Len() int { return len(h) }
-
-func (h BuyHeap) Less(i, j int) bool {
-	if h[i].price == h[j].price {
-		return h[i].timestamp < h[j].timestamp
-	}
-	return h[i].price > h[j].price
+var levelPool = sync.Pool{
+	New: func() interface{} { return &priceLevel{} },
 }
 
-func (h BuyHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].index = i
-	h[j].index = j
+type priceLevel struct {
+	price    types.Price
+	orders   []*TriggerNode
+	priority uint32
+	left     *priceLevel
+	right    *priceLevel
+	parent   *priceLevel
+	prev     *priceLevel
+	next     *priceLevel
 }
 
-func (h *BuyHeap) Push(x interface{}) {
-	node := x.(*TriggerNode)
-	node.index = len(*h)
-	*h = append(*h, node)
-}
-
-func (h *BuyHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	node := old[n-1]
-	node.index = -1
-	*h = old[0 : n-1]
-	return node
-}
-
-func (h *BuyHeap) Peek() *TriggerNode {
-	if len(*h) == 0 {
-		return nil
-	}
-	return (*h)[0]
-}
-
-type SellHeap []*TriggerNode
-
-func (h SellHeap) Len() int { return len(h) }
-
-func (h SellHeap) Less(i, j int) bool {
-	if h[i].price == h[j].price {
-		return h[i].timestamp < h[j].timestamp
-	}
-	return h[i].price < h[j].price
-}
-
-func (h SellHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].index = i
-	h[j].index = j
-}
-
-func (h *SellHeap) Push(x interface{}) {
-	node := x.(*TriggerNode)
-	node.index = len(*h)
-	*h = append(*h, node)
-}
-
-func (h *SellHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	node := old[n-1]
-	node.index = -1
-	*h = old[0 : n-1]
-	return node
-}
-
-func (h *SellHeap) Peek() *TriggerNode {
-	if len(*h) == 0 {
-		return nil
-	}
-	return (*h)[0]
+type priceTree struct {
+	root   *priceLevel
+	levels map[types.Price]*priceLevel
+	min    *priceLevel
+	max    *priceLevel
 }
 
 type Monitor struct {
 	mu           sync.Mutex
-	buyTriggers  *BuyHeap
-	sellTriggers *SellHeap
+	buyTree      priceTree
+	sellTree     priceTree
 	orders       map[types.OrderID]*types.Order
 	nodes        map[types.OrderID]*TriggerNode
+	prioritySeed uint32
 }
 
 func New() *Monitor {
@@ -111,15 +56,15 @@ func New() *Monitor {
 }
 
 func NewWithCapacity(capacity int) *Monitor {
-	m := &Monitor{
-		buyTriggers:  &BuyHeap{},
-		sellTriggers: &SellHeap{},
-		orders:       make(map[types.OrderID]*types.Order, capacity),
-		nodes:        make(map[types.OrderID]*TriggerNode, capacity),
+	if capacity < 0 {
+		capacity = 0
 	}
-	heap.Init(m.buyTriggers)
-	heap.Init(m.sellTriggers)
-	return m
+	return &Monitor{
+		buyTree:  priceTree{levels: make(map[types.Price]*priceLevel, capacity)},
+		sellTree: priceTree{levels: make(map[types.Price]*priceLevel, capacity)},
+		orders:   make(map[types.OrderID]*types.Order, capacity),
+		nodes:    make(map[types.OrderID]*TriggerNode, capacity),
+	}
 }
 
 func (m *Monitor) Add(order *types.Order) {
@@ -134,15 +79,16 @@ func (m *Monitor) Add(order *types.Order) {
 		side:      triggerSide,
 		timestamp: order.CreatedAt,
 		index:     -1,
+		level:     nil,
 	}
 
 	m.orders[order.ID] = order
 	m.nodes[order.ID] = node
 
 	if triggerSide == constants.ORDER_SIDE_BUY {
-		heap.Push(m.buyTriggers, node)
+		m.addToTree(&m.buyTree, node)
 	} else {
-		heap.Push(m.sellTriggers, node)
+		m.addToTree(&m.sellTree, node)
 	}
 }
 
@@ -158,9 +104,9 @@ func (m *Monitor) Remove(orderID types.OrderID) bool {
 	delete(m.nodes, orderID)
 	delete(m.orders, orderID)
 	if node.side == constants.ORDER_SIDE_BUY {
-		heap.Remove(m.buyTriggers, node.index)
+		m.removeFromTree(&m.buyTree, node)
 	} else {
-		heap.Remove(m.sellTriggers, node.index)
+		m.removeFromTree(&m.sellTree, node)
 	}
 	*node = TriggerNode{}
 	nodePool.Put(node)
@@ -180,35 +126,8 @@ func (m *Monitor) CheckInto(currentPrice types.Price, out []*types.Order) []*typ
 		triggered = triggered[:0]
 	}
 
-	for m.buyTriggers.Len() > 0 {
-		node := m.buyTriggers.Peek()
-		if node == nil || node.price < currentPrice {
-			break
-		}
-		heap.Pop(m.buyTriggers)
-		if order := m.orders[node.orderID]; order != nil {
-			triggered = append(triggered, order)
-		}
-		delete(m.orders, node.orderID)
-		delete(m.nodes, node.orderID)
-		*node = TriggerNode{}
-		nodePool.Put(node)
-	}
-
-	for m.sellTriggers.Len() > 0 {
-		node := m.sellTriggers.Peek()
-		if node == nil || node.price > currentPrice {
-			break
-		}
-		heap.Pop(m.sellTriggers)
-		if order := m.orders[node.orderID]; order != nil {
-			triggered = append(triggered, order)
-		}
-		delete(m.orders, node.orderID)
-		delete(m.nodes, node.orderID)
-		*node = TriggerNode{}
-		nodePool.Put(node)
-	}
+	triggered = m.collectTriggered(&m.buyTree, currentPrice, true, triggered)
+	triggered = m.collectTriggered(&m.sellTree, currentPrice, false, triggered)
 
 	return triggered
 }
@@ -228,13 +147,260 @@ func (m *Monitor) Count() int {
 func (m *Monitor) BuyCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.buyTriggers.Len()
+	return len(m.buyTree.levels)
 }
 
 func (m *Monitor) SellCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.sellTriggers.Len()
+	return len(m.sellTree.levels)
+}
+
+func (m *Monitor) collectTriggered(tree *priceTree, currentPrice types.Price, isBuy bool, out []*types.Order) []*types.Order {
+	var level *priceLevel
+	if isBuy {
+		level = tree.max
+	} else {
+		level = tree.min
+	}
+
+	for level != nil {
+		if isBuy {
+			if level.price < currentPrice {
+				break
+			}
+		} else {
+			if level.price > currentPrice {
+				break
+			}
+		}
+		next := level.prev
+		if !isBuy {
+			next = level.next
+		}
+
+		for i := range level.orders {
+			node := level.orders[i]
+			if node == nil {
+				continue
+			}
+			if order := m.orders[node.orderID]; order != nil {
+				out = append(out, order)
+			}
+			delete(m.orders, node.orderID)
+			delete(m.nodes, node.orderID)
+			*node = TriggerNode{}
+			nodePool.Put(node)
+			level.orders[i] = nil
+		}
+		level.orders = level.orders[:0]
+		m.deleteLevel(tree, level)
+		level = next
+	}
+	return out
+}
+
+func (m *Monitor) addToTree(tree *priceTree, node *TriggerNode) {
+	level := tree.levels[node.price]
+	if level == nil {
+		levelAny := levelPool.Get()
+		level, _ = levelAny.(*priceLevel)
+		if level == nil {
+			level = &priceLevel{}
+		}
+		orders := level.orders
+		if cap(orders) == 0 {
+			orders = make([]*TriggerNode, 0, 4)
+		} else {
+			orders = orders[:0]
+		}
+		*level = priceLevel{price: node.price}
+		level.orders = orders
+		level.priority = m.nextPriority()
+		tree.levels[node.price] = level
+		m.insertLevel(tree, level)
+	}
+	node.level = level
+	node.index = len(level.orders)
+	level.orders = append(level.orders, node)
+}
+
+func (m *Monitor) removeFromTree(tree *priceTree, node *TriggerNode) {
+	level := node.level
+	if level == nil {
+		return
+	}
+	idx := node.index
+	last := len(level.orders) - 1
+	if idx >= 0 && idx <= last {
+		level.orders[idx] = level.orders[last]
+		level.orders[idx].index = idx
+		level.orders[last] = nil
+		level.orders = level.orders[:last]
+	}
+	if len(level.orders) == 0 {
+		m.deleteLevel(tree, level)
+	}
+	node.level = nil
+	node.index = -1
+}
+
+func (m *Monitor) insertLevel(tree *priceTree, level *priceLevel) {
+	var parent *priceLevel
+	cur := tree.root
+	var prev *priceLevel
+	var next *priceLevel
+
+	for cur != nil {
+		parent = cur
+		if level.price < cur.price {
+			next = cur
+			cur = cur.left
+		} else {
+			prev = cur
+			cur = cur.right
+		}
+	}
+
+	level.parent = parent
+	level.prev = prev
+	level.next = next
+	if prev != nil {
+		prev.next = level
+	} else {
+		tree.min = level
+	}
+	if next != nil {
+		next.prev = level
+	} else {
+		tree.max = level
+	}
+
+	if parent == nil {
+		tree.root = level
+		return
+	}
+	if level.price < parent.price {
+		parent.left = level
+	} else {
+		parent.right = level
+	}
+	m.bubbleUp(tree, level)
+}
+
+func (m *Monitor) deleteLevel(tree *priceTree, level *priceLevel) {
+	if level == nil {
+		return
+	}
+	delete(tree.levels, level.price)
+	if level.prev != nil {
+		level.prev.next = level.next
+	} else {
+		tree.min = level.next
+	}
+	if level.next != nil {
+		level.next.prev = level.prev
+	} else {
+		tree.max = level.prev
+	}
+
+	m.bubbleDown(tree, level)
+	parent := level.parent
+	if parent == nil {
+		tree.root = nil
+	} else if parent.left == level {
+		parent.left = nil
+	} else {
+		parent.right = nil
+	}
+	level.parent = nil
+	level.left = nil
+	level.right = nil
+	level.prev = nil
+	level.next = nil
+	if cap(level.orders) > 0 {
+		level.orders = level.orders[:0]
+	}
+	level.priority = 0
+	level.price = 0
+	levelPool.Put(level)
+}
+
+func (m *Monitor) bubbleUp(tree *priceTree, node *priceLevel) {
+	for node.parent != nil && node.parent.priority > node.priority {
+		if node.parent.left == node {
+			m.rotateRight(tree, node.parent)
+		} else {
+			m.rotateLeft(tree, node.parent)
+		}
+	}
+	if node.parent == nil {
+		tree.root = node
+	}
+}
+
+func (m *Monitor) bubbleDown(tree *priceTree, node *priceLevel) {
+	for node.left != nil || node.right != nil {
+		if node.left == nil {
+			m.rotateLeft(tree, node)
+		} else if node.right == nil {
+			m.rotateRight(tree, node)
+		} else if node.left.priority < node.right.priority {
+			m.rotateRight(tree, node)
+		} else {
+			m.rotateLeft(tree, node)
+		}
+		if node.parent == nil {
+			tree.root = node
+		}
+	}
+}
+
+func (m *Monitor) rotateLeft(tree *priceTree, node *priceLevel) {
+	right := node.right
+	if right == nil {
+		return
+	}
+	node.right = right.left
+	if right.left != nil {
+		right.left.parent = node
+	}
+	right.left = node
+	right.parent = node.parent
+	if node.parent == nil {
+		tree.root = right
+	} else if node.parent.left == node {
+		node.parent.left = right
+	} else {
+		node.parent.right = right
+	}
+	node.parent = right
+}
+
+func (m *Monitor) rotateRight(tree *priceTree, node *priceLevel) {
+	left := node.left
+	if left == nil {
+		return
+	}
+	node.left = left.right
+	if left.right != nil {
+		left.right.parent = node
+	}
+	left.right = node
+	left.parent = node.parent
+	if node.parent == nil {
+		tree.root = left
+	} else if node.parent.left == node {
+		node.parent.left = left
+	} else {
+		node.parent.right = left
+	}
+	node.parent = left
+}
+
+func (m *Monitor) nextPriority() uint32 {
+	m.prioritySeed = m.prioritySeed*1664525 + 1013904223
+	return m.prioritySeed
 }
 
 func effectiveTriggerSide(order *types.Order) int8 {

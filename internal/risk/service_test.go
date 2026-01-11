@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
-	"github.com/anomalyco/meta-terminal-go/internal/messaging"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
@@ -21,11 +20,11 @@ func TestMain(m *testing.M) {
 }
 
 type MockOMS struct {
-	orders []*types.OrderInput
+	orders []types.OrderInput
 }
 
 func (m *MockOMS) PlaceOrder(ctx context.Context, input *types.OrderInput) (*types.OrderResult, error) {
-	m.orders = append(m.orders, input)
+	m.orders = append(m.orders, *input)
 	return &types.OrderResult{
 		Orders: []*types.Order{{
 			ID:       1,
@@ -45,19 +44,19 @@ func (m *MockOMS) PlaceOrder(ctx context.Context, input *types.OrderInput) (*typ
 
 func TestCheckLiquidations_LongPosition(t *testing.T) {
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
-	s.positions[userID] = make(map[string]*types.Position)
-	s.positions[userID]["BTCUSDT"] = &types.Position{
+	s.UpdatePosition(userID, &types.Position{
 		Symbol:     "BTCUSDT",
 		Size:       1,
 		Side:       constants.ORDER_SIDE_BUY,
 		EntryPrice: 50000,
 		Leverage:   10,
-	}
+	})
 
 	var mockOMS MockOMS
 	s.oms = &mockOMS
@@ -84,19 +83,19 @@ func TestCheckLiquidations_LongPosition(t *testing.T) {
 
 func TestCheckLiquidations_ShortPosition(t *testing.T) {
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
-	s.positions[userID] = make(map[string]*types.Position)
-	s.positions[userID]["BTCUSDT"] = &types.Position{
+	s.UpdatePosition(userID, &types.Position{
 		Symbol:     "BTCUSDT",
 		Size:       1,
 		Side:       constants.ORDER_SIDE_SELL,
 		EntryPrice: 50000,
 		Leverage:   10,
-	}
+	})
 
 	var mockOMS MockOMS
 	s.oms = &mockOMS
@@ -120,19 +119,19 @@ func TestCheckLiquidations_ShortPosition(t *testing.T) {
 
 func TestCheckLiquidations_NoLiquidation(t *testing.T) {
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
-	s.positions[userID] = make(map[string]*types.Position)
-	s.positions[userID]["BTCUSDT"] = &types.Position{
+	s.UpdatePosition(userID, &types.Position{
 		Symbol:     "BTCUSDT",
 		Size:       1,
 		Side:       constants.ORDER_SIDE_BUY,
 		EntryPrice: 50000,
 		Leverage:   10,
-	}
+	})
 
 	var mockOMS MockOMS
 	s.oms = &mockOMS
@@ -184,8 +183,9 @@ func TestCalculateLiquidationPrice_Short(t *testing.T) {
 
 func TestUpdatePosition(t *testing.T) {
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
@@ -199,95 +199,135 @@ func TestUpdatePosition(t *testing.T) {
 
 	s.UpdatePosition(userID, pos)
 
-	if s.positions[userID]["BTCUSDT"] == nil {
+	if s.positionsByUser[userID]["BTCUSDT"] == nil {
 		t.Error("Expected position to be stored")
 	}
 }
 
 func TestRemovePosition(t *testing.T) {
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
-	s.positions[userID] = make(map[string]*types.Position)
-	s.positions[userID]["BTCUSDT"] = &types.Position{
+	s.UpdatePosition(userID, &types.Position{
 		Symbol:     "BTCUSDT",
 		Size:       1,
 		Side:       constants.ORDER_SIDE_BUY,
 		EntryPrice: 50000,
 		Leverage:   10,
-	}
+	})
 
 	s.RemovePosition(userID, "BTCUSDT")
 
-	if s.positions[userID]["BTCUSDT"] != nil {
+	if s.positionsByUser[userID]["BTCUSDT"] != nil {
 		t.Error("Expected position to be removed")
 	}
 }
 
-func BenchmarkCheckLiquidations(b *testing.B) {
+type nopOMS struct {
+	result *types.OrderResult
+	order  types.Order
+}
+
+func (n *nopOMS) PlaceOrder(ctx context.Context, input *types.OrderInput) (*types.OrderResult, error) {
+	n.order.ID = 1
+	n.order.UserID = input.UserID
+	n.order.Symbol = input.Symbol
+	n.order.Category = input.Category
+	n.order.Side = input.Side
+	n.order.Type = input.Type
+	n.order.Status = constants.ORDER_STATUS_NEW
+	n.result.Orders[0] = &n.order
+	n.result.Filled = 0
+	n.result.Remaining = input.Quantity
+	n.result.Status = constants.ORDER_STATUS_NEW
+	return n.result, nil
+}
+
+func BenchmarkCheckLiquidations_NoMatch(b *testing.B) {
 	b.ReportAllocs()
 	prev := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prev)
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
 	userID := types.UserID(1)
-	s.positions[userID] = make(map[string]*types.Position)
-
 	for i := 0; i < 1000; i++ {
-		s.positions[userID][string(rune(i%256))] = &types.Position{
+		s.UpdatePosition(userID, &types.Position{
 			Symbol:     string(rune(i % 256)),
 			Size:       1,
 			Side:       constants.ORDER_SIDE_BUY,
 			EntryPrice: 50000,
 			Leverage:   10,
-		}
+		})
 	}
 
-	var mockOMS MockOMS
-	s.oms = &mockOMS
+	emptyResult := &types.OrderResult{Orders: make([]*types.Order, 1)}
+	s.oms = &nopOMS{result: emptyResult}
+
+	s.checkLiquidations("z", 50000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.checkLiquidations("a", 23000)
+		s.checkLiquidations("z", 50000)
 	}
 }
 
-func BenchmarkHandlePositionUpdate(b *testing.B) {
+func BenchmarkCheckLiquidations_Match(b *testing.B) {
 	b.ReportAllocs()
 	prev := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prev)
 	s := &Service{
-		positions:  make(map[types.UserID]map[string]*types.Position),
-		lastPrices: make(map[string]types.Price),
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
 	}
 
-	update := struct {
-		UserID     types.UserID
-		Symbol     string
-		NewSize    int64
-		NewSide    int8
-		EntryPrice int64
-		Leverage   int8
-	}{
-		UserID:     1,
-		Symbol:     "BTCUSDT",
-		NewSize:    1,
-		NewSide:    constants.ORDER_SIDE_BUY,
-		EntryPrice: 50000,
-		Leverage:   10,
+	for i := 0; i < 1000; i++ {
+		userID := types.UserID(i + 1)
+		s.UpdatePosition(userID, &types.Position{
+			Symbol:     "BTCUSDT",
+			Size:       1,
+			Side:       constants.ORDER_SIDE_BUY,
+			EntryPrice: 50000,
+			Leverage:   10,
+		})
 	}
-	data, _ := messaging.EncodeGob(update)
+
+	emptyResult := &types.OrderResult{Orders: make([]*types.Order, 1)}
+	s.oms = &nopOMS{result: emptyResult}
+
+	s.checkLiquidations("BTCUSDT", 23000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.handlePositionUpdate(data)
+		s.checkLiquidations("BTCUSDT", 23000)
+	}
+}
+
+func BenchmarkOnPositionUpdate(b *testing.B) {
+	b.ReportAllocs()
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(prev)
+	s := &Service{
+		positionsByUser:   make(map[types.UserID]map[string]*types.Position),
+		positionsBySymbol: make(map[string]map[types.UserID]*types.Position),
+		lastPrices:        make(map[string]types.Price),
+	}
+
+	s.OnPositionUpdate(1, "BTCUSDT", 1, constants.ORDER_SIDE_BUY, 50000, 10)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.OnPositionUpdate(1, "BTCUSDT", 1, constants.ORDER_SIDE_BUY, 50000, 10)
 	}
 }

@@ -1,13 +1,41 @@
 package balance
 
 import (
+	"strings"
+
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
+var (
+	defaultQuoteAssets = []string{"USDT", "USD", "USDC", "BUSD"}
+	quoteAssets        []string
+)
+
+func SetQuoteAssets(assets []string) {
+	if len(assets) == 0 {
+		quoteAssets = nil
+		return
+	}
+	normalized := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		if asset == "" {
+			continue
+		}
+		normalized = append(normalized, strings.TrimSpace(asset))
+	}
+	quoteAssets = normalized
+}
+
+func QuoteAssets() []string {
+	if len(quoteAssets) > 0 {
+		return quoteAssets
+	}
+	return defaultQuoteAssets
+}
+
 func GetQuoteAsset(symbol string) string {
-	quotes := []string{"USDT", "USD", "USDC", "BUSD"}
-	for _, q := range quotes {
+	for _, q := range QuoteAssets() {
 		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
 			return q
 		}
@@ -16,8 +44,7 @@ func GetQuoteAsset(symbol string) string {
 }
 
 func GetBaseAsset(symbol string) string {
-	quotes := []string{"USDT", "USD", "USDC", "BUSD"}
-	for _, q := range quotes {
+	for _, q := range QuoteAssets() {
 		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
 			return symbol[:len(symbol)-len(q)]
 		}

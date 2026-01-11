@@ -1,4 +1,4 @@
-package oms
+package oms_test
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func TestOCO_DeactivatesSiblingOnTrigger(t *testing.T) {
-	s, portfolio := newTestService()
-	portfolio.addPosition(1, "BTCUSDT", 1, constants.SIDE_LONG)
+func TestOCODeactivatesSiblingOnTrigger(t *testing.T) {
+	s, port := newService()
+	setPosition(port, 1, "BTCUSDT", 1, constants.SIDE_LONG, 50000, 10)
 
 	input := &types.OrderInput{
 		UserID:   1,
@@ -43,26 +43,19 @@ func TestOCO_DeactivatesSiblingOnTrigger(t *testing.T) {
 	if len(result.Orders) != 2 {
 		t.Fatalf("expected 2 orders, got %d", len(result.Orders))
 	}
-	tp := result.Orders[0]
 	sl := result.Orders[1]
 
 	s.OnPriceTick("BTCUSDT", 60000)
 
-	var slStatus int8
-	for _, order := range s.orders[tp.UserID] {
-		if order.ID == sl.ID {
-			slStatus = order.Status
-			break
-		}
-	}
-	if slStatus != constants.ORDER_STATUS_DEACTIVATED {
-		t.Fatalf("expected SL deactivated, got %d", slStatus)
+	orders := s.GetOrders(1)
+	if findOrder(orders, sl.ID) != nil {
+		t.Fatalf("expected SL removed from memory after deactivation")
 	}
 }
 
-func TestOCO_DeactivatesOnPositionClose(t *testing.T) {
-	s, portfolio := newTestService()
-	portfolio.addPosition(1, "BTCUSDT", 1, constants.SIDE_LONG)
+func TestOCODeactivatesOnPositionClose(t *testing.T) {
+	s, port := newService()
+	setPosition(port, 1, "BTCUSDT", 1, constants.SIDE_LONG, 50000, 10)
 
 	input := &types.OrderInput{
 		UserID:   1,
@@ -100,21 +93,15 @@ func TestOCO_DeactivatesOnPositionClose(t *testing.T) {
 
 	s.OnPositionUpdate(1, "BTCUSDT", 0, constants.SIDE_NONE)
 
-	var tpStatus, slStatus int8
-	if order := s.orders[1][tp.ID]; order != nil {
-		tpStatus = order.Status
-	}
-	if order := s.orders[1][sl.ID]; order != nil {
-		slStatus = order.Status
-	}
-	if tpStatus != constants.ORDER_STATUS_DEACTIVATED || slStatus != constants.ORDER_STATUS_DEACTIVATED {
-		t.Fatalf("expected both deactivated, got tp=%d sl=%d", tpStatus, slStatus)
+	orders := s.GetOrders(1)
+	if findOrder(orders, tp.ID) != nil || findOrder(orders, sl.ID) != nil {
+		t.Fatalf("expected both orders removed from memory after deactivation")
 	}
 }
 
-func TestCloseOnTrigger_DeactivatesOnPositionClose(t *testing.T) {
-	s, portfolio := newTestService()
-	portfolio.addPosition(1, "BTCUSDT", 1, constants.SIDE_LONG)
+func TestCloseOnTriggerDeactivatesOnPositionClose(t *testing.T) {
+	s, port := newService()
+	setPosition(port, 1, "BTCUSDT", 1, constants.SIDE_LONG, 50000, 10)
 
 	input := &types.OrderInput{
 		UserID:         1,
@@ -140,10 +127,17 @@ func TestCloseOnTrigger_DeactivatesOnPositionClose(t *testing.T) {
 
 	s.OnPositionUpdate(1, "BTCUSDT", 0, constants.SIDE_NONE)
 
-	if got := s.orders[1][order.ID]; got == nil || got.Status != constants.ORDER_STATUS_DEACTIVATED {
-		if got == nil {
-			t.Fatalf("expected order to remain tracked as deactivated")
-		}
-		t.Fatalf("expected deactivated, got %d", got.Status)
+	orders := s.GetOrders(1)
+	if findOrder(orders, order.ID) != nil {
+		t.Fatalf("expected close-on-trigger order removed from memory after deactivation")
 	}
+}
+
+func findOrder(orders []*types.Order, id types.OrderID) *types.Order {
+	for _, order := range orders {
+		if order.ID == id {
+			return order
+		}
+	}
+	return nil
 }

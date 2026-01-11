@@ -9,7 +9,7 @@ import (
 
 func BenchmarkMonitor_Add(b *testing.B) {
 	b.ReportAllocs()
-	m := NewWithCapacity(1024)
+	m := NewWithCapacity(b.N)
 	order := &types.Order{
 		ID:           types.OrderID(1),
 		UserID:       types.UserID(1),
@@ -31,9 +31,9 @@ func BenchmarkMonitor_Add(b *testing.B) {
 func BenchmarkMonitor_Check(b *testing.B) {
 	b.ReportAllocs()
 	m := NewWithCapacity(10000)
-
+	orders := make([]*types.Order, 10000)
 	for i := 0; i < 10000; i++ {
-		order := &types.Order{
+		orders[i] = &types.Order{
 			ID:           types.OrderID(uint64(i) + 1),
 			UserID:       types.UserID(1),
 			Symbol:       "BTCUSDT",
@@ -43,12 +43,18 @@ func BenchmarkMonitor_Check(b *testing.B) {
 			TriggerPrice: types.Price(50000 + i),
 			CreatedAt:    types.NowNano(),
 		}
-		m.Add(order)
 	}
+	for j := 0; j < 10000; j++ {
+		m.Add(orders[j])
+	}
+	buf := make([]*types.Order, 0, 10000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.CheckInto(types.Price(55000), nil)
+		buf = m.CheckInto(types.Price(55000), buf)
+		for j := 0; j < len(buf); j++ {
+			m.Add(buf[j])
+		}
 	}
 }
 
@@ -92,11 +98,17 @@ func BenchmarkMonitor_AddCheckRemove_Churn(b *testing.B) {
 		}
 	}
 	buf := make([]*types.Order, 0, 5000)
+	m := NewWithCapacity(10000)
+	for j := 0; j < 5000; j++ {
+		m.Add(orders[j])
+	}
+	buf = m.CheckInto(types.Price(52500), buf)
+	for j := 0; j < 2500; j++ {
+		m.Remove(orders[j].ID)
+	}
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		m := NewWithCapacity(10000)
-		b.StartTimer()
 		for j := 0; j < 5000; j++ {
 			m.Add(orders[j])
 		}
@@ -124,6 +136,14 @@ func BenchmarkMonitor_AddCheckRemove_Steady(b *testing.B) {
 			TriggerPrice: types.Price(50000 + j),
 			CreatedAt:    uint64(j),
 		}
+	}
+
+	for j := 0; j < 5000; j++ {
+		m.Add(orders[j])
+	}
+	buf = m.CheckInto(types.Price(52500), buf)
+	for j := 0; j < 2500; j++ {
+		m.Remove(orders[j].ID)
 	}
 
 	b.ResetTimer()

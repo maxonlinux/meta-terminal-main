@@ -3,26 +3,34 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/anomalyco/meta-terminal-go/internal/balance"
+	"github.com/anomalyco/meta-terminal-go/internal/config"
 	"github.com/anomalyco/meta-terminal-go/internal/engine"
 )
 
 func main() {
+	env := config.Load()
+	if len(env.QuoteAssets) > 0 {
+		balance.SetQuoteAssets(env.QuoteAssets)
+	}
+
 	cfg := engine.Config{
-		NATSURL:      os.Getenv("NATS_URL"),
-		StreamPrefix: envString("STREAM_PREFIX", "meta"),
-		OutboxPath:   envString("OUTBOX_PATH", "data/outbox.log"),
-		OutboxBuf:    64 * 1024,
+		NATSURL:      env.NATSURL,
+		StreamPrefix: env.StreamPrefix,
+		OutboxPath:   env.OutboxPath,
+		OutboxBuf:    env.OutboxBuf,
 	}
 
 	e, err := engine.New(cfg)
 	if err != nil {
 		log.Fatalf("engine init: %v", err)
 	}
-	defer e.Close()
+	defer func() {
+		_ = e.Close()
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -32,11 +40,4 @@ func main() {
 	}
 
 	<-ctx.Done()
-}
-
-func envString(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

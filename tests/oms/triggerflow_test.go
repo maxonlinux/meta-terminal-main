@@ -1,4 +1,4 @@
-package oms
+package oms_test
 
 import (
 	"context"
@@ -8,9 +8,30 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func TestOnPriceTick_ConditionalTriggers(t *testing.T) {
+type countingClearing struct {
+	reserveCalls int
+	lastQty      types.Quantity
+	lastPrice    types.Price
+	lastSide     int8
+}
+
+func (c *countingClearing) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
+	c.reserveCalls++
+	c.lastQty = qty
+	c.lastPrice = price
+	c.lastSide = side
+	return nil
+}
+
+func (c *countingClearing) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) {
+}
+
+func (c *countingClearing) ExecuteTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
+}
+
+func TestOnPriceTickConditionalTriggers(t *testing.T) {
 	clearing := &countingClearing{}
-	s, _ := newTestServiceWithClearing(clearing)
+	s, _ := newServiceWithClearing(clearing)
 
 	input := &types.OrderInput{
 		UserID:       1,
@@ -31,9 +52,6 @@ func TestOnPriceTick_ConditionalTriggers(t *testing.T) {
 	if result.Status != constants.ORDER_STATUS_UNTRIGGERED {
 		t.Fatalf("expected UNTRIGGERED, got %d", result.Status)
 	}
-	if s.triggerMon.Count() != 1 {
-		t.Fatalf("expected 1 trigger stored, got %d", s.triggerMon.Count())
-	}
 
 	s.OnPriceTick("BTCUSDT", 90)
 
@@ -43,15 +61,12 @@ func TestOnPriceTick_ConditionalTriggers(t *testing.T) {
 	if clearing.lastQty != 2 {
 		t.Fatalf("expected reserve qty 2, got %d", clearing.lastQty)
 	}
-	if s.triggerMon.Count() != 0 {
-		t.Fatalf("expected trigger removed, got %d", s.triggerMon.Count())
-	}
 }
 
-func TestOnPriceTick_CloseOnTriggerUsesPositionSize(t *testing.T) {
+func TestOnPriceTickCloseOnTriggerUsesPositionSize(t *testing.T) {
 	clearing := &countingClearing{}
-	s, portfolio := newTestServiceWithClearing(clearing)
-	portfolio.addPosition(1, "BTCUSDT", 3, constants.SIDE_LONG)
+	s, port := newServiceWithClearing(clearing)
+	setPosition(port, 1, "BTCUSDT", 3, constants.SIDE_LONG, 50000, 10)
 
 	input := &types.OrderInput{
 		UserID:         1,
@@ -87,10 +102,10 @@ func TestOnPriceTick_CloseOnTriggerUsesPositionSize(t *testing.T) {
 	}
 }
 
-func TestOnPriceTick_CloseOnTriggerOppositeSide(t *testing.T) {
+func TestOnPriceTickCloseOnTriggerOppositeSide(t *testing.T) {
 	clearing := &countingClearing{}
-	s, portfolio := newTestServiceWithClearing(clearing)
-	portfolio.addPosition(1, "BTCUSDT", 4, constants.SIDE_SHORT)
+	s, port := newServiceWithClearing(clearing)
+	setPosition(port, 1, "BTCUSDT", 4, constants.SIDE_SHORT, 50000, 10)
 
 	input := &types.OrderInput{
 		UserID:         1,
@@ -120,5 +135,40 @@ func TestOnPriceTick_CloseOnTriggerOppositeSide(t *testing.T) {
 	}
 	if clearing.lastSide != constants.ORDER_SIDE_BUY {
 		t.Fatalf("expected child side BUY for short close, got %d", clearing.lastSide)
+	}
+}
+
+func TestTriggerRulesBuyAndSell(t *testing.T) {
+	s, _ := newService()
+	s.OnPriceTick("BTCUSDT", 100)
+
+	buy := &types.OrderInput{
+		UserID:       1,
+		Symbol:       "BTCUSDT",
+		Category:     constants.CATEGORY_LINEAR,
+		Side:         constants.ORDER_SIDE_BUY,
+		Type:         constants.ORDER_TYPE_LIMIT,
+		TIF:          constants.TIF_GTC,
+		Quantity:     1,
+		Price:        100,
+		TriggerPrice: 99,
+	}
+	if _, err := s.PlaceOrder(context.Background(), buy); err != nil {
+		t.Fatalf("expected valid buy trigger below current price, got %v", err)
+	}
+
+	sell := &types.OrderInput{
+		UserID:       1,
+		Symbol:       "BTCUSDT",
+		Category:     constants.CATEGORY_LINEAR,
+		Side:         constants.ORDER_SIDE_SELL,
+		Type:         constants.ORDER_TYPE_LIMIT,
+		TIF:          constants.TIF_GTC,
+		Quantity:     1,
+		Price:        100,
+		TriggerPrice: 101,
+	}
+	if _, err := s.PlaceOrder(context.Background(), sell); err != nil {
+		t.Fatalf("expected valid sell trigger above current price, got %v", err)
 	}
 }

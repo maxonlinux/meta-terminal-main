@@ -165,7 +165,7 @@ func (s *Service) isValidSymbolFormat(symbol string) bool {
 				return false
 			}
 			for _, c := range base {
-				if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				if !isAlphaNum(c) {
 					return false
 				}
 			}
@@ -174,11 +174,15 @@ func (s *Service) isValidSymbolFormat(symbol string) bool {
 	}
 
 	for _, c := range symbol {
-		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+		if !isAlphaNum(c) {
 			return false
 		}
 	}
 	return len(symbol) >= 3
+}
+
+func isAlphaNum(c rune) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 }
 
 func (s *Service) checkSelfMatch(input *types.OrderInput) error {

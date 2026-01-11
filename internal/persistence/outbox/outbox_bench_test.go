@@ -13,13 +13,17 @@ func BenchmarkAppend(b *testing.B) {
 	}
 	path := tmp.Name()
 	_ = tmp.Close()
-	defer os.Remove(path)
+	defer func() {
+		_ = os.Remove(path)
+	}()
 
 	w, err := OpenWriter(path, 64*1024)
 	if err != nil {
 		b.Fatalf("open: %v", err)
 	}
-	defer w.Close()
+	defer func() {
+		_ = w.Close()
+	}()
 
 	payload := make([]byte, 128)
 	b.ResetTimer()

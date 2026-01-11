@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 	"github.com/nats-io/nats.go"
@@ -33,7 +32,6 @@ type NATS struct {
 	conn *nats.Conn
 	js   jetstream.JetStream
 	cfg  Config
-	mu   sync.RWMutex
 }
 
 func New(cfg Config) (*NATS, error) {
@@ -127,7 +125,7 @@ func (n *NATS) Subscribe(ctx context.Context, subject, name string, handler func
 				}
 				for msg := range msgs.Messages() {
 					handler(msg.Data())
-					msg.Ack()
+					_ = msg.Ack()
 				}
 			}
 		}

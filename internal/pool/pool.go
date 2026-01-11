@@ -20,15 +20,24 @@ var orderResultPool = sync.Pool{
 }
 
 var tradeSlicePool = sync.Pool{
-	New: func() interface{} { return make([]*types.Trade, 0, 8) },
+	New: func() interface{} {
+		s := make([]*types.Trade, 0, 8)
+		return &s
+	},
 }
 
 var matchSlicePool = sync.Pool{
-	New: func() interface{} { return make([]types.Match, 0, 8) },
+	New: func() interface{} {
+		s := make([]types.Match, 0, 8)
+		return &s
+	},
 }
 
 var matchPtrSlicePool = sync.Pool{
-	New: func() interface{} { return make([]*types.Match, 0, 8) },
+	New: func() interface{} {
+		s := make([]*types.Match, 0, 8)
+		return &s
+	},
 }
 
 var bufferPool = sync.Pool{
@@ -36,7 +45,10 @@ var bufferPool = sync.Pool{
 }
 
 var stringPool = sync.Pool{
-	New: func() interface{} { return make([]byte, 0, 32) },
+	New: func() interface{} {
+		s := make([]byte, 0, 32)
+		return &s
+	},
 }
 
 func GetOrder() *types.Order {
@@ -73,41 +85,46 @@ func PutOrderResult(r *types.OrderResult) {
 	orderResultPool.Put(r)
 }
 
-func GetTradeSlice(capacity int) []*types.Trade {
-	s := tradeSlicePool.Get().([]*types.Trade)
-	if capacity > cap(s) {
-		return make([]*types.Trade, 0, capacity)
+func GetTradeSlice(capacity int) *[]*types.Trade {
+	s := tradeSlicePool.Get().(*[]*types.Trade)
+	if capacity > cap(*s) {
+		buf := make([]*types.Trade, 0, capacity)
+		*s = buf
+		return s
 	}
-	return s[:0]
+	*s = (*s)[:0]
+	return s
 }
 
-func PutTradeSlice(s []*types.Trade) {
+func PutTradeSlice(s *[]*types.Trade) {
 	if s == nil {
 		return
 	}
-	s = s[:0]
+	*s = (*s)[:0]
 	tradeSlicePool.Put(s)
 }
 
-func GetMatchSlice(capacity int) []types.Match {
-	s := matchSlicePool.Get().([]types.Match)
-	if capacity > cap(s) {
-		return make([]types.Match, 0, capacity)
+func GetMatchSlice(capacity int) *[]types.Match {
+	s := matchSlicePool.Get().(*[]types.Match)
+	if capacity > cap(*s) {
+		buf := make([]types.Match, 0, capacity)
+		*s = buf
+		return s
 	}
-	return s[:0]
+	*s = (*s)[:0]
+	return s
 }
 
-func PutMatchSlice(s []types.Match) {
+func PutMatchSlice(s *[]types.Match) {
 	if s == nil {
 		return
 	}
-	s = s[:0]
+	*s = (*s)[:0]
 	matchSlicePool.Put(s)
 }
 
 func GetMatch() *[]*types.Match {
-	s := matchPtrSlicePool.Get().([]*types.Match)
-	return &s
+	return matchPtrSlicePool.Get().(*[]*types.Match)
 }
 
 func PutMatch(s *[]*types.Match) {
@@ -115,7 +132,7 @@ func PutMatch(s *[]*types.Match) {
 		return
 	}
 	*s = (*s)[:0]
-	matchPtrSlicePool.Put(*s)
+	matchPtrSlicePool.Put(s)
 }
 
 func GetBuffer() *bytes.Buffer {
@@ -127,14 +144,22 @@ func PutBuffer(b *bytes.Buffer) {
 	bufferPool.Put(b)
 }
 
-func GetString() []byte {
-	return stringPool.Get().([]byte)
+func GetString() *[]byte {
+	s := stringPool.Get().(*[]byte)
+	if s == nil {
+		empty := make([]byte, 0, 32)
+		return &empty
+	}
+	return s
 }
 
-func PutString(b []byte) {
-	if cap(b) > 64 {
+func PutString(b *[]byte) {
+	if b == nil {
 		return
 	}
-	b = b[:0]
+	if cap(*b) > 64 {
+		return
+	}
+	*b = (*b)[:0]
 	stringPool.Put(b)
 }

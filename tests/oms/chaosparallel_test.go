@@ -1,4 +1,4 @@
-package oms
+package oms_test
 
 import (
 	"context"
@@ -8,16 +8,13 @@ import (
 	"time"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
-	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func TestReduceOnlyCloseOnTrigger_ParallelChaos(t *testing.T) {
-	s, portfolio := newTestService()
-	portfolio.addPosition(1, "BTCUSDT", 10, constants.SIDE_LONG)
-
-	ob := orderbook.New()
-	s.orderbooks[constants.CATEGORY_LINEAR]["BTCUSDT"] = ob
+func TestReduceOnlyCloseOnTriggerParallelChaos(t *testing.T) {
+	s, port := newService()
+	setBalance(port, 1, "USDT", 1_000_000_000, 0, 0)
+	setPosition(port, 1, "BTCUSDT", 10, constants.SIDE_LONG, 50000, 10)
 
 	for i := 0; i < 5; i++ {
 		input := &types.OrderInput{
@@ -78,24 +75,27 @@ func TestReduceOnlyCloseOnTrigger_ParallelChaos(t *testing.T) {
 	mu.Lock()
 	finalSize := lastSize
 	mu.Unlock()
-
 	maxAllowed := absInt64(finalSize)
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if userOrders, ok := s.orders[1]; ok {
-		for _, order := range userOrders {
-			if order.Symbol != "BTCUSDT" {
-				continue
-			}
-			if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
-				continue
-			}
-			if order.ReduceOnly || order.CloseOnTrigger {
-				if int64(order.Quantity) > maxAllowed {
-					t.Fatalf("order %d exceeds position size: qty=%d allowed=%d", order.ID, order.Quantity, maxAllowed)
-				}
+	orders := s.GetOrders(1)
+	for _, order := range orders {
+		if order.Symbol != "BTCUSDT" {
+			continue
+		}
+		if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
+			continue
+		}
+		if order.ReduceOnly || order.CloseOnTrigger {
+			if int64(order.Quantity) > maxAllowed {
+				t.Fatalf("order %d exceeds position size: qty=%d allowed=%d", order.ID, order.Quantity, maxAllowed)
 			}
 		}
 	}
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

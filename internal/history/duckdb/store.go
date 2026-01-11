@@ -3,10 +3,12 @@ package duckdb
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb/v2"
 
 	"github.com/anomalyco/meta-terminal-go/internal/history"
+	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
 type Store struct {
@@ -136,6 +138,143 @@ func (s *Store) InsertBatch(records []history.Record) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) GetOrderHistory(ctx context.Context, userID types.UserID, symbol string, limit int) ([]*types.Order, error) {
+	query := `
+		SELECT order_id, user_id, symbol, category, side, type, status, price, quantity, filled, closed_at, order_link_id, reduce_only
+		FROM closed_orders
+		WHERE user_id = ?`
+	args := []interface{}{int64(userID)}
+	if symbol != "" {
+		query += " AND symbol = ?"
+		args = append(args, symbol)
+	}
+	query += " ORDER BY closed_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	orders := make([]*types.Order, 0)
+	for rows.Next() {
+		var order types.Order
+		var orderID int64
+		var user int64
+		var price, qty, filled int64
+		var closedAt int64
+		var orderLinkID int64
+		var reduceOnly bool
+		if err := rows.Scan(&orderID, &user, &order.Symbol, &order.Category, &order.Side, &order.Type, &order.Status,
+			&price, &qty, &filled, &closedAt, &orderLinkID, &reduceOnly); err != nil {
+			return nil, err
+		}
+		order.ID = types.OrderID(orderID)
+		order.UserID = types.UserID(user)
+		order.Price = types.Price(price)
+		order.Quantity = types.Quantity(qty)
+		order.Filled = types.Quantity(filled)
+		order.ReduceOnly = reduceOnly
+		order.OrderLinkId = orderLinkID
+		order.UpdatedAt = uint64(closedAt)
+		order.ClosedAt = uint64(closedAt)
+		orders = append(orders, &order)
+	}
+	return orders, rows.Err()
+}
+
+func (s *Store) GetTradeHistory(ctx context.Context, userID types.UserID, symbol string, limit int) ([]*types.Trade, error) {
+	query := `
+		SELECT trade_id, symbol, category, taker_id, maker_id, taker_order_id, maker_order_id, price, quantity, executed_at
+		FROM trades
+		WHERE (taker_id = ? OR maker_id = ?)`
+	args := []interface{}{int64(userID), int64(userID)}
+	if symbol != "" {
+		query += " AND symbol = ?"
+		args = append(args, symbol)
+	}
+	query += " ORDER BY executed_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	trades := make([]*types.Trade, 0)
+	for rows.Next() {
+		var trade types.Trade
+		var tradeID int64
+		var takerID, makerID int64
+		var takerOrderID, makerOrderID int64
+		var price, qty int64
+		var executedAt int64
+		if err := rows.Scan(&tradeID, &trade.Symbol, &trade.Category, &takerID, &makerID, &takerOrderID, &makerOrderID, &price, &qty, &executedAt); err != nil {
+			return nil, err
+		}
+		trade.ID = types.TradeID(tradeID)
+		trade.TakerID = types.UserID(takerID)
+		trade.MakerID = types.UserID(makerID)
+		trade.TakerOrderID = types.OrderID(takerOrderID)
+		trade.MakerOrderID = types.OrderID(makerOrderID)
+		trade.Price = types.Price(price)
+		trade.Quantity = types.Quantity(qty)
+		trade.ExecutedAt = uint64(executedAt)
+		trades = append(trades, &trade)
+	}
+	return trades, rows.Err()
+}
+
+func (s *Store) GetRPNLHistory(ctx context.Context, userID types.UserID, symbol string, limit int) ([]*types.RPNLEvent, error) {
+	query := `
+		SELECT user_id, symbol, category, realized, created_at
+		FROM pnl
+		WHERE user_id = ?`
+	args := []interface{}{int64(userID)}
+	if symbol != "" {
+		query += " AND symbol = ?"
+		args = append(args, symbol)
+	}
+	query += " ORDER BY created_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	events := make([]*types.RPNLEvent, 0)
+	for rows.Next() {
+		var event types.RPNLEvent
+		var user int64
+		var realized int64
+		var createdAt int64
+		if err := rows.Scan(&user, &event.Symbol, &event.Category, &realized, &createdAt); err != nil {
+			return nil, err
+		}
+		event.UserID = types.UserID(user)
+		event.RealizedPnl = realized
+		event.ExecutedAt = uint64(createdAt)
+		events = append(events, &event)
+	}
+	return events, rows.Err()
 }
 
 func migrate(db *sql.DB) error {
