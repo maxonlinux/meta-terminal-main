@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
+	"github.com/anomalyco/meta-terminal-go/internal/orderbook"
 	"github.com/anomalyco/meta-terminal-go/internal/pool"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
@@ -31,9 +32,6 @@ func (s *Service) GetOrders(userID types.UserID) []*types.Order {
 }
 
 func (s *Service) CancelOrder(ctx context.Context, userID types.UserID, orderID types.OrderID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	userOrders := s.orders[userID]
 	if userOrders == nil {
 		return nil
@@ -44,11 +42,16 @@ func (s *Service) CancelOrder(ctx context.Context, userID types.UserID, orderID 
 		return nil
 	}
 
+	var ob *orderbook.OrderBook
 	if order.Status == constants.ORDER_STATUS_UNTRIGGERED {
 		s.triggerMon.Remove(orderID)
+	} else {
+		ob = s.getOrderBookIfExists(order.Category, order.Symbol)
 	}
 
-	ob := s.getOrderBookIfExists(order.Category, order.Symbol)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if ob != nil {
 		ob.Remove(order.ID)
 	}

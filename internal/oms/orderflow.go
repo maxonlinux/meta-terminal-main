@@ -87,6 +87,13 @@ func (s *Service) removeOrderFromMemory(order *types.Order) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeOrderFromMemoryNoLock(order)
+}
+
+func (s *Service) removeOrderFromMemoryNoLock(order *types.Order) {
+	if order == nil {
+		return
+	}
 	if userOrders, ok := s.orders[order.UserID]; ok {
 		delete(userOrders, order.ID)
 	}

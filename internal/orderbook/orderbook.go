@@ -11,9 +11,11 @@ import (
 // matchSlicePool provides zero-allocation slice recycling for Match operations.
 // Prevents heap allocations when returning []types.Match from Match() function.
 // Retrieved slices have capacity 8, which covers most single-order match scenarios.
+// Uses pointer to avoid allocations on Put.
 var matchSlicePool = sync.Pool{
 	New: func() interface{} {
-		return make([]types.Match, 0, 8)
+		buf := make([]types.Match, 0, 8)
+		return &buf
 	},
 }
 
@@ -72,13 +74,6 @@ func (ob *OrderBook) SetIDGenerator(idGen IDGenerator) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 	ob.idGen = idGen
-}
-
-func (ob *OrderBook) generateID() types.OrderID {
-	if ob.idGen != nil {
-		return types.OrderID(ob.idGen.Next())
-	}
-	return types.OrderID(snowflake.Next())
 }
 
 func (ob *OrderBook) WouldCross(side int8, price types.Price) bool {
@@ -202,7 +197,8 @@ func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out [
 	} else {
 		// Fast path: get recycled slice from pool for zero-allocation.
 		// Pool provides pre-allocated []types.Match with capacity 8.
-		matches = matchSlicePool.Get().([]types.Match)[:0]
+		matchesBuf := matchSlicePool.Get().(*[]types.Match)
+		matches = (*matchesBuf)[:0]
 	}
 
 	// Matching loop - same logic for BUY (asks) and SELL (bids) sides.
@@ -216,7 +212,7 @@ func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out [
 		}
 		// Return slice to pool if it came from pool (caller didn't provide their own).
 		if !didNotOriginateFromPool {
-			matchSlicePool.Put(matches)
+			matchSlicePool.Put(&matches)
 		}
 		return matches
 	}
@@ -229,7 +225,7 @@ func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out [
 		matches = ob.matchLevel(taker, lvl, matches)
 	}
 	if !didNotOriginateFromPool {
-		matchSlicePool.Put(matches)
+		matchSlicePool.Put(&matches)
 	}
 	return matches
 }

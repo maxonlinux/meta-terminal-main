@@ -48,8 +48,7 @@ type Service struct {
 	matchBufPool         sync.Pool
 	triggerBufPool       sync.Pool
 
-	mu    sync.RWMutex
-	posMu sync.Mutex
+	mu sync.RWMutex
 }
 
 func New(cfg Config, portfolio Portfolio, clearing Clearing) (*Service, error) {

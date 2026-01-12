@@ -170,7 +170,7 @@ func (s *Service) liquidatePosition(task liquidationTask) {
 	inputAny := s.inputPool.Get()
 	input, _ := inputAny.(*types.OrderInput)
 	if input == nil {
-		input = &types.OrderInput{}
+		input = new(types.OrderInput)
 	}
 	*input = types.OrderInput{
 		UserID:     task.userID,
