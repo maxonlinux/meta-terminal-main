@@ -8,6 +8,15 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
+// matchSlicePool provides zero-allocation slice recycling for Match operations.
+// Prevents heap allocations when returning []types.Match from Match() function.
+// Retrieved slices have capacity 8, which covers most single-order match scenarios.
+var matchSlicePool = sync.Pool{
+	New: func() interface{} {
+		return make([]types.Match, 0, 8)
+	},
+}
+
 type IDGenerator interface {
 	Next() int64
 }
@@ -181,11 +190,22 @@ func (ob *OrderBook) MatchInto(taker *types.Order, limitPrice types.Price, out [
 }
 
 func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out []types.Match) []types.Match {
+	// matches holds the result slice. We track whether it came from our pool
+	// to ensure we return it to the pool after use (unless caller provided their own).
 	var matches []types.Match
+	didNotOriginateFromPool := false
 	if out != nil {
+		// Caller provided their own buffer - reuse it without pooling.
+		// This is the MatchInto() path where caller manages memory lifecycle.
 		matches = out[:0]
+		didNotOriginateFromPool = true
+	} else {
+		// Fast path: get recycled slice from pool for zero-allocation.
+		// Pool provides pre-allocated []types.Match with capacity 8.
+		matches = matchSlicePool.Get().([]types.Match)[:0]
 	}
 
+	// Matching loop - same logic for BUY (asks) and SELL (bids) sides.
 	if taker.Side == constants.ORDER_SIDE_BUY {
 		for taker.Remaining() > 0 && ob.bestAsk != nil {
 			lvl := ob.bestAsk
@@ -193,6 +213,10 @@ func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out [
 				break
 			}
 			matches = ob.matchLevel(taker, lvl, matches)
+		}
+		// Return slice to pool if it came from pool (caller didn't provide their own).
+		if !didNotOriginateFromPool {
+			matchSlicePool.Put(matches)
 		}
 		return matches
 	}
@@ -203,6 +227,9 @@ func (ob *OrderBook) matchInto(taker *types.Order, limitPrice types.Price, out [
 			break
 		}
 		matches = ob.matchLevel(taker, lvl, matches)
+	}
+	if !didNotOriginateFromPool {
+		matchSlicePool.Put(matches)
 	}
 	return matches
 }

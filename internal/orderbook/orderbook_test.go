@@ -150,10 +150,15 @@ func TestOrderBook_WouldCross(t *testing.T) {
 	}
 }
 
+// BenchmarkOrderBook_Match measures order matching performance.
+// Uses pool.GetOrder/pool.PutOrder for zero-allocation hot path.
+// Setup: 1000 sell orders at various prices, then match 1 buyer repeatedly.
 func BenchmarkOrderBook_Match(b *testing.B) {
 	b.ReportAllocs()
 	ob := New()
 
+	// Pre-populate orderbook with 1000 sell orders at prices 50000-50099.
+	// These orders persist across all benchmark iterations.
 	for i := 0; i < 1000; i++ {
 		order := pool.GetOrder()
 		order.ID = types.OrderID(uint64(i + 1))
@@ -169,8 +174,11 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 		ob.Add(order)
 	}
 
+	// Reset timer to exclude setup time from measurements.
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		// Create fresh buyer order each iteration - simulates real traffic.
+		// Important: Return to pool after match to avoid memory leak.
 		buyer := pool.GetOrder()
 		buyer.ID = types.OrderID(uint64(10000 + i))
 		buyer.UserID = types.UserID(2)
@@ -178,10 +186,12 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 		buyer.Category = constants.CATEGORY_SPOT
 		buyer.Side = constants.ORDER_SIDE_BUY
 		buyer.Type = constants.ORDER_TYPE_LIMIT
-		buyer.Price = types.Price(50100)
+		buyer.Price = types.Price(50100) // Above market - will match immediately
 		buyer.Quantity = types.Quantity(10)
 		buyer.Filled = 0
 		buyer.CreatedAt = types.NowNano()
 		_, _ = ob.Match(buyer, buyer.Price)
+		// Return buyer to pool - this is critical for accurate allocation measurement.
+		pool.PutOrder(buyer)
 	}
 }
