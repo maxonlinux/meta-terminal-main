@@ -1,0 +1,38 @@
+# Baseline Benchmark Results (2026-01-12)
+# System: Apple M4 Pro, darwin/arm64, Go 1.25.5
+
+## OrderBook (internal/orderbook/)
+BenchmarkOrderBook_Match-12    	82412299	        67.59 ns/op	     112 B/op	       1 allocs/op
+
+## Triggers (internal/triggers/)
+BenchmarkMonitor_Add-12                      	22566900	       381.5 ns/op	      93 B/op	       1 allocs/op
+BenchmarkMonitor_Check-12                    	    6772	    895027 ns/op	     262 B/op	       0 allocs/op
+BenchmarkMonitor_Remove-12                   	1000000000	         4.117 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMonitor_AddCheckRemove_Churn-12     	    8348	    977174 ns/op	     242 B/op	       0 allocs/op
+BenchmarkMonitor_AddCheckRemove_Steady-12    	    8403	    982736 ns/op	     249 B/op	       0 allocs/op
+
+## Snowflake (internal/snowflake/)
+BenchmarkNext-12    	1000000000	         1.650 ns/op	       0 B/op	       0 allocs/op
+
+## Persistence (internal/persistence/outbox/)
+BenchmarkAppend-12    	100000000        90.65 ns/op	       5 B/op	       1 allocs/op
+
+## Portfolio (internal/portfolio/)
+BenchmarkSpotTrade-12      	264054594        22.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLinearTrade-12    	146043913        40.74 ns/op	       0 B/op	       0 allocs/op
+
+---
+
+## Key Issues Identified
+
+1. Trigger.Check: 895μs per operation (CRITICAL)
+   - O(n) heap traversal on every price tick
+   - Need optimization
+
+2. OrderBook.Match: 1 allocation per match
+   - Zero-allocation goal not met
+   - Need object pooling
+
+3. Trigger.Add: 1 allocation per trigger
+   - TriggerNode not pooled
+   - Need sync.Pool for TriggerNode

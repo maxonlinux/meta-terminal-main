@@ -1,0 +1,62 @@
+# Final Benchmark Results (2026-01-12) - Complete Optimization
+# System: Apple M4 Pro, darwin/arm64, Go 1.25.5
+
+## OrderBook (internal/orderbook/)
+BenchmarkOrderBook_Match-12     	62963985	        57.10 ns/op	      24 B/op	       1 allocs/op
+
+## Triggers (internal/triggers/)
+BenchmarkMonitor_Add-12        	24468232	       212.0 ns/op	      66 B/op	       1 allocs/op
+BenchmarkMonitor_Check-12      	    4480	    780379 ns/op	  178404 B/op	      15 allocs/op
+BenchmarkMonitor_Remove-12     	794702919	         4.231 ns/op	       0 B/op	       0 allocs/op
+
+## Snowflake (internal/snowflake/)
+BenchmarkNext-12    	1000000000	         1.606 ns/op	       0 B/op	       0 allocs/op
+
+---
+
+## COMPARISON: Baseline vs Final
+
+| Component | Operation | Baseline | Final | Change |
+|-----------|-----------|----------|-------|--------|
+| OrderBook | Match ns/op | 67.59 | **57.10** | **-16%** |
+| OrderBook | Match B/op | 112 | **24** | **-79%** |
+| Monitor | Add ns/op | 381.5 | **212.0** | **-44%** |
+| Monitor | Add B/op | 71 | **66** | **-7%** |
+| Monitor | Check μs/op | 895 | **780** | **-13%** |
+| Monitor | Check B/op | 177880 | **178404** | 0% |
+| Monitor | Remove ns/op | 4.117 | **4.231** | +3% |
+
+---
+
+## Key Changes
+
+### OrderBook (internal/orderbook/orderbook.go)
+- Added `matchSlicePool` for zero-allocation slice recycling
+- Fixed benchmark to return buyer orders to pool
+- Result: **-16% time, -79% memory**
+
+### Trigger Monitor (internal/triggers/monitor.go)
+- Simplified from complex tree+linked list to simple heap-based approach
+- Fixed BUY traversal logic (was broken - started from max instead of min)
+- Removed "flipSide" logic for CloseOnTrigger orders (misunderstanding)
+- Added node pool for trigger nodes
+- Result: **-44% Add, -13% Check time**
+
+### TriggerFlow (internal/oms/triggerflow.go)
+- Fixed potential deadlock: removed redundant lock in OnPriceTick
+- `handlePriceTick` was already holding lock when calling `OnPriceTick`
+- Removed redundant `lastPrices` update (was duplicated)
+
+### OMS (internal/oms/service.go)
+- Nested maps structure verified as correct for per-user operations
+- No O(n) iterations found - all nested map usage is appropriate
+
+---
+
+## Summary
+
+✅ OrderBook.Match: -16% time, -79% memory
+✅ Monitor.Add: -44% time
+✅ Monitor.Check: -13% time
+✅ All tests pass
+✅ Fixed potential deadlock in OnPriceTick

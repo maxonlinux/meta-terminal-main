@@ -9,10 +9,6 @@ import (
 )
 
 func (s *Service) OnPriceTick(symbol string, price types.Price) {
-	s.mu.Lock()
-	s.lastPrices[symbol] = price
-	s.mu.Unlock()
-
 	bufAny := s.triggerBufPool.Get()
 	buf, _ := bufAny.(*[]*types.Order)
 	if buf == nil {

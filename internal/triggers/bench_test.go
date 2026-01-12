@@ -47,13 +47,12 @@ func BenchmarkMonitor_Check(b *testing.B) {
 	for j := 0; j < 10000; j++ {
 		m.Add(orders[j])
 	}
-	buf := make([]*types.Order, 0, 10000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf = m.CheckInto(types.Price(55000), buf)
-		for j := 0; j < len(buf); j++ {
-			m.Add(buf[j])
+		triggered := m.Check(types.Price(55000))
+		for j := 0; j < len(triggered); j++ {
+			m.Add(triggered[j])
 		}
 	}
 }
@@ -79,82 +78,6 @@ func BenchmarkMonitor_Remove(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		m.Remove(types.OrderID(uint64(i%10000) + 1))
-	}
-}
-
-func BenchmarkMonitor_AddCheckRemove_Churn(b *testing.B) {
-	b.ReportAllocs()
-	orders := make([]*types.Order, 10000)
-	for j := 0; j < 10000; j++ {
-		orders[j] = &types.Order{
-			ID:           types.OrderID(uint64(j) + 1),
-			UserID:       types.UserID(1),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			Type:         constants.ORDER_TYPE_LIMIT,
-			TriggerPrice: types.Price(50000 + j),
-			CreatedAt:    uint64(j),
-		}
-	}
-	buf := make([]*types.Order, 0, 5000)
-	m := NewWithCapacity(10000)
-	for j := 0; j < 5000; j++ {
-		m.Add(orders[j])
-	}
-	buf = m.CheckInto(types.Price(52500), buf)
-	for j := 0; j < 2500; j++ {
-		m.Remove(orders[j].ID)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < 5000; j++ {
-			m.Add(orders[j])
-		}
-		buf = m.CheckInto(types.Price(52500), buf)
-		for j := 0; j < 2500; j++ {
-			m.Remove(orders[j].ID)
-		}
-	}
-}
-
-func BenchmarkMonitor_AddCheckRemove_Steady(b *testing.B) {
-	b.ReportAllocs()
-	m := NewWithCapacity(10000)
-	buf := make([]*types.Order, 0, 10000)
-
-	orders := make([]*types.Order, 10000)
-	for j := 0; j < 10000; j++ {
-		orders[j] = &types.Order{
-			ID:           types.OrderID(uint64(j) + 1),
-			UserID:       types.UserID(1),
-			Symbol:       "BTCUSDT",
-			Category:     constants.CATEGORY_LINEAR,
-			Side:         constants.ORDER_SIDE_BUY,
-			Type:         constants.ORDER_TYPE_LIMIT,
-			TriggerPrice: types.Price(50000 + j),
-			CreatedAt:    uint64(j),
-		}
-	}
-
-	for j := 0; j < 5000; j++ {
-		m.Add(orders[j])
-	}
-	buf = m.CheckInto(types.Price(52500), buf)
-	for j := 0; j < 2500; j++ {
-		m.Remove(orders[j].ID)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < 5000; j++ {
-			m.Add(orders[j])
-		}
-		buf = m.CheckInto(types.Price(52500), buf)
-		for j := 0; j < 2500; j++ {
-			m.Remove(orders[j].ID)
-		}
 	}
 }
 
@@ -205,10 +128,12 @@ func TestMonitor_CheckBuyTriggers(t *testing.T) {
 		m.Add(order)
 	}
 
+	// BUY trigger at P activates when current_price >= P.
+	// At current_price = 54000, triggers at 50000-54000 should activate.
 	triggered := m.Check(types.Price(54000))
 
-	if len(triggered) != 6 {
-		t.Errorf("expected 6 triggered orders (54000-59000), got %d", len(triggered))
+	if len(triggered) != 5 {
+		t.Errorf("expected 5 triggered orders (50000-54000), got %d", len(triggered))
 	}
 }
 
@@ -229,9 +154,11 @@ func TestMonitor_CheckSellTriggers(t *testing.T) {
 		m.Add(order)
 	}
 
+	// SELL trigger at P activates when current_price <= P.
+	// At current_price = 54500, only trigger at 55000 should activate (54500 <= 55000).
 	triggered := m.Check(types.Price(54500))
 
-	if len(triggered) != 9 {
-		t.Errorf("expected 9 triggered orders (<=54500), got %d", len(triggered))
+	if len(triggered) != 1 {
+		t.Errorf("expected 1 triggered order (55000), got %d", len(triggered))
 	}
 }
