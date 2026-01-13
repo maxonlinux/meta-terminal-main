@@ -29,6 +29,12 @@ require (
 	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
 	github.com/minio/highwayhash v1.0.4-0.20251030100505-070ab1a87a76 // indirect
 	github.com/nats-io/jwt/v2 v2.8.0 // indirect
+<<<<<<< Updated upstream
+||||||| Stash base
+	github.com/nats-io/nkeys v0.4.11 // indirect
+=======
+	github.com/nats-io/nats-server/v2 v2.12.3 // indirect
+>>>>>>> Stashed changes
 	github.com/nats-io/nkeys v0.4.12 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
