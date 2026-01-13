@@ -19,7 +19,7 @@ type Config struct {
 }
 
 type Engine struct {
-	OMS       *oms.Service
+	OMS       *oms.ActorOMS
 	Portfolio *portfolio.Service
 	Clearing  *clearing.Service
 	Outbox    *history.OutboxWriter
@@ -51,7 +51,7 @@ func New(cfg Config) (*Engine, error) {
 	sink := events.Sink(outbox)
 	port := portfolio.New(portfolio.Config{NATS: n, Sink: sink})
 	clear := clearing.New(port)
-	omsSvc, err := oms.New(oms.Config{
+	omsActor, err := oms.NewActorOMS(oms.Config{
 		NATSURL:      cfg.NATSURL,
 		StreamPrefix: cfg.StreamPrefix,
 		Sink:         sink,
@@ -65,7 +65,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	return &Engine{
-		OMS:       omsSvc,
+		OMS:       omsActor,
 		Portfolio: port,
 		Clearing:  clear,
 		Outbox:    outbox,

@@ -6,15 +6,20 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 )
 
 const HEADER_SIZE = 5
 
 var errInvalidLength = errors.New("outbox: invalid record length")
 
+// Writer provides thread-safe append operations to an outbox file.
+// The mutex ensures that concurrent writes do not interleave, which would
+// corrupt the binary file format.
 type Writer struct {
-	f *os.File
-	w *bufio.Writer
+	f  *os.File
+	w  *bufio.Writer
+	mu sync.Mutex
 }
 
 func OpenWriter(path string, bufSize int) (*Writer, error) {
@@ -31,7 +36,12 @@ func OpenWriter(path string, bufSize int) (*Writer, error) {
 	}, nil
 }
 
+// Append writes a new record to the outbox file.
+// Thread-safe: uses mutex to prevent concurrent write interleaving.
 func (w *Writer) Append(kind byte, payload []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	var header [HEADER_SIZE]byte
 	header[0] = kind
 	binary.LittleEndian.PutUint32(header[1:], uint32(len(payload)))

@@ -166,9 +166,9 @@ func TestMatchFlowGTCLeavesRestingOrder(t *testing.T) {
 		t.Fatalf("expected filled 1 remaining 2, got filled %d remaining %d", result.Filled, result.Remaining)
 	}
 
-	bidPrice, bidQty, _, _ := s.GetOrderBook(constants.CATEGORY_SPOT, "BTCUSDT")
-	if bidPrice != 100 || bidQty != 2 {
-		t.Fatalf("expected resting bid at 100 qty 2, got price %d qty %d", bidPrice, bidQty)
+	bidPrices, bidQtys, _, _ := s.Depth("BTCUSDT", 10)
+	if len(bidPrices) == 0 || bidQtys[0] != 2 {
+		t.Fatalf("expected resting bid at first level qty 2, got %d levels, first qty %d", len(bidPrices), bidQtys[0])
 	}
 }
 
@@ -323,9 +323,9 @@ func TestPostOnlyRestingNoTrade(t *testing.T) {
 		t.Fatalf("expected filled 0 remaining 2, got filled %d remaining %d", result.Filled, result.Remaining)
 	}
 
-	bidPrice, bidQty, _, _ := s.GetOrderBook(constants.CATEGORY_LINEAR, "BTCUSDT")
-	if bidPrice != 10000 || bidQty != 2 {
-		t.Fatalf("expected resting bid at 10000 qty 2, got price %d qty %d", bidPrice, bidQty)
+	bidPrices, bidQtys, _, _ := s.Depth("BTCUSDT", 10)
+	if len(bidPrices) == 0 || bidQtys[0] != 2 {
+		t.Fatalf("expected resting bid at first level qty 2, got %d levels, first qty %d", len(bidPrices), bidQtys[0])
 	}
 	if got := port.Balances[userID]["USDT"]; got.Available != 6000 || got.Locked != 4000 {
 		t.Fatalf("expected available 6000 locked 4000, got %+v", got)

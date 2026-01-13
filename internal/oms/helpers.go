@@ -1,13 +1,8 @@
 package oms
 
 import (
-	"github.com/anomalyco/meta-terminal-go/internal/snowflake"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
-
-func poolGetOrderID() uint64 {
-	return uint64(snowflake.Next())
-}
 
 func setOrderResultOrders(result *types.OrderResult, orders ...*types.Order) {
 	if result == nil {

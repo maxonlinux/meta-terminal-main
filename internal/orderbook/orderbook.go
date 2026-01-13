@@ -104,6 +104,13 @@ func (ob *OrderBook) BestAsk() (price types.Price, qty types.Quantity, ok bool) 
 	return ob.bestAsk.price, ob.bestAsk.total, true
 }
 
+func (ob *OrderBook) Has(orderID types.OrderID) bool {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	_, ok := ob.orders[orderID]
+	return ok
+}
+
 func (ob *OrderBook) Depth(limit int) ([]types.Price, []types.Quantity, []types.Price, []types.Quantity) {
 	ob.mu.RLock()
 	defer ob.mu.RUnlock()
@@ -331,6 +338,28 @@ func (ob *OrderBook) Remove(orderID types.OrderID) bool {
 func (ob *OrderBook) Adjust(orderID types.OrderID, newRemaining types.Quantity) bool {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
+
+	n := ob.orders[orderID]
+	if n == nil || n.order == nil {
+		return false
+	}
+
+	curRemaining := n.order.Remaining()
+	if newRemaining != curRemaining {
+		delta := newRemaining - curRemaining
+		n.level.total += delta
+	}
+	n.order.Quantity = n.order.Filled + newRemaining
+	return true
+}
+
+func (ob *OrderBook) AdjustWithServiceLock(orderID types.OrderID, newRemaining types.Quantity, serviceMu sync.Locker) bool {
+	ob.mu.Lock()
+	serviceMu.Lock()
+	defer func() {
+		serviceMu.Unlock()
+		ob.mu.Unlock()
+	}()
 
 	n := ob.orders[orderID]
 	if n == nil || n.order == nil {

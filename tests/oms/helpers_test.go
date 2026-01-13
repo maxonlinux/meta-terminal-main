@@ -7,16 +7,16 @@ import (
 	"github.com/anomalyco/meta-terminal-go/internal/types"
 )
 
-func newService() (*oms.Service, *portfolio.Service) {
+func newService() (*oms.ActorOMS, *portfolio.Service) {
 	port := portfolio.New(portfolio.Config{})
 	clear := clearing.New(port)
-	svc, _ := oms.New(oms.Config{}, port, clear)
+	svc, _ := oms.NewActorOMS(oms.Config{}, port, clear)
 	return svc, port
 }
 
-func newServiceWithClearing(clearing oms.Clearing) (*oms.Service, *portfolio.Service) {
+func newServiceWithClearing(clearing oms.Clearing) (*oms.ActorOMS, *portfolio.Service) {
 	port := portfolio.New(portfolio.Config{})
-	svc, _ := oms.New(oms.Config{}, port, clearing)
+	svc, _ := oms.NewActorOMS(oms.Config{}, port, clearing)
 	return svc, port
 }
 

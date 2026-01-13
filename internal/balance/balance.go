@@ -2,6 +2,7 @@ package balance
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
 	"github.com/anomalyco/meta-terminal-go/internal/types"
@@ -9,12 +10,16 @@ import (
 
 var (
 	defaultQuoteAssets = []string{"USDT", "USD", "USDC", "BUSD"}
-	quoteAssets        []string
+
+	quoteAssets      []string
+	quoteAssetsMap   map[string]string
+	quoteAssetsMapMu sync.RWMutex
 )
 
 func SetQuoteAssets(assets []string) {
 	if len(assets) == 0 {
 		quoteAssets = nil
+		quoteAssetsMap = nil
 		return
 	}
 	normalized := make([]string, 0, len(assets))
@@ -25,6 +30,15 @@ func SetQuoteAssets(assets []string) {
 		normalized = append(normalized, strings.TrimSpace(asset))
 	}
 	quoteAssets = normalized
+
+	// Build map for O(1) lookups: symbol suffix -> quote asset
+	m := make(map[string]string, len(normalized))
+	for _, q := range normalized {
+		m[q] = q
+	}
+	quoteAssetsMapMu.Lock()
+	quoteAssetsMap = m
+	quoteAssetsMapMu.Unlock()
 }
 
 func QuoteAssets() []string {
@@ -34,18 +48,38 @@ func QuoteAssets() []string {
 	return defaultQuoteAssets
 }
 
+// GetQuoteAsset returns the quote asset for a given trading symbol.
+// Uses O(1) map lookup for performance.
+// Returns "USD" if no matching quote asset is found.
 func GetQuoteAsset(symbol string) string {
+	// Fast path: try to match from end of symbol
+	// We try longer suffixes first (e.g., "USDT" before "USD")
+	quoteAssetsMapMu.RLock()
+	if quoteAssetsMap != nil {
+		// Try common quote assets in order of likelihood
+		for _, suffix := range []string{"USDT", "USDC", "BUSD", "USD"} {
+			if strings.HasSuffix(symbol, suffix) {
+				quoteAssetsMapMu.RUnlock()
+				return suffix
+			}
+		}
+	}
+	quoteAssetsMapMu.RUnlock()
+
+	// Fallback: iterate through configured assets
 	for _, q := range QuoteAssets() {
-		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
+		if strings.HasSuffix(symbol, q) {
 			return q
 		}
 	}
 	return "USD"
 }
 
+// GetBaseAsset returns the base asset for a given trading symbol.
+// Returns the portion of the symbol before the quote asset suffix.
 func GetBaseAsset(symbol string) string {
 	for _, q := range QuoteAssets() {
-		if len(symbol) > len(q) && symbol[len(symbol)-len(q):] == q {
+		if strings.HasSuffix(symbol, q) {
 			return symbol[:len(symbol)-len(q)]
 		}
 	}

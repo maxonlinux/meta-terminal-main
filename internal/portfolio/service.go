@@ -3,6 +3,7 @@ package portfolio
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/anomalyco/meta-terminal-go/internal/balance"
 	"github.com/anomalyco/meta-terminal-go/internal/constants"
@@ -26,6 +27,7 @@ type Service struct {
 	Positions map[types.UserID]map[string]*types.Position
 	nats      *messaging.NATS
 	sink      events.Sink
+	mu        sync.Mutex
 }
 
 func New(cfg Config) *Service {
@@ -42,6 +44,8 @@ func New(cfg Config) *Service {
 }
 
 func (s *Service) GetBalance(userID types.UserID, asset string) *types.UserBalance {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if b := s.balanceEntry(userID, asset); b != nil {
 		return b
 	}
@@ -49,6 +53,8 @@ func (s *Service) GetBalance(userID types.UserID, asset string) *types.UserBalan
 }
 
 func (s *Service) GetBalances(userID types.UserID) []*types.UserBalance {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	userBalances := s.Balances[userID]
 	if userBalances == nil {
 		return nil
@@ -61,6 +67,9 @@ func (s *Service) GetBalances(userID types.UserID) []*types.UserBalance {
 }
 
 func (s *Service) Reserve(userID types.UserID, asset string, amount int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	userBalances, ok := s.Balances[userID]
 	if !ok {
 		userBalances = make(map[string]*types.UserBalance)
@@ -83,6 +92,9 @@ func (s *Service) Reserve(userID types.UserID, asset string, amount int64) error
 }
 
 func (s *Service) Release(userID types.UserID, asset string, amount int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	b := s.balanceEntry(userID, asset)
 	if b == nil {
 		return
@@ -95,14 +107,17 @@ func (s *Service) Release(userID types.UserID, asset string, amount int64) {
 }
 
 func (s *Service) ExecuteTrade(trade *types.Trade, taker, maker *types.Order) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if trade.Category == constants.CATEGORY_SPOT {
-		s.executeSpotTrade(trade, taker, maker)
+		s.executeSpotTradeLocked(trade, taker, maker)
 	} else {
-		s.executeLinearTrade(trade, taker, maker)
+		s.executeLinearTradeLocked(trade, taker, maker)
 	}
 }
 
-func (s *Service) executeSpotTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
+func (s *Service) executeSpotTradeLocked(trade *types.Trade, taker *types.Order, maker *types.Order) {
 	baseAsset := balance.GetBaseAsset(trade.Symbol)
 	quoteAsset := balance.GetQuoteAsset(trade.Symbol)
 
@@ -142,7 +157,7 @@ func (s *Service) executeSpotTrade(trade *types.Trade, taker *types.Order, maker
 	}
 }
 
-func (s *Service) executeLinearTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
+func (s *Service) executeLinearTradeLocked(trade *types.Trade, taker *types.Order, maker *types.Order) {
 	takerPos := s.positionEntry(taker.UserID, trade.Symbol)
 	makerPos := s.positionEntry(maker.UserID, trade.Symbol)
 	if takerPos == nil {
@@ -294,6 +309,8 @@ func (s *Service) publishPositionEvent(userID types.UserID, pos *types.Position)
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if userPositions, ok := s.Positions[userID]; ok {
 		positions := make([]*types.Position, 0, len(userPositions))
 		for _, p := range userPositions {
@@ -307,6 +324,8 @@ func (s *Service) GetPositions(userID types.UserID) []*types.Position {
 }
 
 func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Position {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if userPositions, ok := s.Positions[userID]; ok {
 		if pos, ok := userPositions[symbol]; ok {
 			return pos
@@ -327,6 +346,9 @@ func (s *Service) GetLiquidationPrice(pos *types.Position) int64 {
 }
 
 func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage int8, currentPrice int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	userPositions, ok := s.Positions[userID]
 	if !ok {
 		userPositions = make(map[string]*types.Position)

@@ -25,13 +25,13 @@ type Config struct {
 type Service struct {
 	cfg    Config
 	nats   *messaging.NATS
-	oms    *oms.Service
+	oms    *oms.ActorOMS
 	reg    *registry.Registry
 	subs   []*messaging.Subscription
 	client *http.Client
 }
 
-func New(cfg Config, reg *registry.Registry, omsService *oms.Service) (*Service, error) {
+func New(cfg Config, reg *registry.Registry, omsService *oms.ActorOMS) (*Service, error) {
 	var n *messaging.NATS
 	if cfg.NATSURL != "" {
 		var err error

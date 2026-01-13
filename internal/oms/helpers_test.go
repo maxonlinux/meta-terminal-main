@@ -87,20 +87,20 @@ func (c *countingClearing) Release(userID types.UserID, symbol string, category 
 func (c *countingClearing) ExecuteTrade(trade *types.Trade, taker *types.Order, maker *types.Order) {
 }
 
-func newTestService() (*Service, *testPortfolio) {
+func newTestService() (*ActorOMS, *testPortfolio) {
 	portfolio := &testPortfolio{
 		positions: make(map[types.UserID]map[string]*types.Position),
 	}
 	clearing := &testClearing{}
 
-	s, _ := New(Config{}, portfolio, clearing)
+	s, _ := NewActorOMS(Config{}, portfolio, clearing)
 	return s, portfolio
 }
 
-func newTestServiceWithClearing(clearing Clearing) (*Service, *testPortfolio) {
+func newTestServiceWithClearing(clearing Clearing) (*ActorOMS, *testPortfolio) {
 	portfolio := &testPortfolio{
 		positions: make(map[types.UserID]map[string]*types.Position),
 	}
-	s, _ := New(Config{}, portfolio, clearing)
+	s, _ := NewActorOMS(Config{}, portfolio, clearing)
 	return s, portfolio
 }

@@ -68,7 +68,7 @@ type Instruments interface {
 type Service struct {
 	cfg         Config
 	httpSrv     *http.Server
-	oms         *oms.Service
+	oms         *oms.ActorOMS
 	portfolio   Portfolio
 	history     HistoryService
 	instruments Instruments
@@ -94,7 +94,7 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-func New(cfg Config, omsService *oms.Service, portfolio Portfolio, history HistoryService, instruments Instruments) *Service {
+func New(cfg Config, omsService *oms.ActorOMS, portfolio Portfolio, history HistoryService, instruments Instruments) *Service {
 	cookieName := cfg.JWTCookie
 	if cookieName == "" {
 		cookieName = "token"
@@ -252,7 +252,7 @@ func (s *Service) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.oms.CancelOrder(r.Context(), userID, types.OrderID(orderID)); err != nil {
+	if err := s.oms.CancelOrder(userID, types.OrderID(orderID)); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -405,7 +405,7 @@ func (s *Service) handleGetOrderbook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bidPrices, bidQtys, askPrices, askQtys := s.oms.GetOrderBookDepth(category, symbol, limit)
+	bidPrices, bidQtys, askPrices, askQtys := s.oms.GetOrderBookDepth(symbol, limit)
 	response := map[string]interface{}{
 		"s":   symbol,
 		"b":   zipDepth(bidPrices, bidQtys),

@@ -46,7 +46,7 @@ func TestTerminalOrderWritesOutboxAndRemovesFromMemory(t *testing.T) {
 		t.Fatalf("place order: %v", err)
 	}
 
-	if err := e.OMS.CancelOrder(context.Background(), userID, result.Orders[0].ID); err != nil {
+	if err := e.OMS.CancelOrder(userID, result.Orders[0].ID); err != nil {
 		t.Fatalf("cancel order: %v", err)
 	}
 

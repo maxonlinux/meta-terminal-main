@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Goal: ultra-fast, in-proc, sub-millisecond latency trading engine with strict business rules from `AGENTS.md`.
+Goal: ultra-fast, in-proc, sub-millisecond latency trading engine with strict business rules from `BUSINESS_RULES.md`.
 
 ## Core Principles
 
