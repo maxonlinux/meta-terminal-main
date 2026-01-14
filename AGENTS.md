@@ -1,18 +1,5 @@
 # AGENTS.md
 
-## Build/Lint/Test Commands
-
-### Build Commands
-```bash
-go build ./...                    # Build all packages
-go build ./cmd/engine             # Build engine binary
-go build ./cmd/gateway            # Build gateway binary
-go build ./cmd/marketdata         # Build marketdata binary
-go build ./cmd/risk               # Build risk binary
-go build ./cmd/all                # Build all-in-one binary
-go build ./cmd/history-loader     # Build history loader binary
-```
-
 ### Test Commands
 ```bash
 go test ./...                     # Run all tests
@@ -38,7 +25,7 @@ go mod verify                      # Verify dependencies
 ### Types and Domain Modeling
 - Use domain-specific type aliases: `OrderID`, `TradeID`, `UserID`, `Price`, `Quantity`
 - All IDs must use Snowflake generation for persisted/user-visible data
-- Use `int64` for financial values (Price, Quantity) to avoid floating-point errors
+- Use math/big for financial values (Price, Quantity) to avoid floating-point errors
 - Timestamps use `uint64` (nanoseconds since epoch) via `types.NowNano()`
 - Constants live in `internal/constants/` with descriptive prefixes (CATEGORY_*, ORDER_*, SIDE_*)
 
@@ -75,10 +62,9 @@ var (
 - Use `sync.Pool` for hot-path object allocation
 - Pre-allocate slices with known capacity
 - Zero-allocation patterns in matching engine hot paths
-- Prefer `sync.RWMutex` for read-heavy structures, `sync.Mutex` for write-heavy
 
 ### Naming Conventions
-- Interface names: simple, descriptive (Portfolio, Clearing, IDGenerator)
+- Interface names: simple, descriptive (Portfolio, Clearing, etc)
 - Struct methods: receivers should be value receivers for immutable operations, pointer receivers for mutable
 - Private functions: camelCase, descriptive of business logic
 - Constants: SCREAMING_SNAKE_CASE with prefixes
@@ -86,7 +72,7 @@ var (
 ### Critical Business Rules
 - **Market Isolation**: SPOT (Category=0) and LINEAR (Category=1) are completely separate
 - **FOK Orders**: Must pre-check full liquidity BEFORE reserve or trade execution
-- **OCO Orders**: Create 2 linked orders with same OrderLinkId, auto-cancel on trigger
+- **TP/SL Orders**: Need to think about
 - **ReduceOnly**: Only for LINEAR markets, must reduce existing position size
 - **Trigger Validation**: BUY trigger < current price, SELL trigger > current price
 - **Reserve Formulas**:
@@ -109,8 +95,7 @@ var (
 ### Package Structure
 - `cmd/`: Entry points and binaries
 - `internal/`: Core business logic (no public exports)
-- `tests/`: Integration tests
-- `_legacy/`: Deprecated code (do not modify)
+- `tests/`: Integration, E2E, fuz and chaos tests
 - Each internal package has single responsibility
 
 ### Code Quality
@@ -118,5 +103,4 @@ var (
 - Add comprehensive comments on ALL new changes (not just complex logic)
 - Prefer explicit error handling over silent failures
 - Use constants over magic numbers/strings
-- Zero-method receivers: domain types should NOT have methods; use service structs with methods that take domain types as parameters
 - Always return errors from functions that can fail

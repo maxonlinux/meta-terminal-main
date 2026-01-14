@@ -119,255 +119,10 @@ Scenario: User places BUY 1 BTC @ 50000 USDT LIMIT GTC
    Available: 50000 (unchanged from start)
    Locked: 0 (fully released)
    Position: +1 BTC @ 50000
-```
 
 ## API Contract
 
 ### PlaceOrder Request
-
-```json
-POST /api/v1/order
-{
-  "symbol": "BTCUSDT",
-  "category": 1,        // 0=SPOT, 1=LINEAR
-  "side": 0,            // 0=Buy, 1=Sell
-  "type": 0,            // 0=Limit, 1=Market
-  "tif": 0,             // 0=GTC, 1=IOC, 2=FOK, 3=PostOnly
-  "quantity": 1.0,
-  "price": 50000,       // Required for LIMIT, ignored for MARKET
-  "triggerPrice": 0,    // >0 makes order conditional
-  "reduceOnly": false,  // Only LINEAR, cannot increase position
-  "closeOnTrigger": false, // Only LINEAR, requires existing position
-  "stopOrderType": 0,   // 0=NORMAL, 1=STOP, 2=TAKE_PROFIT, 3=STOP_LOSS, 4=TRAILING, 5=OCO
-
-  // OCO (One-Cancels-the-Other) - Only LINEAR
-  "oco": {
-    "quantity": 0,      // 0 = use full position size, >0 = specific qty
-    "takeProfit": {
-      "triggerPrice": 55000,
-      "price": 54900,   // 0 = Market order when triggered
-      "reduceOnly": true
-    },
-    "stopLoss": {
-      "triggerPrice": 45000,
-      "price": 45100,
-      "reduceOnly": true
-    }
-  }
-}
-```
-
-### PlaceOrder Response
-
-**ALWAYS returns an array of orders**, even for single orders:
-
-```json
-// Single order response
-{
-  "orders": [{
-    "id": 12345,
-    "symbol": "BTCUSDT",
-    "category": 1,
-    "side": 0,
-    "type": 0,
-    "status": 0,
-    "price": 50000,
-    "quantity": 1,
-    "filled": 0,
-    "triggerPrice": 0,
-    "reduceOnly": false,
-    "closeOnTrigger": false,
-    "stopOrderType": 0,
-    "orderLinkId": -1,
-    "isConditional": false,
-    "createdAt": 1234567890
-  }],
-  "filled": 0,
-  "remaining": 1,
-  "status": 0
-}
-
-// OCO order response (2 orders created)
-{
-  "orders": [
-    {
-      "id": 12346,
-      "symbol": "BTCUSDT",
-      "side": 1,
-      "type": 0,
-      "status": 5,  // UNTRIGGERED
-      "price": 54900,
-      "quantity": 0,  // 0 = full position close at trigger
-      "triggerPrice": 55000,
-      "stopOrderType": 2,  // TAKE_PROFIT
-      "closeOnTrigger": true,
-      "reduceOnly": true,
-      "orderLinkId": 999999999999,
-      "isConditional": true
-    },
-    {
-      "id": 12347,
-      "symbol": "BTCUSDT",
-      "side": 1,
-      "type": 0,
-      "status": 5,  // UNTRIGGERED
-      "price": 45100,
-      "quantity": 0,
-      "triggerPrice": 45000,
-      "stopOrderType": 3,  // STOP_LOSS
-      "closeOnTrigger": true,
-      "reduceOnly": true,
-      "orderLinkId": 999999999999,
-      "isConditional": true
-    }
-  ],
-  "filled": 0,
-  "remaining": 1,  // Position size
-  "status": 5
-}
-```
-
----
-
-## OrderInput Type (internal/types/types.go)
-
-```go
-// OrderInput — входные данные для создания ордера
-//
-// orderLinkId (опционально):
-//   Пользовательский идентификатор ордера. Макс 36 символов.
-//   Позволяет клиенту связать свой внутренний ID с системным orderId.
-//   Для OCO: orderLinkId родительского ордера связывает TP и SL ордера.
-//   В нашей системе: >0 = snowflake ID группы, -1 = нет группы
-//
-// isConditional (автоматически):
-//   true если TriggerPrice > 0
-//   Устанавливается при валидации для удобства в коде
-//
-type OrderInput struct {
-    UserID   UserID
-    Symbol   string
-    Category int8
-
-    Side int8
-    Type int8
-    TIF  int8
-
-    Quantity Quantity
-    Price    Price
-
-    TriggerPrice   Price
-    ReduceOnly     bool
-    CloseOnTrigger bool
-    StopOrderType  int8
-
-    // IsConditional — true если TriggerPrice > 0
-    // Устанавливается автоматически при валидации
-    IsConditional bool
-
-    OCO *OCOInput `json:"oco,omitempty"`
-}
-
-// OCOInput — параметры OCO (One-Cancels-the-Other)
-// Создаёт 2 связанных ордера: Take Profit + Stop Loss
-//
-// Правила OCO:
-//   1. Quantity=0 → auto-use position size + reduceOnly=true
-//   2. Оба ордера создаются как CloseOnTrigger=true
-//   3. Оба ордера получают одинаковый OrderLinkId (snowflake ID)
-//   4. При срабатывании TP → SL автоматически cancelled
-//   5. При срабатывании SL → TP автоматически cancelled
-//   6. Если позиция закрыта другим способом → оба cancelled
-//   7. LONG: TP trigger > SL trigger
-//   8. SHORT: TP trigger < SL trigger
-//
-type OCOInput struct {
-    Quantity   Quantity    // 0 = auto, use position size
-    TakeProfit OCOChildOrder
-    StopLoss   OCOChildOrder
-}
-
-type OCOChildOrder struct {
-    TriggerPrice Price  // TP или SL trigger price
-    Price        Price  // Limit price для TP/SL (0 = Market)
-    ReduceOnly   bool   // Всегда true для OCO
-}
-
-// OrderResult — результат PlaceOrder
-// ВСЕГДА возвращается массив orders[] (1 элемент для single, 2+ для OCO/batch)
-type OrderResult struct {
-    Orders    []*Order   // Все созданные ордера (1 = single, 2 = OCO)
-    Trades    []*Trade   // Сделки если были
-    Filled    Quantity   // Сумма filled для primary order
-    Remaining Quantity   // Сумма remaining для primary order / позиции
-    Status    int8       // Статус primary order / группы
-}
-```
-
----
-
-## Order Type (internal/types/types.go)
-
-```go
-// Order — торговая заявка в системе
-//
-// OrderLinkId — группа связанных ордеров (OCO, TP+SL)
-//   > 0 = snowflake ID группы (все ордера в группе имеют одинаковый ID)
-//   -1 = нет группы (обычные ордера, одиночные conditional)
-//
-// Пример: OCO создаёт 2 ордера с одинаковым OrderLinkId = snowflake.Next()
-// При срабатывании одного — второй отменяется по этому ID
-//
-type Order struct {
-    ID       OrderID
-    UserID   UserID
-    Symbol   string
-    Category int8
-
-    Side int8
-    Type int8
-    TIF  int8
-
-    Status int8
-
-    Price    Price
-    Quantity Quantity
-    Filled   Quantity
-
-    TriggerPrice   Price
-    ReduceOnly     bool
-    CloseOnTrigger bool
-    StopOrderType  int8
-
-    // IsConditional — true если ордер conditional (TriggerPrice > 0)
-    // Для удобства проверки типа ордера в коде
-    IsConditional bool
-
-    // OrderLinkId — группа OCO/TP/SL
-    // > 0 = snowflake ID группы
-    // -1 = нет группы
-    OrderLinkId int64
-
-    CreatedAt uint64
-    UpdatedAt uint64
-    ClosedAt  uint64
-}
-```
-
----
-
-## StopOrderType Constants (internal/constants/constants.go)
-
-```go
-// Stop Order Types (Bybit-compatible)
-// OCO, TP, SL — все CloseOnTrigger=true, различаются только stopOrderType
-STOP_ORDER_TYPE_NORMAL       = 0  // Standard conditional order (Stop)
-STOP_ORDER_TYPE_STOP         = 1  // Standard stop order
-STOP_ORDER_TYPE_TAKE_PROFIT  = 2  // Take profit order
-STOP_ORDER_TYPE_STOP_LOSS    = 3  // Stop loss order
-STOP_ORDER_TYPE_TRAILING     = 4  // Trailing stop (future)
-STOP_ORDER_TYPE_OCO          = 5  // OCO order (TP + SL pair)
-```
 
 ---
 
@@ -378,7 +133,7 @@ STOP_ORDER_TYPE_OCO          = 5  // OCO order (TP + SL pair)
 | **Normal** | = 0 | false | ❌ | Regular LIMIT/MARKET order |
 | **Conditional** | > 0 | false | ✅ | Waits for trigger → creates identical order without trigger |
 | **CloseOnTrigger** | > 0 | true | ✅ | Waits for trigger → creates reduceOnly order to close position |
-| **OCO (TP+SL)** | > 0 | true | ✅ | Two linked orders, one cancels the other when triggered |
+| **TP+SL** | > 0 | true | ✅ | Two linked orders, one cancels the other when triggered |
 
 **Quantity=0 meaning:**
 - For conditional/closeOnTrigger orders: "use position size at trigger time"
@@ -429,19 +184,6 @@ ErrReduceOnlyCommitmentExceeded = errors.New("reduceOnly commitment exceeds posi
 ErrInvalidTriggerPrice          = errors.New("invalid trigger price: BUY trigger must be below current price, SELL trigger must be above")
 ```
 
-### OCO Validation
-
-```go
-ErrOCOSpot           = errors.New("OCO orders not allowed for SPOT")
-ErrOCONoPosition     = errors.New("OCO orders require an existing position")
-ErrOCOTPTriggerInvalid  = errors.New("OCO TP trigger must be > SL trigger for LONG positions")
-ErrOCOSLTriggerInvalid  = errors.New("OCO SL trigger must be < TP trigger for SHORT positions")
-```
-
-**OCO rules:**
-- LONG position: `TakeProfit.TriggerPrice > StopLoss.TriggerPrice`
-- SHORT position: `TakeProfit.TriggerPrice < StopLoss.TriggerPrice`
-
 ### Self-Match Prevention
 
 ```go
@@ -488,7 +230,7 @@ func Next() int64 {
 ```go
 order.ID = types.OrderID(snowflake.Next())
 trade.ID = types.TradeID(snowflake.Next())
-orderLinkId = snowflake.Next()  // For OCO groups
+orderLinkId = snowflake.Next()  // For TP/SL groups
 ```
 
 ---
@@ -540,7 +282,6 @@ STOP_ORDER_TYPE_STOP         = 1
 STOP_ORDER_TYPE_TAKE_PROFIT  = 2
 STOP_ORDER_TYPE_STOP_LOSS    = 3
 STOP_ORDER_TYPE_TRAILING     = 4
-STOP_ORDER_TYPE_OCO          = 5
 ```
 
 ---
@@ -616,15 +357,6 @@ func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
    - Reserve() called BEFORE matching
    - Error from Reserve = Order Rejection
 
-4. **OCO ORDERS ARE CLOSE ON TRIGGER!!!**
-   - OCO always has CloseOnTrigger = true
-   - OCO always has ReduceOnly = true
-   - Quantity = 0 means "close full position at trigger"
-
-5. **OrderLinkId GROUPS OCO ORDERS!!!**
-   - Both TP and SL orders get the same OrderLinkId
-   - When one triggers, the other is cancelled by OrderLinkId
-
 6. **QUANTITY=0 HAS SPECIAL MEANING!!!**
    - Regular orders: NOT allowed (ErrInvalidQuantity)
    - Conditional/CloseOnTrigger: use position size at trigger time
@@ -647,17 +379,9 @@ func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
 1. Validate(input)
    - Field validation (quantity, price, symbol, etc.)
    - SPOT/LINEAR specific validation
-   - OCO validation (TP > SL for LONG, TP < SL for SHORT)
+   - TPSL validation (TP > SL for LONG, TP < SL for SHORT)
    - Self-match prevention
    - Set IsConditional if TriggerPrice > 0
-
-2. If OCO:
-   - Validate position exists
-   - Validate TP/SL trigger prices
-   - Create TP and SL orders with Quantity=0
-   - Both get CloseOnTrigger=true, ReduceOnly=true
-   - Both get same OrderLinkId
-   - Return: Orders=[tp, sl], Status=UNTRIGGERED
 
 3. If TriggerPrice > 0 (Conditional):
    - Create Order with status=UNTRIGGERED
@@ -686,7 +410,6 @@ func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
    - Else (Conditional):
      - Create twin order without trigger
      - Execute normal order flow
-   - Cancel linked OCO order by OrderLinkId
 ```
 
 ---
