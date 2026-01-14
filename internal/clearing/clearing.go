@@ -2,8 +2,8 @@ package clearing
 
 import (
 	"github.com/maxonlinux/meta-terminal-go/internal/constants"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
 	sym "github.com/maxonlinux/meta-terminal-go/pkg/symbol"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type Portfolio interface {

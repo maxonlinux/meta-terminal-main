@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/nats-io/nats.go"
 )
 
@@ -85,10 +85,10 @@ func (f *NATSFeed) handleMessage(msg *nats.Msg) {
 	tick.Symbol = symbol
 
 	// Update registry with latest price data
-	f.registry.PriceTick(symbol, tick)
+	f.registry.SetPrice(symbol, tick.Price)
 
 	// Dispatch to all registered handlers (triggers, risk, portfolio)
-	f.dispatcher.Dispatch(symbol, tick)
+	f.dispatcher.Dispatch(symbol, tick.Price)
 }
 
 // extractSymbol parses the symbol from a NATS subject

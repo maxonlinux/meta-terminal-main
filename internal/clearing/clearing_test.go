@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/constants"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type mockP struct{ reserved, released map[string]types.Quantity }

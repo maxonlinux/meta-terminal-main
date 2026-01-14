@@ -3,7 +3,7 @@ package feed
 import (
 	"sync"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 // PriceTickHandler processes price updates for trading decisions
@@ -11,7 +11,7 @@ import (
 type PriceTickHandler interface {
 	// OnPriceTick is invoked when a new price tick arrives for a symbol
 	// Called with the symbol and its current market data (from NATS stream)
-	OnPriceTick(symbol string, tick types.PriceTick)
+	OnPriceTick(symbol string, tick types.Price)
 }
 
 // PriceTickDispatcher distributes price ticks to registered handlers
@@ -39,7 +39,7 @@ func (d *PriceTickDispatcher) Register(h PriceTickHandler) {
 // Dispatch sends a price tick to all registered handlers
 // This is the hot path - uses read lock for concurrent access
 // Handlers are called synchronously; slow handlers may delay others
-func (d *PriceTickDispatcher) Dispatch(symbol string, tick types.PriceTick) {
+func (d *PriceTickDispatcher) Dispatch(symbol string, tick types.Price) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 

@@ -50,18 +50,18 @@ type Order struct {
 func (o *Order) Remaining() Quantity { return o.Quantity - o.Filled }
 
 // Position represents user's position in LINEAR market (not SPOT)
+// Direction is determined by Size sign: >0 = LONG, <0 = SHORT, 0 = NONE
 type Position struct {
 	UserID     UserID
 	Symbol     string   // BTCUSDT, ETHUSDT, etc.
 	Size       Quantity // Absolute size (positive = LONG, negative = SHORT)
-	Side       int8     // -1=NONE, 0=LONG, 1=SHORT
 	EntryPrice Price    // Average entry price
 	ExitPrice  Price    // Exit price
-	Mode       int      // Position Mode (0=ISOLATED, 1=CROSS)
-	MM         int      // Maintenance Margin ratio (percent)
-	IM         int      // Initial Margin
+	Mode       int8     // Position Mode (0=ISOLATED, 1=CROSS)
+	MM         Quantity // Maintenance Margin
+	IM         Quantity // Initial Margin
 	LiqPrice   Price    // Liquidation price
-	Leverage   int      // Leverage (2, 5, 10, ... 100)
+	Leverage   int8     // Leverage (2, 5, 10, ... 100)
 }
 
 // Trade represents an executed trade
@@ -90,35 +90,6 @@ type UserBalance struct {
 	Margin    Quantity
 }
 
-// PriceTick represents a price update event
-type PriceTick struct {
-	Symbol string
-	Price  int64
-	Bid    int64
-	Ask    int64
-	Volume int64
-	Time   int64
-}
-
-// Instrument represents a trading instrument with precision settings
-type Instrument struct {
-	Symbol     string
-	BaseAsset  string
-	QuoteAsset string
-	PricePrec  int8  // Price precision (decimal places)
-	QtyPrec    int8  // Quantity precision (decimal places)
-	MinQty     int64 // Minimum quantity
-	MaxQty     int64 // Maximum quantity
-	MinPrice   int64 // Minimum price
-	MaxPrice   int64 // Maximum price
-	TickSize   int64 // Price tick size
-	LotSize    int64 // Lot size
-
-	// Market data - updated in real-time
-	LastPrice int64  // Last traded price (from NATS/registry)
-	UpdatedAt uint64 // Timestamp of last update
-}
-
 // Match represents a single match between two orders
 type Match struct {
 	Trade Trade
@@ -142,4 +113,12 @@ type Trigger struct {
 	TriggerPrice Price  // Price level that triggers the order
 	Side         int8   // Order side (BUY/SELL)
 	IsActive     bool   // Whether trigger is currently monitoring
+}
+
+// PriceTick represents a price update from the market feed.
+// Used for real-time price monitoring, triggers, and risk calculations.
+type PriceTick struct {
+	Symbol    string // Trading pair symbol (e.g., "BTCUSDT")
+	Price     Price  // Current price
+	Timestamp uint64 // Nanoseconds since epoch
 }

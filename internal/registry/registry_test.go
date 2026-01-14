@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
 	sym "github.com/maxonlinux/meta-terminal-go/pkg/symbol"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 func TestRegistry(t *testing.T) {
 	r := New()
-	r.Add(&types.Instrument{Symbol: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT"})
-	if r.Get("BTCUSDT").BaseAsset != "BTC" {
+	r.Add(&Instrument{Symbol: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT"})
+	if r.GetInstrument("BTCUSDT").BaseAsset != "BTC" {
 		t.Error()
 	}
 }
@@ -22,16 +22,16 @@ func TestRegistry(t *testing.T) {
 func TestAddFromList(t *testing.T) {
 	r := New()
 	r.AddFromList([]string{"BTCUSDT", "ETHUSDT"})
-	if r.Get("BTCUSDT").BaseAsset != "BTC" {
+	if r.GetInstrument("BTCUSDT").BaseAsset != "BTC" {
 		t.Error()
 	}
 }
 
 func TestPrice(t *testing.T) {
 	r := New()
-	r.SetPrice("BTCUSDT", types.PriceTick{Price: 50000})
-	p, ok := r.Price("BTCUSDT")
-	if !ok || p.Price != 50000 {
+	r.SetPrice("BTCUSDT", types.Price(50000))
+	p, ok := r.GetPrice("BTCUSDT")
+	if !ok || p != 50000 {
 		t.Error(p, ok)
 	}
 }
@@ -51,7 +51,7 @@ func TestLoader(t *testing.T) {
 	l := NewLoader(assets.URL, prices.URL, r, time.Minute)
 	l.sync()
 
-	if _, ok := r.Price("BTCUSDT"); !ok {
+	if _, ok := r.GetPrice("BTCUSDT"); !ok {
 		t.Error()
 	}
 }

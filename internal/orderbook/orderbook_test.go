@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/constants"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/pool"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 func TestOrderBook_AddRemove(t *testing.T) {

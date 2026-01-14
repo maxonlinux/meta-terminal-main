@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/constants"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
 	sym "github.com/maxonlinux/meta-terminal-go/pkg/symbol"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 var (
@@ -75,7 +75,7 @@ func (s *Service) SetLeverage(uid types.UserID, symbol string, lev int) error {
 	if lev < 2 || lev > 100 {
 		return ErrInvalidLeverage
 	}
-	s.getOrCreatePosition(uid, symbol).Leverage = lev
+	s.getOrCreatePosition(uid, symbol).Leverage = int8(lev)
 	return nil
 }
 
@@ -108,26 +108,19 @@ func (s *Service) updatePosition(uid types.UserID, symbol string, qty types.Quan
 	p := s.getOrCreatePosition(uid, symbol)
 
 	if p.Size == 0 {
-		p.Size = qty
-		p.Side = constants.SIDE_LONG
-		if !isBuy {
+		if isBuy {
+			p.Size = qty
+		} else {
 			p.Size = -qty
-			p.Side = constants.SIDE_SHORT
 		}
 		return
 	}
 
-	if (p.Side == constants.SIDE_LONG && isBuy) || (p.Side == constants.SIDE_SHORT && !isBuy) {
+	isLong := p.Size > 0
+	if isLong == isBuy {
 		p.Size += qty
 	} else {
 		p.Size -= qty
-		if p.Size == 0 {
-			p.Side = constants.SIDE_NONE
-		} else if p.Size > 0 {
-			p.Side = constants.SIDE_LONG
-		} else {
-			p.Side = constants.SIDE_SHORT
-		}
 	}
 }
 

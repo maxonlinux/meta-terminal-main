@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/constants"
-	"github.com/maxonlinux/meta-terminal-go/internal/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 func TestReserve(t *testing.T) {
@@ -73,7 +73,7 @@ func TestLinearPosition(t *testing.T) {
 	s.ExecuteTrade(trade, trade.TakerOrder, nil)
 
 	p := s.GetPosition(1, "BTCUSDT")
-	if p.Size != 100 || p.Side != constants.SIDE_LONG {
+	if p.Size != 100 {
 		t.Fatal(p)
 	}
 }
@@ -81,7 +81,7 @@ func TestLinearPosition(t *testing.T) {
 func TestPositionFlip(t *testing.T) {
 	s := New(nil)
 	p := s.GetPosition(1, "BTCUSDT")
-	p.Size, p.Side = 100, constants.SIDE_LONG
+	p.Size = 100
 
 	trade := &types.Trade{
 		Symbol:     "BTCUSDT",
@@ -92,7 +92,7 @@ func TestPositionFlip(t *testing.T) {
 	}
 	s.ExecuteTrade(trade, trade.TakerOrder, nil)
 
-	if p.Size != -50 || p.Side != constants.SIDE_SHORT {
+	if p.Size != -50 {
 		t.Fatal(p)
 	}
 }

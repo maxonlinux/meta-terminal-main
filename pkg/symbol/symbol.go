@@ -1,4 +1,4 @@
-package types
+package symbol
 
 import (
 	"strings"
