@@ -1,5 +1,9 @@
 # META-TERMINAL-GO Architecture
 
+We create HFT zero-allocation, sub-millisecond latency trading system using the article below:
+https://ramendraparmar.substack.com/p/system-design-question-10-stock-trading
+YOU MUST READ THIS ARTICLE ABOVE VERY CAREFULLY!!!
+
 USE SNOWFLAKE FOR EVERY ID GENERATION ESPECIALLY IF THIS DATA IS GOING TO BE PERSISTED OR SENT TO USERS!!!!!!
 
 ## Symbol Registry (HTTP Loader)
@@ -52,44 +56,49 @@ Start():
 ### Order Reservation Formulas
 
 ```
+
 SPOT ORDER RESERVATION:
 ├── BUY LIMIT/SELL LIMIT/SELL MARKET:
-│   Reserved = Qty × Price (quote currency for BUY, base for SELL)
-│   Example: BUY 1 BTC @ 50000 USDT → Reserve 50000 USDT
-│   Example: SELL 1 BTC @ 50000 USDT → Reserve 1 BTC
+│ Reserved = Qty × Price (quote currency for BUY, base for SELL)
+│ Example: BUY 1 BTC @ 50000 USDT → Reserve 50000 USDT
+│ Example: SELL 1 BTC @ 50000 USDT → Reserve 1 BTC
 │
 └── BUY MARKET:
-    Reserved = Qty × Current_Best_Ask (estimated)
-    Note: For MARKET orders, we reserve maximum possible or reject if insufficient
+Reserved = Qty × Current_Best_Ask (estimated)
+Note: For MARKET orders, we reserve maximum possible or reject if insufficient
 
 LINEAR ORDER RESERVATION:
 ├── BUY/SELL LIMIT/MARKET:
-    Reserved = (Qty × Price) / Leverage (in quote currency)
-    Example: BUY 1000 BTCUSDT @ 50000, Leverage=10
-             Reserved = (1000 × 50000) / 10 = 5,000,000 USDT
+Reserved = (Qty × Price) / Leverage (in quote currency)
+Example: BUY 1000 BTCUSDT @ 50000, Leverage=10
+Reserved = (1000 × 50000) / 10 = 5,000,000 USDT
+
 ```
 
 ### Trade Execution Formulas
 
 ```
+
 SPOT TRADE EXECUTION (per trade):
 ├── BUY (taker or maker):
-│   Actually: Locked → Available (refund locked portion)
-│              Available → Deduct (trade_price × trade_qty)
-│              Maker: Add (trade_qty) to base asset
+│ Actually: Locked → Available (refund locked portion)
+│ Available → Deduct (trade_price × trade_qty)
+│ Maker: Add (trade_qty) to base asset
 │
 ├── SELL (taker or maker):
-│   Actually: Locked → Available (refund locked portion)
-│              Available → Deduct (trade_qty)
-│              Maker: Add (trade_price × trade_qty) to quote asset
+│ Actually: Locked → Available (refund locked portion)
+│ Available → Deduct (trade_qty)
+│ Maker: Add (trade_price × trade_qty) to quote asset
 
 LINEAR TRADE EXECUTION (per trade):
 ├── BUY/SELL (taker or maker):
-│   Locked → Margin (amount = trade_price × trade_qty / leverage)
-│   UpdatePosition
+│ Locked → Margin (amount = trade_price × trade_qty / leverage)
+│ UpdatePosition
+
 ```
 
 ```
+
 Scenario: User places BUY 1 BTC @ 50000 USDT LIMIT GTC
 
 1. PlaceOrder:
@@ -128,14 +137,15 @@ Scenario: User places BUY 1 BTC @ 50000 USDT LIMIT GTC
 
 ## Order Types Summary
 
-| Type | TriggerPrice | CloseOnTrigger | Quantity=0 | Description |
-|------|--------------|----------------|------------|-------------|
-| **Normal** | = 0 | false | ❌ | Regular LIMIT/MARKET order |
-| **Conditional** | > 0 | false | ✅ | Waits for trigger → creates identical order without trigger |
-| **CloseOnTrigger** | > 0 | true | ✅ | Waits for trigger → creates reduceOnly order to close position |
-| **TP+SL** | > 0 | true | ✅ | Two linked orders, one cancels the other when triggered |
+| Type               | TriggerPrice | CloseOnTrigger | Quantity=0 | Description                                                    |
+| ------------------ | ------------ | -------------- | ---------- | -------------------------------------------------------------- |
+| **Normal**         | = 0          | false          | ❌         | Regular LIMIT/MARKET order                                     |
+| **Conditional**    | > 0          | false          | ✅         | Waits for trigger → creates identical order without trigger    |
+| **CloseOnTrigger** | > 0          | true           | ✅         | Waits for trigger → creates reduceOnly order to close position |
+| **TP+SL**          | > 0          | true           | ✅         | Two linked orders, one cancels the other when triggered        |
 
 **Quantity=0 meaning:**
+
 - For conditional/closeOnTrigger orders: "use position size at trigger time"
 - For regular orders: **NOT allowed** (returns ErrInvalidQuantity)
 
@@ -158,6 +168,7 @@ ErrInvalidStopOrderType = errors.New("invalid stop order type")
 ```
 
 **Checks:**
+
 - `Quantity` > 0 for regular orders, = 0 allowed for conditional/closeOnTrigger
 - `Price` >= 0 for LIMIT orders
 - `Symbol` - valid format (BTCUSDT, ETHUSDT, etc.)
@@ -203,6 +214,7 @@ func (s *Service) checkSelfMatch(input *types.OrderInput) error
 ```
 
 **Rules:**
+
 - Conditional and closeOnTrigger orders are excluded (don't go to orderbook)
 - For LIMIT orders: checks if best bid/ask would match user's own order
 - For MARKET orders: checks if any orders exist on opposite side
@@ -222,11 +234,13 @@ func Next() int64 {
 ```
 
 **Performance:**
+
 - **~1.8 ns/op** for ID generation
 - Lock-free with atomic operations (zero contention)
 - No external dependencies, no time calculation
 
 **Usage:**
+
 ```go
 order.ID = types.OrderID(snowflake.Next())
 trade.ID = types.TradeID(snowflake.Next())
@@ -271,11 +285,6 @@ BUCKET_AVAILABLE = 0
 BUCKET_LOCKED    = 1
 BUCKET_MARGIN    = 2
 
-// Position Side
-SIDE_NONE  = -1
-SIDE_LONG  = 0
-SIDE_SHORT = 1
-
 // Stop Order Types
 STOP_ORDER_TYPE_NORMAL       = 0
 STOP_ORDER_TYPE_STOP         = 1
@@ -293,8 +302,6 @@ STOP_ORDER_TYPE_TRAILING     = 4
 NATS_URL=nats://localhost:4222
 STREAM_PREFIX=meta
 JWT_SECRET=your-secret-key
-
-# Optional
 PORT=8080
 ```
 
@@ -302,14 +309,14 @@ PORT=8080
 
 ## Performance Targets
 
-| Operation | Target Latency | Actual | Status |
-|-----------|----------------|--------|--------|
-| PlaceOrder | < 500μs | **264ns** | ✓ EXCELLENT |
-| MatchOrder | < 200μs | **38.5ns** | ✓ EXCELLENT |
-| CancelOrder | < 100μs | **6.3ns** | ✓ EXCELLENT |
-| BestBidAsk | < 10μs | **7.7ns** | ✓ EXCELLENT |
-| ConcurrentMatch | < 200μs | **116ns** | ✓ EXCELLENT |
-| Pool GetOrder | < 10μs | **7.3ns** | ✓ EXCELLENT |
+| Operation       | Target Latency | Actual     | Status      |
+| --------------- | -------------- | ---------- | ----------- |
+| PlaceOrder      | < 500μs        | **264ns**  | ✓ EXCELLENT |
+| MatchOrder      | < 200μs        | **38.5ns** | ✓ EXCELLENT |
+| CancelOrder     | < 100μs        | **6.3ns**  | ✓ EXCELLENT |
+| BestBidAsk      | < 10μs         | **7.7ns**  | ✓ EXCELLENT |
+| ConcurrentMatch | < 200μs        | **116ns**  | ✓ EXCELLENT |
+| Pool GetOrder   | < 10μs         | **7.3ns**  | ✓ EXCELLENT |
 
 ---
 
@@ -337,7 +344,7 @@ type TriggerMonitor struct {
 
 func (m *TriggerMonitor) Add(order *Order)
 func (m *TriggerMonitor) Remove(orderID OrderID)
-func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
+func (m *TriggerMonitor) Check(symbol Symbol, price Price) []OrderID
 ```
 
 ---
@@ -357,17 +364,13 @@ func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
    - Reserve() called BEFORE matching
    - Error from Reserve = Order Rejection
 
-6. **QUANTITY=0 HAS SPECIAL MEANING!!!**
-   - Regular orders: NOT allowed (ErrInvalidQuantity)
-   - Conditional/CloseOnTrigger: use position size at trigger time
+4. **QUANTITY=0 HAS SPECIAL MEANING!!!**
+   - Regular orders: qty=0 NOT allowed (ErrInvalidQuantity)
+   - CloseOnTrigger: qty=0 use full position size at trigger time
 
-7. **SELF-MATCH PREVENTION!!!**
+5. **SELF-MATCH PREVENTION!!!**
    - Orders cannot execute against own orders in the book
-   - Checked before order is placed
-
-8. **ALL VALIDATIONS ARE IN ONE PLACE!!!**
-   - `validateOrder()` function in OMS handles all validation
-   - Both field validation and business logic validation
+   - Checked before order is placed and rejected
 
 ---
 
@@ -401,34 +404,19 @@ func (m *TriggerMonitor) Check(currentPrice Price) []OrderID
 
 2. orderIDs := triggerMonitor.Check(price)
 
-3. For each orderID:
+3. For each orderID when triggered:
    - Get order from store
    - If CloseOnTrigger:
      - Get current position size
      - If Quantity=0, use position size
-     - Create reduceOnly order to close position
-   - Else (Conditional):
-     - Create twin order without trigger
-     - Execute normal order flow
+     - If qty > position size - trim to position size before placing
+     - Execute normal order flow (place order)
+   - Else (simple conditional):
+     - Create twin order without trigger (trigger price = 0)
+     - Execute normal order flow (place order)
 ```
 
 ---
 
 ## Zero-Allocation Design
-
-```go
-// Object pooling
-var orderPool = sync.Pool{
-    New: func() interface{} { return new(Order) },
-}
-
-func GetOrder() *Order {
-    return orderPool.Get().(*Order)
-}
-
-func PutOrder(o *Order) {
-    o.ID = 0
-    o.UserID = 0
-    orderPool.Put(o)
-}
-```
+- Use pools

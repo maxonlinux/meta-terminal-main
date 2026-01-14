@@ -279,33 +279,33 @@ Trim orders with FURTHEST order price from current market price FIRST
 - Added validation in `handleOrder()` to reject reduce-only orders in Hedge Mode
 - Default mode is One-Way (Bybit-compliant)
 
-### TO BE DONE
+### TODO
 
 1. **Trimming Priority Fix (HIGH Priority)**
-   - ✅ Changed from FIFO to furthest-first trimming
-   - ✅ Bybit-compliant: SELL orders trimmed highest price first, BUY orders trimmed lowest price first
-   - ✅ Uses efficient heap structures for O(log n) operations
+   - Changed from FIFO to furthest-first trimming
+   - Bybit-compliant: SELL orders trimmed highest price first, BUY orders trimmed lowest price first
+   - Uses efficient heap structures for O(log n) operations
 
 2. **Position Mode Validation (MEDIUM Priority)**
-   - ✅ Added position mode constants (One-Way vs Hedge Mode)
-   - ✅ Added PositionMode field to Engine
-   - ✅ Added SetPositionMode() method
-   - ✅ Validation rejects reduce-only orders in Hedge Mode
-   - ✅ Default mode is One-Way (Bybit standard)
+   - Added position mode constants (One-Way vs Hedge Mode)
+   - Added PositionMode field to Engine
+   - Added SetPositionMode() method
+   - Validation rejects reduce-only orders in Hedge Mode
+   - Default mode is One-Way (Bybit standard)
 
 3. **SPOT vs LINEAR Market Isolation (CRITICAL - Added)**
-   - ✅ Complete separation of SPOT and LINEAR order books
-   - ✅ Category field added to OrderRequest and Order structs
-   - ✅ Market-specific validation rules implemented
-   - ✅ SPOT: No reduce-only, no conditional orders
-   - ✅ LINEAR: Supports reduce-only, conditional orders, proper TIF validation
+   - Complete separation of SPOT and LINEAR order books
+   - Category field added to OrderRequest and Order structs
+   - Market-specific validation rules implemented
+   - SPOT: No reduce-only, no conditional orders
+   - LINEAR: Supports reduce-only, conditional orders, proper TIF validation
 
 4. **Comprehensive Test Coverage**
-   - ✅ All tests pass with -race flag (no data races)
-   - ✅ Trimming priority tests
-   - ✅ Position mode validation tests
-   - ✅ Market isolation tests
-   - ✅ SPOT/LINEAR validation tests
+   - All tests pass with -race flag (no data races)
+   - Trimming priority tests
+   - Position mode validation tests
+   - Market isolation tests
+   - SPOT/LINEAR validation tests
 
 ---
 
