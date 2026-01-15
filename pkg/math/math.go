@@ -1,23 +1,25 @@
 package math
 
-import "math/big"
+import "github.com/robaho/fixed"
 
-func Mul(a, b *big.Int) *big.Int {
-	return new(big.Int).Mul(a, b)
+var Zero = fixed.NewI(0, 0)
+
+func Mul(a, b fixed.Fixed) fixed.Fixed {
+	return a.Mul(b)
 }
 
-func Div(a, b *big.Int) *big.Int {
-	if b.Sign() == 0 {
-		return new(big.Int)
+func Div(a, b fixed.Fixed) fixed.Fixed {
+	if b.Sign() <= 0 {
+		return Zero
 	}
-	return new(big.Int).Quo(a, b)
+	return a.Div(b)
 }
 
-func MulDiv(a, b, c *big.Int) *big.Int {
-	if c.Sign() == 0 {
-		return new(big.Int)
+func MulDiv(a, b, c fixed.Fixed) fixed.Fixed {
+	if c.Sign() <= 0 {
+		return Zero
 	}
-	return new(big.Int).Quo(new(big.Int).Mul(a, b), c)
+	return a.Mul(b).Div(c)
 }
 
 func Abs(n int64) int64 {
@@ -27,20 +29,36 @@ func Abs(n int64) int64 {
 	return n
 }
 
-func Max(a, b *big.Int) *big.Int {
+func Max(a, b fixed.Fixed) fixed.Fixed {
 	if a.Cmp(b) >= 0 {
 		return a
 	}
 	return b
 }
 
-func Min(a, b *big.Int) *big.Int {
+func Min(a, b fixed.Fixed) fixed.Fixed {
 	if a.Cmp(b) <= 0 {
 		return a
 	}
 	return b
 }
 
-func Neg(n *big.Int) *big.Int {
-	return new(big.Int).Neg(n)
+func Neg(n fixed.Fixed) fixed.Fixed {
+	return Zero.Sub(n)
+}
+
+func Cmp(a, b fixed.Fixed) int {
+	return a.Cmp(b)
+}
+
+func Sign(a fixed.Fixed) int {
+	return a.Sign()
+}
+
+func Add(a, b fixed.Fixed) fixed.Fixed {
+	return a.Add(b)
+}
+
+func Sub(a, b fixed.Fixed) fixed.Fixed {
+	return a.Sub(b)
 }

@@ -1,0 +1,6 @@
+github.com/mattn/go-sqlite3 v1.14.22 h1:2gZY6PC6kBnID23Tichd1K+Z0oS6nE/XwU+Vz/5o4kU=
+github.com/mattn/go-sqlite3 v1.14.22/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
+github.com/robaho/fixed v0.0.0-20251201003256-beee5759f86a h1:aeGponfnGZvVKhjkKOUv3uW/UcpmgLCp77IaDOvqoFM=
+github.com/robaho/fixed v0.0.0-20251201003256-beee5759f86a/go.mod h1:gOuZr6norIEHlPghhACq3f8PL6ZFF5uJVMOgh2/M7xQ=
+github.com/shopspring/decimal v1.4.0 h1:bxl37RwXBklmTi0C79JfXCEBD1cqqHt0bbgBAGFp81k=
+github.com/shopspring/decimal v1.4.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=

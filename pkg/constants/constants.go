@@ -32,15 +32,24 @@ const (
 
 	DEFAULT_LEVERAGE = 2
 	MM_RATIO         = 0.1
+
+	STOP_ORDER_TYPE_NORMAL      = 0
+	STOP_ORDER_TYPE_STOP        = 1
+	STOP_ORDER_TYPE_TAKE_PROFIT = 2
+	STOP_ORDER_TYPE_STOP_LOSS   = 3
+	STOP_ORDER_TYPE_TRAILING    = 4
 )
 
 var (
-	ErrInsufficientBalance    = errors.New("insufficient balance")
-	ErrNoPositionForRO        = errors.New("reduce-only requires existing position")
-	ErrROSideMismatch         = errors.New("reduce-only side doesn't match position")
-	ErrInvalidTriggerForBuy   = errors.New("buy trigger must be below current price")
-	ErrInvalidTriggerForSell  = errors.New("sell trigger must be above current price")
-	ErrPostOnlyWouldMatch     = errors.New("post-only order would match immediately")
-	ErrMarketOrderRequiresTIF = errors.New("market orders must be IOC or FOK")
-	ErrReduceOnlyExceedsPos   = errors.New("reduce-only exceeds position size")
+	ErrInsufficientBalance      = errors.New("insufficient balance")
+	ErrNoPositionForRO          = errors.New("reduce-only requires existing position")
+	ErrROSideMismatch           = errors.New("reduce-only side doesn't match position")
+	ErrInvalidTriggerForBuy     = errors.New("buy trigger must be below current price")
+	ErrInvalidTriggerForSell    = errors.New("sell trigger must be above current price")
+	ErrPostOnlyWouldMatch       = errors.New("post-only order would match immediately")
+	ErrMarketOrderRequiresTIF   = errors.New("market orders must be IOC or FOK")
+	ErrReduceOnlyExceedsPos     = errors.New("reduce-only exceeds position size")
+	ErrConditionalSpot          = errors.New("conditional orders not allowed for SPOT")
+	ErrReduceOnlySpot           = errors.New("reduce-only not allowed for SPOT")
+	ErrFOKInsufficientLiquidity = errors.New("FOK: insufficient liquidity in orderbook")
 )

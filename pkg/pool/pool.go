@@ -4,7 +4,7 @@ import "sync"
 
 var (
 	orderPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &Order{}
 		},
 	}

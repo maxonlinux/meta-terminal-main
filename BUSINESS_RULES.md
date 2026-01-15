@@ -4,6 +4,9 @@ We create HFT zero-allocation, sub-millisecond latency trading system using the 
 https://ramendraparmar.substack.com/p/system-design-question-10-stock-trading
 YOU MUST READ THIS ARTICLE ABOVE VERY CAREFULLY!!!
 
+also this repo might be helpful
+https://github.com/robaho/go-trader/tree/master
+
 USE SNOWFLAKE FOR EVERY ID GENERATION ESPECIALLY IF THIS DATA IS GOING TO BE PERSISTED OR SENT TO USERS!!!!!!
 
 ## Symbol Registry (HTTP Loader)

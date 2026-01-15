@@ -1,23 +1,14 @@
 package types
 
-import (
-	"math/big"
-	"time"
-)
+import "github.com/robaho/fixed"
 
 // Basic type aliases for domain concepts
 type OrderID int64
 type TradeID int64
 type UserID uint64
 
-type Price int64
-type Quantity int64
-
-// NowNano возвращает текущее время в наносекундах
-// Используется для всех timestamp в системе
-func NowNano() uint64 {
-	return uint64(time.Now().UnixNano())
-}
+type Price = fixed.Fixed
+type Quantity = fixed.Fixed
 
 // Match represents a single match between two orders
 type Match struct {
@@ -36,7 +27,7 @@ type Trigger struct {
 
 // Risk
 type Risk struct {
-	IM  *big.Int // Initial Margin
-	MM  *big.Int // Maintenance Margin
-	Liq *big.Int // Liquidation Price
+	IM  fixed.Fixed // Initial Margin
+	MM  fixed.Fixed // Maintenance Margin
+	Liq fixed.Fixed // Liquidation Price
 }
