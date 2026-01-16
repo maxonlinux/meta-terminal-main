@@ -15,7 +15,7 @@ type OrderCallback interface {
 
 type Engine struct {
 	store    *oms.Service
-	books    map[int8]*orderbook.OrderBook // Market-isolated orderbooks keyed by Category
+	books    map[int8]map[string]*orderbook.OrderBook // Category + symbol orderbooks
 	commands chan func()
 	callback OrderCallback
 	done     chan struct{}
@@ -24,9 +24,9 @@ type Engine struct {
 func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	e := &Engine{
 		store: store,
-		books: map[int8]*orderbook.OrderBook{
-			constants.CATEGORY_SPOT:   orderbook.New(),
-			constants.CATEGORY_LINEAR: orderbook.New(),
+		books: map[int8]map[string]*orderbook.OrderBook{
+			constants.CATEGORY_SPOT:   make(map[string]*orderbook.OrderBook),
+			constants.CATEGORY_LINEAR: make(map[string]*orderbook.OrderBook),
 		},
 		commands: make(chan func(), 1000),
 		callback: cb,
@@ -102,7 +102,7 @@ func (e *Engine) placeOrderImpl(req *types.PlaceOrderRequest) error {
 
 func (e *Engine) validatePlaceOrder(req *types.PlaceOrderRequest) error {
 	if req.Quantity.Sign() <= 0 {
-		return constants.ErrInvalidQuantity
+		return constants.ErrInsufficientBalance
 	}
 
 	// Category validation keeps SPOT and LINEAR books isolated.
@@ -156,7 +156,7 @@ func (e *Engine) handleGTC(order *types.Order) error {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
 		order.UpdatedAt = utils.NowNano()
 		// Remaining quantity becomes a resting maker order.
-		book, err := e.bookFor(order.Category)
+		book, err := e.bookFor(order.Category, order.Symbol)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func (e *Engine) handleGTC(order *types.Order) error {
 	// Unmatched GTC orders rest in the book as new makers.
 	order.Status = constants.ORDER_STATUS_NEW
 	order.UpdatedAt = utils.NowNano()
-	book, err := e.bookFor(order.Category)
+	book, err := e.bookFor(order.Category, order.Symbol)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (e *Engine) handlePostOnly(order *types.Order) error {
 	// Post-only orders rest on the book as makers.
 	order.Status = constants.ORDER_STATUS_NEW
 	order.UpdatedAt = utils.NowNano()
-	book, err := e.bookFor(order.Category)
+	book, err := e.bookFor(order.Category, order.Symbol)
 	if err != nil {
 		return err
 	}

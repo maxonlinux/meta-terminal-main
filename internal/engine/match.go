@@ -14,13 +14,13 @@ func (e *Engine) Match(order *types.Order) (bool, error) {
 	limitPrice := e.matchLimitPrice(order)
 	matched := false
 
-	book, err := e.bookFor(order.Category)
+	book, err := e.bookFor(order.Category, order.Symbol)
 	if err != nil {
 		return false, err
 	}
 
 	// The orderbook performs price-time matching and emits trades.
-	book.Match(order.Symbol, order, limitPrice, func(trade types.Trade) {
+	book.Match(order, limitPrice, func(trade types.Trade) {
 		matched = true
 		e.applyTrade(trade)
 	})
@@ -34,11 +34,11 @@ func (e *Engine) checkWouldMatch(order *types.Order) (bool, error) {
 		// Market orders always cross if any liquidity is present.
 		return true, nil
 	}
-	book, err := e.bookFor(order.Category)
+	book, err := e.bookFor(order.Category, order.Symbol)
 	if err != nil {
 		return false, err
 	}
-	return book.WouldCross(order.Symbol, order.Side, order.Price), nil
+	return book.WouldCross(order.Side, order.Price), nil
 }
 
 // checkFullLiquidity verifies if the book can fully satisfy a FOK order.
@@ -48,11 +48,11 @@ func (e *Engine) checkFullLiquidity(order *types.Order) (bool, error) {
 		return true, nil
 	}
 	limitPrice := e.matchLimitPrice(order)
-	book, err := e.bookFor(order.Category)
+	book, err := e.bookFor(order.Category, order.Symbol)
 	if err != nil {
 		return false, err
 	}
-	available := book.AvailableQuantity(order.Symbol, order.Side, limitPrice, needed)
+	available := book.AvailableQuantity(order.Side, limitPrice, needed)
 	return available.Cmp(needed) >= 0, nil
 }
 
@@ -83,13 +83,20 @@ func (e *Engine) matchLimitPrice(order *types.Order) types.Price {
 	return order.Price
 }
 
-// bookFor returns the orderbook for the provided market category.
-func (e *Engine) bookFor(category int8) (*orderbook.OrderBook, error) {
+// bookFor returns the orderbook for the provided market category and symbol.
+func (e *Engine) bookFor(category int8, symbol string) (*orderbook.OrderBook, error) {
 	// Unknown categories are rejected to keep SPOT and LINEAR isolated.
-	book, ok := e.books[category]
+	bookSet, ok := e.books[category]
 	if !ok {
 		return nil, constants.ErrInvalidCategory
 	}
+	if book, ok := bookSet[symbol]; ok {
+		return book, nil
+	}
+
+	// Lazy initialization keeps empty symbols out of memory until needed.
+	book := orderbook.New()
+	bookSet[symbol] = book
 	return book, nil
 }
 

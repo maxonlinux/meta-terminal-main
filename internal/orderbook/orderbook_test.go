@@ -40,7 +40,7 @@ func TestAdd(t *testing.T) {
 		Quantity: q(10),
 	}
 	ob.Add(o)
-	b, _, ok := ob.BestBid("BTC-USD")
+	b, _, ok := ob.BestBid()
 	if !ok || b.Cmp(o.Price) != 0 {
 		t.Fail()
 	}
@@ -61,11 +61,11 @@ func TestRemove(t *testing.T) {
 	}
 	ob.Add(o)
 
-	if !ob.Remove("BTC-USD", o.ID) {
+	if !ob.Remove(o.ID) {
 		t.Fatal("remove failed")
 	}
 
-	_, _, ok := ob.BestBid("BTC-USD")
+	_, _, ok := ob.BestBid()
 	if ok {
 		t.Fatal("bid still exists")
 	}
@@ -98,7 +98,7 @@ func TestMatch(t *testing.T) {
 	}
 
 	var trades []types.Trade
-	ob.Match("BTC-USD", buy, types.Price{}, func(trade types.Trade) {
+	ob.Match(buy, types.Price{}, func(trade types.Trade) {
 		trades = append(trades, trade)
 	})
 
@@ -197,7 +197,7 @@ func BenchmarkAddReused(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < 1000; j++ {
-			ob.Remove("BTC-USD", types.OrderID(j+1))
+			ob.Remove(types.OrderID(j + 1))
 		}
 		for j := 0; j < 1000; j++ {
 			ob.Add(&types.Order{
@@ -286,7 +286,7 @@ func BenchmarkMatchAllDifferentLevels(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(1000),
 		}
-		ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 	}
 }
 
@@ -319,7 +319,7 @@ func BenchmarkMatchAllSameLevel(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(1000),
 		}
-		ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 	}
 }
 
@@ -352,7 +352,7 @@ func BenchmarkMatchManyTrades(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(10000),
 		}
-		ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 	}
 }
 
@@ -406,7 +406,7 @@ func BenchmarkMatchLevelTraversal(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(10000),
 		}
-		ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 	}
 }
 
@@ -440,7 +440,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 				Price:    p(50500),
 				Quantity: q(10),
 			}
-			ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+			ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 		}
 	}
 }
@@ -480,7 +480,7 @@ func BenchmarkMatch(b *testing.B) {
 			Price:    p(50500),
 			Quantity: q(1),
 		}
-		ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 	}
 }
 
@@ -506,7 +506,7 @@ func BenchmarkRemove(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		ob.Remove("BTC-USD", ids[i%1000])
+		ob.Remove(ids[i%1000])
 	}
 }
 
@@ -531,7 +531,7 @@ func BenchmarkBestBid(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < 1000; j++ {
-			ob.BestBid("BTC-USD")
+			ob.BestBid()
 		}
 	}
 }
@@ -570,7 +570,7 @@ func BenchmarkMatchBatch(b *testing.B) {
 				Price:    p(50000),
 				Quantity: q(1),
 			}
-			ob.Match("BTC-USD", taker, types.Price{}, func(trade types.Trade) {})
+			ob.Match(taker, types.Price{}, func(trade types.Trade) {})
 		}
 	}
 }

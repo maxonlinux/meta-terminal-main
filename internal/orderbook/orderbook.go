@@ -50,7 +50,7 @@ type Shard struct {
 }
 
 type OrderBook struct {
-	shards [256]*Shard
+	shard *Shard // Single-symbol orderbook: shard holds all price levels
 }
 
 func NewShard() *Shard {
@@ -68,19 +68,7 @@ func NewShard() *Shard {
 }
 
 func New() *OrderBook {
-	ob := &OrderBook{}
-	for i := range ob.shards {
-		ob.shards[i] = NewShard()
-	}
-	return ob
-}
-
-func (ob *OrderBook) shard(symbol string) *Shard {
-	var h uint32
-	for _, c := range symbol {
-		h = h*31 + uint32(c)
-	}
-	return ob.shards[h%256]
+	return &OrderBook{shard: NewShard()}
 }
 
 func (sh *Shard) lock() {
@@ -133,8 +121,8 @@ func remaining(order *types.Order) types.Quantity {
 	return order.Quantity.Sub(order.Filled)
 }
 
-func (ob *OrderBook) WouldCross(symbol string, side int8, price types.Price) bool {
-	sh := ob.shard(symbol)
+func (ob *OrderBook) WouldCross(side int8, price types.Price) bool {
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 
@@ -145,8 +133,8 @@ func (ob *OrderBook) WouldCross(symbol string, side int8, price types.Price) boo
 	return sh.bestBid != -1 && price.Cmp(sh.levels[sh.bestBid].price) <= 0
 }
 
-func (ob *OrderBook) BestBid(symbol string) (types.Price, types.Quantity, bool) {
-	sh := ob.shard(symbol)
+func (ob *OrderBook) BestBid() (types.Price, types.Quantity, bool) {
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 
@@ -157,8 +145,8 @@ func (ob *OrderBook) BestBid(symbol string) (types.Price, types.Quantity, bool) 
 	return sh.levels[sh.bestBid].price, sh.levels[sh.bestBid].total, true
 }
 
-func (ob *OrderBook) BestAsk(symbol string) (types.Price, types.Quantity, bool) {
-	sh := ob.shard(symbol)
+func (ob *OrderBook) BestAsk() (types.Price, types.Quantity, bool) {
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 
@@ -170,13 +158,13 @@ func (ob *OrderBook) BestAsk(symbol string) (types.Price, types.Quantity, bool) 
 }
 
 // AvailableQuantity reports how much size can be filled at the taker limit price.
-func (ob *OrderBook) AvailableQuantity(symbol string, takerSide int8, limitPrice types.Price, needed types.Quantity) types.Quantity {
+func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, needed types.Quantity) types.Quantity {
 	// Zero or negative requests cannot consume liquidity.
 	if needed.Sign() <= 0 {
 		return types.Quantity{}
 	}
 
-	sh := ob.shard(symbol)
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 
@@ -319,7 +307,7 @@ func (sh *Shard) ensureLevel(order *types.Order) (int32, *level) {
 }
 
 func (ob *OrderBook) Add(order *types.Order) {
-	sh := ob.shard(order.Symbol)
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 	sh.Add(order)
@@ -376,8 +364,8 @@ func (sh *Shard) Remove(orderID types.OrderID) bool {
 	return true
 }
 
-func (ob *OrderBook) Remove(symbol string, orderID types.OrderID) bool {
-	sh := ob.shard(symbol)
+func (ob *OrderBook) Remove(orderID types.OrderID) bool {
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 	return sh.Remove(orderID)
@@ -455,8 +443,8 @@ func (sh *Shard) Match(taker *types.Order, limitPrice types.Price, handler Trade
 	sh.matchInto(taker, limitPrice, handler)
 }
 
-func (ob *OrderBook) Match(symbol string, taker *types.Order, limitPrice types.Price, handler TradeHandler) {
-	sh := ob.shard(symbol)
+func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
+	sh := ob.shard
 	sh.lock()
 	defer sh.unlock()
 	sh.Match(taker, limitPrice, handler)
