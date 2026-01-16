@@ -187,6 +187,30 @@ func TestConditionalIndex_CheckTriggers_SellNotTriggered(t *testing.T) {
 	}
 }
 
+func TestConditionalIndex_CheckTriggers_SellPartialTrigger(t *testing.T) {
+	c := NewConditionalIndex()
+
+	order1 := &types.Order{ID: types.OrderID(1), Symbol: "BTCUSDT", Side: constants.ORDER_SIDE_SELL, TriggerPrice: types.Price(fixed.NewI(50500, 0)), Status: constants.ORDER_STATUS_UNTRIGGERED}
+	order2 := &types.Order{ID: types.OrderID(2), Symbol: "BTCUSDT", Side: constants.ORDER_SIDE_SELL, TriggerPrice: types.Price(fixed.NewI(51000, 0)), Status: constants.ORDER_STATUS_UNTRIGGERED}
+	order3 := &types.Order{ID: types.OrderID(3), Symbol: "BTCUSDT", Side: constants.ORDER_SIDE_SELL, TriggerPrice: types.Price(fixed.NewI(51500, 0)), Status: constants.ORDER_STATUS_UNTRIGGERED}
+
+	c.Add(order1)
+	c.Add(order2)
+	c.Add(order3)
+
+	// Price reaches 51000: only two lowest triggers should fire.
+	triggered := 0
+	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51000, 0)), func(o *types.Order) {
+		triggered++
+	})
+	if triggered != 2 {
+		t.Errorf("expected 2 triggered orders, got %d", triggered)
+	}
+	if order3.Status != constants.ORDER_STATUS_UNTRIGGERED {
+		t.Errorf("expected highest trigger to remain untriggered")
+	}
+}
+
 func TestConditionalIndex_CheckTriggers_Concurrent(t *testing.T) {
 	s := NewService()
 	var wg sync.WaitGroup

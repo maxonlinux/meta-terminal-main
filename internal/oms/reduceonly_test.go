@@ -114,6 +114,13 @@ func TestReduceOnlyIndex_OnPositionReduce(t *testing.T) {
 	}
 }
 
+func TestReduceOnlyIndex_OnPositionReduce_MissingSymbol(t *testing.T) {
+	r := NewReduceOnlyManager()
+
+	// Ensure missing shard maps do not panic for short positions.
+	r.OnPositionReduce("BTCUSDT", types.Quantity(fixed.NewI(-5, 0)), types.UserID(1))
+}
+
 func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
 	r := NewReduceOnlyManager()
 

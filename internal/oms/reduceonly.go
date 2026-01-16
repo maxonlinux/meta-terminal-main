@@ -138,7 +138,10 @@ func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Qua
 			h = m[key]
 		}
 	} else {
-		h = r.symbolHeaps[shardIdx][symbol]
+		// Guard missing shard map to avoid nil panics on cold symbols.
+		if m, ok := r.symbolHeaps[shardIdx]; ok {
+			h = m[symbol]
+		}
 	}
 
 	if h == nil || h.IsEmpty() {

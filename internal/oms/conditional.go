@@ -45,6 +45,7 @@ type ConditionalIndex struct {
 // SELL triggers: min-heap (lowest trigger price first)
 type triggerHeap struct {
 	items []*types.Order
+	isBuy bool // Controls heap direction (buy=max, sell=min).
 }
 
 // Len returns the number of items in the heap.
@@ -55,7 +56,10 @@ func (h triggerHeap) Len() int { return len(h.items) }
 // BUY triggers: max-heap (>) - highest trigger price has highest priority
 // SELL triggers: min-heap (<) - lowest trigger price has highest priority
 func (h triggerHeap) Less(i, j int) bool {
-	return math.Cmp(h.items[i].TriggerPrice, h.items[j].TriggerPrice) > 0
+	if h.isBuy {
+		return math.Cmp(h.items[i].TriggerPrice, h.items[j].TriggerPrice) > 0
+	}
+	return math.Cmp(h.items[i].TriggerPrice, h.items[j].TriggerPrice) < 0
 }
 
 // Swap exchanges two items in the heap.
@@ -164,7 +168,7 @@ func (c *ConditionalIndex) getOrCreateHeap(shardIdx uint8, symbol string, isBuy 
 		return h
 	}
 
-	h := &triggerHeap{}
+	h := &triggerHeap{isBuy: isBuy}
 	triggerMap[symbol] = h
 	return h
 }
