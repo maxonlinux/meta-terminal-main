@@ -1,5 +1,20 @@
 package types
 
+type PlaceOrderRequest struct {
+	UserID         UserID
+	Symbol         string
+	Category       int8
+	Side           int8
+	Type           int8
+	TIF            int8
+	Price          Price
+	Quantity       Quantity
+	TriggerPrice   Price
+	ReduceOnly     bool
+	CloseOnTrigger bool
+	StopOrderType  int8
+}
+
 // Order represents a trading order - canonical structure used throughout the system
 // Single struct used by Store, OrderBook, and TriggerMonitor ensures consistency
 type Order struct {

@@ -22,7 +22,7 @@ func TestEngine_PlaceOrder(t *testing.T) {
 	cb := &mockCallback{}
 	e := NewEngine(store, cb)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
 		Symbol:   "BTCUSDT",
 		Category: constants.CATEGORY_LINEAR,
@@ -52,7 +52,7 @@ func TestEngine_PlaceOrder_Conditional(t *testing.T) {
 	cb := &mockCallback{}
 	e := NewEngine(store, cb)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
 		Symbol:        "BTCUSDT",
 		Category:      constants.CATEGORY_LINEAR,
@@ -95,7 +95,7 @@ func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
 		Symbol:   "BTCUSDT",
 		Category: constants.CATEGORY_LINEAR,
@@ -116,7 +116,7 @@ func TestEngine_Validate_ConditionalSpot(t *testing.T) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
 		Symbol:        "BTCUSDT",
 		Category:      constants.CATEGORY_SPOT,
@@ -139,7 +139,7 @@ func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
 		Symbol:        "BTCUSDT",
 		Category:      constants.CATEGORY_LINEAR,
@@ -162,7 +162,7 @@ func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
 		Symbol:        "BTCUSDT",
 		Category:      constants.CATEGORY_LINEAR,
@@ -185,7 +185,7 @@ func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:     types.UserID(1),
 		Symbol:     "BTCUSDT",
 		Category:   constants.CATEGORY_SPOT,
@@ -282,7 +282,7 @@ func BenchmarkEngine_PlaceOrder(b *testing.B) {
 	store := oms.NewService()
 	e := NewEngine(store, nil)
 
-	req := &PlaceOrderRequest{
+	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
 		Symbol:   "BTCUSDT",
 		Category: constants.CATEGORY_LINEAR,

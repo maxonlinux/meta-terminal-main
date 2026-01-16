@@ -2,6 +2,7 @@ package engine
 
 import (
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
+	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -14,6 +15,7 @@ type OrderCallback interface {
 
 type Engine struct {
 	store    *oms.Service
+	books    map[int8]*orderbook.OrderBook // Market-isolated orderbooks keyed by Category
 	commands chan func()
 	callback OrderCallback
 	done     chan struct{}
@@ -21,7 +23,11 @@ type Engine struct {
 
 func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	e := &Engine{
-		store:    store,
+		store: store,
+		books: map[int8]*orderbook.OrderBook{
+			constants.CATEGORY_SPOT:   orderbook.New(),
+			constants.CATEGORY_LINEAR: orderbook.New(),
+		},
 		commands: make(chan func(), 1000),
 		callback: cb,
 		done:     make(chan struct{}),
@@ -49,7 +55,7 @@ func (e *Engine) Execute(cmd func()) {
 	e.commands <- cmd
 }
 
-func (e *Engine) PlaceOrder(req *PlaceOrderRequest) error {
+func (e *Engine) PlaceOrder(req *types.PlaceOrderRequest) error {
 	result := make(chan error, 1)
 
 	e.commands <- func() {
@@ -60,7 +66,7 @@ func (e *Engine) PlaceOrder(req *PlaceOrderRequest) error {
 	return <-result
 }
 
-func (e *Engine) placeOrderImpl(req *PlaceOrderRequest) error {
+func (e *Engine) placeOrderImpl(req *types.PlaceOrderRequest) error {
 	if err := e.validatePlaceOrder(req); err != nil {
 		return err
 	}
@@ -94,9 +100,14 @@ func (e *Engine) placeOrderImpl(req *PlaceOrderRequest) error {
 	return nil
 }
 
-func (e *Engine) validatePlaceOrder(req *PlaceOrderRequest) error {
+func (e *Engine) validatePlaceOrder(req *types.PlaceOrderRequest) error {
 	if req.Quantity.Sign() <= 0 {
-		return constants.ErrInsufficientBalance
+		return constants.ErrInvalidQuantity
+	}
+
+	// Category validation keeps SPOT and LINEAR books isolated.
+	if req.Category != constants.CATEGORY_SPOT && req.Category != constants.CATEGORY_LINEAR {
+		return constants.ErrInvalidCategory
 	}
 
 	if !req.TriggerPrice.IsZero() {
@@ -128,20 +139,39 @@ func (e *Engine) handleGTC(order *types.Order) error {
 		return nil
 	}
 
-	matched, err := e.matchAsTaker(order)
+	matched, err := e.Match(order)
 	if err != nil {
 		return err
 	}
 
 	if matched {
 		if math.Cmp(order.Filled, order.Quantity) == 0 {
+			// Fully filled taker exits immediately with terminal status.
 			order.Status = constants.ORDER_STATUS_FILLED
 			order.ClosedAt = utils.NowNano()
+			order.UpdatedAt = order.ClosedAt
 			return nil
 		}
+		// Partial fill remains on the book as maker liquidity.
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+		order.UpdatedAt = utils.NowNano()
+		// Remaining quantity becomes a resting maker order.
+		book, err := e.bookFor(order.Category)
+		if err != nil {
+			return err
+		}
+		book.Add(order)
+		return nil
 	}
 
+	// Unmatched GTC orders rest in the book as new makers.
+	order.Status = constants.ORDER_STATUS_NEW
+	order.UpdatedAt = utils.NowNano()
+	book, err := e.bookFor(order.Category)
+	if err != nil {
+		return err
+	}
+	book.Add(order)
 	return nil
 }
 
@@ -150,22 +180,31 @@ func (e *Engine) handleIOC(order *types.Order) error {
 		return nil
 	}
 
-	matched, err := e.matchAsTaker(order)
+	matched, err := e.Match(order)
 	if err != nil {
 		return err
 	}
 
 	if !matched || order.Filled.IsZero() {
+		// IOC cancels if it cannot match immediately.
 		order.Status = constants.ORDER_STATUS_CANCELED
 		order.ClosedAt = utils.NowNano()
+		order.UpdatedAt = order.ClosedAt
 		return nil
 	}
 
 	if math.Cmp(order.Filled, order.Quantity) < 0 {
+		// Partial IOC fills are immediately canceled for remaining quantity.
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 		order.ClosedAt = utils.NowNano()
+		order.UpdatedAt = order.ClosedAt
+		return nil
 	}
 
+	// Fully filled IOC exits with FILLED status.
+	order.Status = constants.ORDER_STATUS_FILLED
+	order.ClosedAt = utils.NowNano()
+	order.UpdatedAt = order.ClosedAt
 	return nil
 }
 
@@ -180,16 +219,26 @@ func (e *Engine) handleFOK(order *types.Order) error {
 	}
 
 	if !canFullyFill {
+		// FOK requires full liquidity before any execution occurs.
 		return constants.ErrFOKInsufficientLiquidity
 	}
 
-	_, err = e.matchAsTaker(order)
+	_, err = e.Match(order)
 	if err != nil {
 		return err
 	}
 
+	if math.Cmp(order.Filled, order.Quantity) != 0 {
+		// Defensive guard: FOK must fill completely if pre-check passed.
+		order.Status = constants.ORDER_STATUS_CANCELED
+		order.ClosedAt = utils.NowNano()
+		order.UpdatedAt = order.ClosedAt
+		return constants.ErrFOKInsufficientLiquidity
+	}
+
 	order.Status = constants.ORDER_STATUS_FILLED
 	order.ClosedAt = utils.NowNano()
+	order.UpdatedAt = order.ClosedAt
 
 	return nil
 }
@@ -208,19 +257,15 @@ func (e *Engine) handlePostOnly(order *types.Order) error {
 		return constants.ErrPostOnlyWouldMatch
 	}
 
+	// Post-only orders rest on the book as makers.
+	order.Status = constants.ORDER_STATUS_NEW
+	order.UpdatedAt = utils.NowNano()
+	book, err := e.bookFor(order.Category)
+	if err != nil {
+		return err
+	}
+	book.Add(order)
 	return nil
-}
-
-func (e *Engine) matchAsTaker(order *types.Order) (matched bool, err error) {
-	return false, nil
-}
-
-func (e *Engine) checkFullLiquidity(order *types.Order) (bool, error) {
-	return false, nil
-}
-
-func (e *Engine) checkWouldMatch(order *types.Order) (bool, error) {
-	return false, nil
 }
 
 func (e *Engine) CancelOrder(id types.OrderID) error {
@@ -280,19 +325,4 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	}
 
 	<-result
-}
-
-type PlaceOrderRequest struct {
-	UserID         types.UserID
-	Symbol         string
-	Category       int8
-	Side           int8
-	Type           int8
-	TIF            int8
-	Price          types.Price
-	Quantity       types.Quantity
-	TriggerPrice   types.Price
-	ReduceOnly     bool
-	CloseOnTrigger bool
-	StopOrderType  int8
 }

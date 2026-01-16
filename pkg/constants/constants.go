@@ -43,7 +43,10 @@ const (
 )
 
 var (
-	ErrInsufficientBalance      = errors.New("insufficient balance")
+	ErrInsufficientBalance = errors.New("insufficient balance")
+	// ErrInvalidCategory guards market isolation between SPOT and LINEAR.
+	ErrInvalidCategory          = errors.New("invalid category: must be SPOT or LINEAR")
+	ErrInvalidQuantity          = errors.New("invalid quantity")
 	ErrNoPositionForRO          = errors.New("reduce-only requires existing position")
 	ErrROSideMismatch           = errors.New("reduce-only side doesn't match position")
 	ErrInvalidTriggerForBuy     = errors.New("buy trigger must be below current price")
