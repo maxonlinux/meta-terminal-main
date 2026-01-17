@@ -107,8 +107,8 @@ func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 	}
 
 	err := e.PlaceOrder(req)
-	if err != constants.ErrInsufficientBalance {
-		t.Errorf("expected ErrInsufficientBalance, got %v", err)
+	if err != constants.ErrInvalidQuantity {
+		t.Errorf("expected ErrInvalidQuantity, got %v", err)
 	}
 }
 
@@ -312,4 +312,200 @@ func BenchmarkEngine_CancelOrder(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		e.CancelOrder(order.ID)
 	}
+}
+
+// BenchmarkEngine_AmendOrder measures order amendment throughput.
+func BenchmarkEngine_AmendOrder(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
+		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
+		types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(0, 0)), false, false, 0)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		newQty := types.Quantity(fixed.NewI(10+int64(i%10), 0))
+		e.AmendOrder(order.ID, newQty)
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_IOC measures IOC placement without liquidity.
+func BenchmarkEngine_PlaceOrder_IOC(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_IOC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(10, 0)),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req.UserID = types.UserID(i)
+		_ = e.PlaceOrder(req)
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_FOKReject measures FOK rejection without liquidity.
+func BenchmarkEngine_PlaceOrder_FOKReject(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_FOK,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(10, 0)),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req.UserID = types.UserID(i)
+		_ = e.PlaceOrder(req)
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_PostOnlyReject measures post-only rejection on cross.
+func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	makerReq := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_SELL,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+	}
+	if err := e.PlaceOrder(makerReq); err != nil {
+		b.Fatalf("setup maker failed: %v", err)
+	}
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(2),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_POST_ONLY,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(10, 0)),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req.UserID = types.UserID(i + 10)
+		_ = e.PlaceOrder(req)
+	}
+}
+
+// BenchmarkEngine_Match_GTC measures direct match throughput for GTC orders.
+func BenchmarkEngine_Match_GTC(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	makerReq := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_SELL,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+	}
+	if err := e.PlaceOrder(makerReq); err != nil {
+		b.Fatalf("setup maker failed: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := &types.PlaceOrderRequest{
+			UserID:   types.UserID(i + 2),
+			Symbol:   "BTCUSDT",
+			Category: constants.CATEGORY_LINEAR,
+			Side:     constants.ORDER_SIDE_BUY,
+			Type:     constants.ORDER_TYPE_LIMIT,
+			TIF:      constants.TIF_GTC,
+			Price:    types.Price(fixed.NewI(50000, 0)),
+			Quantity: types.Quantity(fixed.NewI(1, 0)),
+		}
+		_ = e.PlaceOrder(req)
+	}
+}
+
+// BenchmarkEngine_Match_IOC measures direct match throughput for IOC orders.
+func BenchmarkEngine_Match_IOC(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	makerReq := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_SELL,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+	}
+	if err := e.PlaceOrder(makerReq); err != nil {
+		b.Fatalf("setup maker failed: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := &types.PlaceOrderRequest{
+			UserID:   types.UserID(i + 2),
+			Symbol:   "BTCUSDT",
+			Category: constants.CATEGORY_LINEAR,
+			Side:     constants.ORDER_SIDE_BUY,
+			Type:     constants.ORDER_TYPE_LIMIT,
+			TIF:      constants.TIF_IOC,
+			Price:    types.Price(fixed.NewI(50000, 0)),
+			Quantity: types.Quantity(fixed.NewI(1, 0)),
+		}
+		_ = e.PlaceOrder(req)
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_Parallel measures queue contention under parallel load.
+func BenchmarkEngine_PlaceOrder_Parallel(b *testing.B) {
+	store := oms.NewService()
+	e := NewEngine(store, nil)
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(10, 0)),
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		var localID int64
+		for pb.Next() {
+			localID++
+			req.UserID = types.UserID(localID)
+			_ = e.PlaceOrder(req)
+		}
+	})
 }

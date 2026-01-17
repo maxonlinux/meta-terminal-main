@@ -45,7 +45,9 @@ const (
 var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	// ErrInvalidCategory guards market isolation between SPOT and LINEAR.
-	ErrInvalidCategory          = errors.New("invalid category: must be SPOT or LINEAR")
+	ErrInvalidCategory = errors.New("invalid category: must be SPOT or LINEAR")
+	// ErrInvalidTIF guards unsupported time-in-force values.
+	ErrInvalidTIF               = errors.New("invalid time-in-force")
 	ErrInvalidQuantity          = errors.New("invalid quantity")
 	ErrNoPositionForRO          = errors.New("reduce-only requires existing position")
 	ErrROSideMismatch           = errors.New("reduce-only side doesn't match position")

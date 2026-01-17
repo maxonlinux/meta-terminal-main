@@ -169,7 +169,6 @@ func (s *Service) Cancel(id types.OrderID) error {
 
 	// Single timestamp call for both timestamps (optimization)
 	now := utils.NowNano()
-	order.ClosedAt = now
 	order.UpdatedAt = now
 
 	// Remove from reduceonly index if registered
@@ -213,7 +212,6 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 
 	// Full fill case (no else needed due to early return above)
 	order.Status = constants.ORDER_STATUS_FILLED
-	order.ClosedAt = utils.NowNano()
 
 	// Remove from reduceonly index if this was a reduceOnly order
 	if order.ReduceOnly {

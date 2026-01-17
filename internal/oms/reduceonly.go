@@ -166,7 +166,6 @@ func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Qua
 		if math.Cmp(remaining, excess) <= 0 {
 			// Cancel entire order
 			o.Status = constants.ORDER_STATUS_CANCELED
-			o.ClosedAt = uint64(0) // Will be set by caller
 			shard.exposure[userID] = math.Sub(shard.exposure[userID], remaining)
 			excess = math.Sub(excess, remaining)
 			heap.Pop(h)

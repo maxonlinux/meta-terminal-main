@@ -43,5 +43,4 @@ type Order struct {
 	// Timestamps - no atomic needed in single-threaded architecture
 	CreatedAt uint64
 	UpdatedAt uint64
-	ClosedAt  uint64
 }
