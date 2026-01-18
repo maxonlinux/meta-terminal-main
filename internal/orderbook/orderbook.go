@@ -1,4 +1,4 @@
-package prod
+package orderbook
 
 import (
 	"sync/atomic"
@@ -29,7 +29,7 @@ type node struct {
 	_     [CACHE_LINE - 32]byte
 }
 
-type Shard struct {
+type bookState struct {
 	_  [CACHE_LINE]byte
 	mu int32
 	_  [CACHE_LINE - 8]byte
@@ -50,11 +50,15 @@ type Shard struct {
 }
 
 type OrderBook struct {
-	shard *Shard // Single-symbol orderbook: shard holds all price levels
+	state *bookState // Single-symbol orderbook: state holds all price levels
 }
 
-func NewShard() *Shard {
-	return &Shard{
+func New() *OrderBook {
+	return &OrderBook{state: newBookState()}
+}
+
+func newBookState() *bookState {
+	return &bookState{
 		bids:      make(map[types.Price]int32),
 		asks:      make(map[types.Price]int32),
 		orders:    make(map[types.OrderID]int32),
@@ -67,20 +71,16 @@ func NewShard() *Shard {
 	}
 }
 
-func New() *OrderBook {
-	return &OrderBook{shard: NewShard()}
-}
-
-func (sh *Shard) lock() {
+func (sh *bookState) lock() {
 	for !atomic.CompareAndSwapInt32(&sh.mu, 0, 1) {
 	}
 }
 
-func (sh *Shard) unlock() {
+func (sh *bookState) unlock() {
 	atomic.StoreInt32(&sh.mu, 0)
 }
 
-func (sh *Shard) allocLevel() int32 {
+func (sh *bookState) allocLevel() int32 {
 	if sh.levelFree != -1 {
 		idx := sh.levelFree
 		sh.levelFree = sh.levels[idx].next
@@ -95,12 +95,12 @@ func (sh *Shard) allocLevel() int32 {
 	return idx
 }
 
-func (sh *Shard) freeLevel(idx int32) {
+func (sh *bookState) freeLevel(idx int32) {
 	sh.levels[idx].next = sh.levelFree
 	sh.levelFree = idx
 }
 
-func (sh *Shard) allocNode() int32 {
+func (sh *bookState) allocNode() int32 {
 	if sh.nodeFree != -1 {
 		idx := sh.nodeFree
 		sh.nodeFree = sh.nodes[idx].next
@@ -112,7 +112,7 @@ func (sh *Shard) allocNode() int32 {
 	return idx
 }
 
-func (sh *Shard) freeNode(idx int32) {
+func (sh *bookState) freeNode(idx int32) {
 	sh.nodes[idx].next = sh.nodeFree
 	sh.nodeFree = idx
 }
@@ -122,7 +122,7 @@ func remaining(order *types.Order) types.Quantity {
 }
 
 func (ob *OrderBook) WouldCross(side int8, price types.Price) bool {
-	sh := ob.shard
+	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 
@@ -133,30 +133,6 @@ func (ob *OrderBook) WouldCross(side int8, price types.Price) bool {
 	return sh.bestBid != -1 && price.Cmp(sh.levels[sh.bestBid].price) <= 0
 }
 
-func (ob *OrderBook) BestBid() (types.Price, types.Quantity, bool) {
-	sh := ob.shard
-	sh.lock()
-	defer sh.unlock()
-
-	// Best bid is the highest priced level on the buy side.
-	if sh.bestBid == -1 {
-		return types.Price{}, types.Quantity{}, false
-	}
-	return sh.levels[sh.bestBid].price, sh.levels[sh.bestBid].total, true
-}
-
-func (ob *OrderBook) BestAsk() (types.Price, types.Quantity, bool) {
-	sh := ob.shard
-	sh.lock()
-	defer sh.unlock()
-
-	// Best ask is the lowest priced level on the sell side.
-	if sh.bestAsk == -1 {
-		return types.Price{}, types.Quantity{}, false
-	}
-	return sh.levels[sh.bestAsk].price, sh.levels[sh.bestAsk].total, true
-}
-
 // AvailableQuantity reports how much size can be filled at the taker limit price.
 func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, needed types.Quantity) types.Quantity {
 	// Zero or negative requests cannot consume liquidity.
@@ -164,25 +140,21 @@ func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, n
 		return types.Quantity{}
 	}
 
-	sh := ob.shard
+	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 
 	var total types.Quantity
+	start := sh.bestBid
+	limitCmp := -1
 	if takerSide == constants.ORDER_SIDE_BUY {
-		for lvlIdx := sh.bestAsk; lvlIdx != -1 && total.Cmp(needed) < 0; lvlIdx = sh.levels[lvlIdx].next {
-			price := sh.levels[lvlIdx].price
-			if limitPrice.Sign() > 0 && price.Cmp(limitPrice) > 0 {
-				break
-			}
-			total = total.Add(sh.levels[lvlIdx].total)
-		}
-		return total
+		start = sh.bestAsk
+		limitCmp = 1
 	}
 
-	for lvlIdx := sh.bestBid; lvlIdx != -1 && total.Cmp(needed) < 0; lvlIdx = sh.levels[lvlIdx].next {
+	for lvlIdx := start; lvlIdx != -1 && total.Cmp(needed) < 0; lvlIdx = sh.levels[lvlIdx].next {
 		price := sh.levels[lvlIdx].price
-		if limitPrice.Sign() > 0 && price.Cmp(limitPrice) < 0 {
+		if limitPrice.Sign() > 0 && price.Cmp(limitPrice) == limitCmp {
 			break
 		}
 		total = total.Add(sh.levels[lvlIdx].total)
@@ -190,18 +162,39 @@ func (ob *OrderBook) AvailableQuantity(takerSide int8, limitPrice types.Price, n
 	return total
 }
 
-func (sh *Shard) linkBid(lvlIdx int32) {
-	if sh.bestBid == -1 || sh.levels[lvlIdx].price.Cmp(sh.levels[sh.bestBid].price) > 0 {
-		sh.levels[lvlIdx].next = sh.bestBid
-		if sh.bestBid != -1 {
-			sh.levels[sh.bestBid].prev = lvlIdx
-		}
-		sh.bestBid = lvlIdx
+// linkLevel inserts a new price level into the side list.
+func (sh *bookState) linkLevel(side int8, lvlIdx int32) {
+	if side == constants.ORDER_SIDE_BUY {
+		sh.insertLevel(lvlIdx, sh.bestBid, true)
 		return
 	}
-	cur := sh.bestBid
-	for sh.levels[cur].next != -1 && sh.levels[sh.levels[cur].next].price.Cmp(sh.levels[lvlIdx].price) > 0 {
-		cur = sh.levels[cur].next
+	sh.insertLevel(lvlIdx, sh.bestAsk, false)
+}
+
+// insertLevel links a level into the sorted list for a side.
+func (sh *bookState) insertLevel(lvlIdx int32, head int32, desc bool) {
+	cmp := sh.levels[lvlIdx].price.Cmp
+	if head == -1 || (desc && cmp(sh.levels[head].price) > 0) || (!desc && cmp(sh.levels[head].price) < 0) {
+		sh.levels[lvlIdx].next = head
+		if head != -1 {
+			sh.levels[head].prev = lvlIdx
+		}
+		if desc {
+			sh.bestBid = lvlIdx
+		} else {
+			sh.bestAsk = lvlIdx
+		}
+		return
+	}
+	cur := head
+	next := sh.levels[cur].next
+	for next != -1 {
+		cmpNext := cmp(sh.levels[next].price)
+		if (desc && cmpNext <= 0) || (!desc && cmpNext >= 0) {
+			break
+		}
+		cur = next
+		next = sh.levels[cur].next
 	}
 	sh.levels[lvlIdx].prev = cur
 	sh.levels[lvlIdx].next = sh.levels[cur].next
@@ -211,54 +204,34 @@ func (sh *Shard) linkBid(lvlIdx int32) {
 	}
 }
 
-func (sh *Shard) unlinkBid(lvlIdx int32) {
-	if sh.levels[lvlIdx].prev != -1 {
-		sh.levels[sh.levels[lvlIdx].prev].next = sh.levels[lvlIdx].next
-	} else {
-		sh.bestBid = sh.levels[lvlIdx].next
-	}
-	if sh.levels[lvlIdx].next != -1 {
-		sh.levels[sh.levels[lvlIdx].next].prev = sh.levels[lvlIdx].prev
-	}
-	sh.levels[lvlIdx].prev = -1
-	sh.levels[lvlIdx].next = -1
-}
-
-func (sh *Shard) linkAsk(lvlIdx int32) {
-	if sh.bestAsk == -1 || sh.levels[lvlIdx].price.Cmp(sh.levels[sh.bestAsk].price) < 0 {
-		sh.levels[lvlIdx].next = sh.bestAsk
-		if sh.bestAsk != -1 {
-			sh.levels[sh.bestAsk].prev = lvlIdx
+// unlinkLevel removes a price level from the side list.
+func (sh *bookState) unlinkLevel(side int8, lvlIdx int32) {
+	prev := sh.levels[lvlIdx].prev
+	next := sh.levels[lvlIdx].next
+	if side == constants.ORDER_SIDE_BUY {
+		if prev != -1 {
+			sh.levels[prev].next = next
+		} else {
+			sh.bestBid = next
 		}
-		sh.bestAsk = lvlIdx
-		return
-	}
-	cur := sh.bestAsk
-	for sh.levels[cur].next != -1 && sh.levels[sh.levels[cur].next].price.Cmp(sh.levels[lvlIdx].price) < 0 {
-		cur = sh.levels[cur].next
-	}
-	sh.levels[lvlIdx].prev = cur
-	sh.levels[lvlIdx].next = sh.levels[cur].next
-	sh.levels[cur].next = lvlIdx
-	if sh.levels[lvlIdx].next != -1 {
-		sh.levels[sh.levels[lvlIdx].next].prev = lvlIdx
-	}
-}
-
-func (sh *Shard) unlinkAsk(lvlIdx int32) {
-	if sh.levels[lvlIdx].prev != -1 {
-		sh.levels[sh.levels[lvlIdx].prev].next = sh.levels[lvlIdx].next
+		if next != -1 {
+			sh.levels[next].prev = prev
+		}
 	} else {
-		sh.bestAsk = sh.levels[lvlIdx].next
-	}
-	if sh.levels[lvlIdx].next != -1 {
-		sh.levels[sh.levels[lvlIdx].next].prev = sh.levels[lvlIdx].prev
+		if prev != -1 {
+			sh.levels[prev].next = next
+		} else {
+			sh.bestAsk = next
+		}
+		if next != -1 {
+			sh.levels[next].prev = prev
+		}
 	}
 	sh.levels[lvlIdx].prev = -1
 	sh.levels[lvlIdx].next = -1
 }
 
-func (sh *Shard) Add(order *types.Order) {
+func (sh *bookState) Add(order *types.Order) {
 	rem := remaining(order)
 	if rem.Sign() <= 0 {
 		return
@@ -284,7 +257,7 @@ func (sh *Shard) Add(order *types.Order) {
 }
 
 // ensureLevel returns the price level for this order, creating and linking if needed.
-func (sh *Shard) ensureLevel(order *types.Order) (int32, *level) {
+func (sh *bookState) ensureLevel(order *types.Order) (int32, *level) {
 	if order.Side == constants.ORDER_SIDE_BUY {
 		if existing, ok := sh.bids[order.Price]; ok {
 			return existing, &sh.levels[existing]
@@ -292,7 +265,7 @@ func (sh *Shard) ensureLevel(order *types.Order) (int32, *level) {
 		lvlIdx := sh.allocLevel()
 		sh.levels[lvlIdx].price = order.Price
 		sh.bids[order.Price] = lvlIdx
-		sh.linkBid(lvlIdx)
+		sh.linkLevel(constants.ORDER_SIDE_BUY, lvlIdx)
 		return lvlIdx, &sh.levels[lvlIdx]
 	}
 
@@ -302,18 +275,18 @@ func (sh *Shard) ensureLevel(order *types.Order) (int32, *level) {
 	lvlIdx := sh.allocLevel()
 	sh.levels[lvlIdx].price = order.Price
 	sh.asks[order.Price] = lvlIdx
-	sh.linkAsk(lvlIdx)
+	sh.linkLevel(constants.ORDER_SIDE_SELL, lvlIdx)
 	return lvlIdx, &sh.levels[lvlIdx]
 }
 
 func (ob *OrderBook) Add(order *types.Order) {
-	sh := ob.shard
+	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 	sh.Add(order)
 }
 
-func (sh *Shard) removeNode(nodeIdx int32) {
+func (sh *bookState) removeNode(nodeIdx int32) {
 	n := sh.nodes[nodeIdx]
 	delete(sh.orders, n.order.ID)
 	lvlIdx := n.level
@@ -343,11 +316,11 @@ func (sh *Shard) removeNode(nodeIdx int32) {
 		price := lvl.price
 		if existing, ok := sh.bids[price]; ok && existing == lvlIdx {
 			delete(sh.bids, price)
-			sh.unlinkBid(lvlIdx)
+			sh.unlinkLevel(constants.ORDER_SIDE_BUY, lvlIdx)
 			sh.freeLevel(lvlIdx)
 		} else if existing, ok := sh.asks[price]; ok && existing == lvlIdx {
 			delete(sh.asks, price)
-			sh.unlinkAsk(lvlIdx)
+			sh.unlinkLevel(constants.ORDER_SIDE_SELL, lvlIdx)
 			sh.freeLevel(lvlIdx)
 		}
 	}
@@ -355,7 +328,7 @@ func (sh *Shard) removeNode(nodeIdx int32) {
 	sh.freeNode(nodeIdx)
 }
 
-func (sh *Shard) Remove(orderID types.OrderID) bool {
+func (sh *bookState) Remove(orderID types.OrderID) bool {
 	nodeIdx, ok := sh.orders[orderID]
 	if !ok {
 		return false
@@ -365,13 +338,13 @@ func (sh *Shard) Remove(orderID types.OrderID) bool {
 }
 
 func (ob *OrderBook) Remove(orderID types.OrderID) bool {
-	sh := ob.shard
+	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 	return sh.Remove(orderID)
 }
 
-func (sh *Shard) matchLevel(taker *types.Order, lvlIdx int32, emit func(types.Trade)) {
+func (sh *bookState) matchLevel(taker *types.Order, lvlIdx int32, emit func(types.Match)) {
 	for remaining(taker).Sign() > 0 && sh.levels[lvlIdx].head != -1 {
 		makerNodeIdx := sh.levels[lvlIdx].head
 		maker := sh.nodes[makerNodeIdx].order
@@ -391,21 +364,17 @@ func (sh *Shard) matchLevel(taker *types.Order, lvlIdx int32, emit func(types.Tr
 		taker.Filled = taker.Filled.Add(exec)
 		sh.levels[lvlIdx].total = sh.levels[lvlIdx].total.Sub(exec)
 
-		trade := types.Trade{
-			ID:           types.TradeID(snowflake.Next()),
-			Symbol:       taker.Symbol,
-			Category:     taker.Category,
-			TakerOrder:   taker,
-			MakerOrder:   maker,
-			TakerOrderID: taker.ID,
-			MakerOrderID: maker.ID,
-			TakerID:      taker.UserID,
-			MakerID:      maker.UserID,
-			Price:        sh.levels[lvlIdx].price,
-			Quantity:     exec,
-			Timestamp:    utils.NowNano(),
+		match := types.Match{
+			ID:         types.TradeID(snowflake.Next()),
+			Symbol:     taker.Symbol,
+			Category:   taker.Category,
+			TakerOrder: taker,
+			MakerOrder: maker,
+			Price:      sh.levels[lvlIdx].price,
+			Quantity:   exec,
+			Timestamp:  utils.NowNano(),
 		}
-		emit(trade)
+		emit(match)
 
 		if remaining(maker).Sign() == 0 {
 			sh.removeNode(makerNodeIdx)
@@ -413,38 +382,44 @@ func (sh *Shard) matchLevel(taker *types.Order, lvlIdx int32, emit func(types.Tr
 	}
 }
 
-func (sh *Shard) matchInto(taker *types.Order, limitPrice types.Price, emit func(types.Trade)) {
-	if taker.Side == constants.ORDER_SIDE_BUY {
-		for remaining(taker).Sign() > 0 && sh.bestAsk != -1 {
-			lvlIdx := sh.bestAsk
-			if limitPrice.Sign() > 0 && sh.levels[lvlIdx].price.Cmp(limitPrice) > 0 {
-				break
-			}
-			sh.matchLevel(taker, lvlIdx, emit)
-		}
-		return
+func (sh *bookState) matchSide(taker *types.Order, limitPrice types.Price, emit func(types.Match), side int8) {
+	var limitCmp int
+	if side == constants.ORDER_SIDE_BUY {
+		limitCmp = 1
+	} else {
+		limitCmp = -1
 	}
 
-	for remaining(taker).Sign() > 0 && sh.bestBid != -1 {
+	for remaining(taker).Sign() > 0 {
 		lvlIdx := sh.bestBid
-		if limitPrice.Sign() > 0 && sh.levels[lvlIdx].price.Cmp(limitPrice) < 0 {
-			break
+		if side == constants.ORDER_SIDE_BUY {
+			lvlIdx = sh.bestAsk
+		}
+		if lvlIdx == -1 {
+			return
+		}
+		if limitPrice.Sign() > 0 && sh.levels[lvlIdx].price.Cmp(limitPrice) == limitCmp {
+			return
 		}
 		sh.matchLevel(taker, lvlIdx, emit)
 	}
 }
 
-type TradeHandler func(trade types.Trade)
+type TradeHandler func(match types.Match)
 
-func (sh *Shard) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
+func (sh *bookState) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
 	if remaining(taker).Sign() <= 0 {
 		return
 	}
-	sh.matchInto(taker, limitPrice, handler)
+	if taker.Side == constants.ORDER_SIDE_BUY {
+		sh.matchSide(taker, limitPrice, handler, constants.ORDER_SIDE_BUY)
+		return
+	}
+	sh.matchSide(taker, limitPrice, handler, constants.ORDER_SIDE_SELL)
 }
 
 func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
-	sh := ob.shard
+	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 	sh.Match(taker, limitPrice, handler)

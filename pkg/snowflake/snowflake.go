@@ -4,9 +4,8 @@ import "sync/atomic"
 
 var counter int64
 
-// Next возвращает уникальный ID в стиле Snowflake
-// Использует atomic operations для thread-safety
-// ~1.8 ns/op на Apple M2 Pro
+// Next returns a unique monotonic ID for persisted data.
+// Atomic increment keeps the generator thread-safe and fast.
 func Next() int64 {
 	return atomic.AddInt64(&counter, 1)
 }

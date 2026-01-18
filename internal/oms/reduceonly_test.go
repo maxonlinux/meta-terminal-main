@@ -9,7 +9,7 @@ import (
 )
 
 func TestReduceOnlyIndex_Add(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	order := &types.Order{
 		ID:         types.OrderID(1),
@@ -32,7 +32,7 @@ func TestReduceOnlyIndex_Add(t *testing.T) {
 }
 
 func TestReduceOnlyIndex_AddNonReduceOnly(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	order := &types.Order{
 		ID:         types.OrderID(1),
@@ -55,7 +55,7 @@ func TestReduceOnlyIndex_AddNonReduceOnly(t *testing.T) {
 }
 
 func TestReduceOnlyIndex_Remove(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	order := &types.Order{
 		ID:         types.OrderID(1),
@@ -78,7 +78,7 @@ func TestReduceOnlyIndex_Remove(t *testing.T) {
 }
 
 func TestReduceOnlyIndex_OnPositionReduce(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	order1 := &types.Order{
 		ID:         types.OrderID(1),
@@ -115,14 +115,14 @@ func TestReduceOnlyIndex_OnPositionReduce(t *testing.T) {
 }
 
 func TestReduceOnlyIndex_OnPositionReduce_MissingSymbol(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	// Ensure missing shard maps do not panic for short positions.
 	r.OnPositionReduce("BTCUSDT", types.Quantity(fixed.NewI(-5, 0)), types.UserID(1))
 }
 
 func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	// Add orders with 1000 different symbols
 	for i := 0; i < 1000; i++ {
@@ -141,20 +141,24 @@ func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
 
 	// Verify exposure is stored in correct shards by checking each shard's heaps
 	shardCounts := make(map[uint8]int)
-	for _, symbolMap := range r.symbolHeaps {
-		for range symbolMap {
-			// Count symbols per shard
-		}
-	}
-
-	// Count total tracked symbols and per-shard distribution
-	totalTracked := 0
-	for shardIdx, symbolMap := range r.symbolHeaps {
+	for shardIdx, symbolMap := range r.buyHeaps {
 		count := 0
 		for range symbolMap {
 			count++
 		}
 		shardCounts[shardIdx] = count
+	}
+	for shardIdx, symbolMap := range r.sellHeaps {
+		count := shardCounts[shardIdx]
+		for range symbolMap {
+			count++
+		}
+		shardCounts[shardIdx] = count
+	}
+
+	// Count total tracked symbols and per-shard distribution
+	totalTracked := 0
+	for shardIdx, count := range shardCounts {
 		totalTracked += count
 		if count > 10 {
 			t.Errorf("shard %d has too many symbols: %d", shardIdx, count)
@@ -168,7 +172,7 @@ func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
 }
 
 func BenchmarkReduceOnlyIndex_Add(b *testing.B) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	order := &types.Order{
 		ID:         types.OrderID(0),
@@ -188,7 +192,7 @@ func BenchmarkReduceOnlyIndex_Add(b *testing.B) {
 }
 
 func BenchmarkReduceOnlyIndex_Add1000Symbols(b *testing.B) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	orders := make([]*types.Order, 1000)
 	for i := 0; i < 1000; i++ {
@@ -212,7 +216,7 @@ func BenchmarkReduceOnlyIndex_Add1000Symbols(b *testing.B) {
 }
 
 func BenchmarkReduceOnlyIndex_OnPositionReduce(b *testing.B) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	for i := 0; i < 1000; i++ {
 		order := &types.Order{
@@ -238,7 +242,7 @@ func BenchmarkReduceOnlyIndex_OnPositionReduce(b *testing.B) {
 }
 
 func BenchmarkReduceOnlyIndex_OnPositionReduce1000Symbols(b *testing.B) {
-	r := NewReduceOnlyManager()
+	r := NewReduceOnlyIndex()
 
 	// Add orders across 1000 symbols
 	for i := 0; i < 1000; i++ {

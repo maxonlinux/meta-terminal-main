@@ -331,7 +331,7 @@ PORT=8080
 type Clearing interface {
     Reserve(userID UserID, symbol string, category int8, side int8, qty Quantity, price Price) error
     Release(userID UserID, symbol string, category int8, side int8, qty Quantity, price Price)
-    ExecuteTrade(trade *Trade, taker *Order, maker *Order)
+    ExecuteTrade(match *Match)
 }
 ```
 

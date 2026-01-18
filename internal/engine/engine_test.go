@@ -3,8 +3,12 @@ package engine
 import (
 	"testing"
 
+	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
+	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -13,14 +17,38 @@ type mockCallback struct {
 	created []*types.Order
 }
 
+func seedBalances(portfolioService *portfolio.Service, userID types.UserID, symbol string) {
+	base := balance.GetBaseAsset(symbol)
+	quote := balance.GetQuoteAsset(symbol)
+	amount := types.Quantity(fixed.NewI(1_000_000_000, 0))
+	portfolioService.Balances[userID] = map[string]*types.Balance{
+		base:  {UserID: userID, Asset: base, Available: amount},
+		quote: {UserID: userID, Asset: quote, Available: amount},
+	}
+}
+
 func (m *mockCallback) OnChildOrderCreated(order *types.Order) {
 	m.created = append(m.created, order)
+}
+
+func newEngine(store *oms.Service, cb OrderCallback) (*Engine, *portfolio.Service) {
+	e := NewEngine(store, cb, nil)
+	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
+	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
+	return e, e.portfolio
+}
+
+func newEngineWithPersistence(store *oms.Service, cb OrderCallback, persist persistence.Persistor) *Engine {
+	e := NewEngine(store, cb, persist)
+	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
+	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
+	return e
 }
 
 func TestEngine_PlaceOrder(t *testing.T) {
 	store := oms.NewService()
 	cb := &mockCallback{}
-	e := NewEngine(store, cb)
+	e, _ := newEngine(store, cb)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -33,7 +61,8 @@ func TestEngine_PlaceOrder(t *testing.T) {
 		Quantity: types.Quantity(fixed.NewI(10, 0)),
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != nil {
 		t.Errorf("PlaceOrder failed: %v", err)
 	}
@@ -50,7 +79,7 @@ func TestEngine_PlaceOrder(t *testing.T) {
 func TestEngine_PlaceOrder_Conditional(t *testing.T) {
 	store := oms.NewService()
 	cb := &mockCallback{}
-	e := NewEngine(store, cb)
+	e, _ := newEngine(store, cb)
 
 	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
@@ -65,7 +94,8 @@ func TestEngine_PlaceOrder_Conditional(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_STOP,
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != nil {
 		t.Errorf("PlaceOrder failed: %v", err)
 	}
@@ -93,7 +123,7 @@ func TestEngine_PlaceOrder_Conditional(t *testing.T) {
 
 func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -106,7 +136,8 @@ func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 		Quantity: types.Quantity(fixed.NewI(0, 0)),
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != constants.ErrInvalidQuantity {
 		t.Errorf("expected ErrInvalidQuantity, got %v", err)
 	}
@@ -114,7 +145,7 @@ func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 
 func TestEngine_Validate_ConditionalSpot(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
@@ -129,7 +160,8 @@ func TestEngine_Validate_ConditionalSpot(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_STOP,
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != constants.ErrConditionalSpot {
 		t.Errorf("expected ErrConditionalSpot, got %v", err)
 	}
@@ -137,7 +169,7 @@ func TestEngine_Validate_ConditionalSpot(t *testing.T) {
 
 func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
@@ -152,7 +184,8 @@ func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_STOP,
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != constants.ErrInvalidTriggerForBuy {
 		t.Errorf("expected ErrInvalidTriggerForBuy, got %v", err)
 	}
@@ -160,7 +193,7 @@ func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
 
 func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:        types.UserID(1),
@@ -175,7 +208,8 @@ func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
 		StopOrderType: constants.STOP_ORDER_TYPE_STOP,
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != constants.ErrInvalidTriggerForSell {
 		t.Errorf("expected ErrInvalidTriggerForSell, got %v", err)
 	}
@@ -183,7 +217,7 @@ func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
 
 func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:     types.UserID(1),
@@ -197,7 +231,8 @@ func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
 		ReduceOnly: true,
 	}
 
-	err := e.PlaceOrder(req)
+	result := e.Cmd(&PlaceOrderCmd{Req: req})
+	err := result.Err
 	if err != constants.ErrReduceOnlySpot {
 		t.Errorf("expected ErrReduceOnlySpot, got %v", err)
 	}
@@ -205,13 +240,14 @@ func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
 
 func TestEngine_CancelOrder(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(0, 0)), false, false, 0)
 
-	err := e.CancelOrder(order.ID)
+	result := e.Cmd(&CancelOrderCmd{OrderID: order.ID})
+	err := result.Err
 	if err != nil {
 		t.Errorf("CancelOrder failed: %v", err)
 	}
@@ -227,13 +263,14 @@ func TestEngine_CancelOrder(t *testing.T) {
 
 func TestEngine_AmendOrder(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(0, 0)), false, false, 0)
 
-	err := e.AmendOrder(order.ID, types.Quantity(fixed.NewI(5, 0)))
+	result := e.Cmd(&AmendOrderCmd{OrderID: order.ID, NewQty: types.Quantity(fixed.NewI(5, 0))})
+	err := result.Err
 	if err != nil {
 		t.Errorf("AmendOrder failed: %v", err)
 	}
@@ -249,27 +286,23 @@ func TestEngine_AmendOrder(t *testing.T) {
 
 func TestEngine_OnPositionReduce(t *testing.T) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
-	e.Execute(func() {
-		store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
-			constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
-			types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(0, 0)), true, false, 0)
-	})
+	store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
+		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
+		types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(0, 0)), true, false, 0)
 
-	e.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5, 0)))
+	e.onPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5, 0)))
 }
 
 func TestEngine_OnPriceTick(t *testing.T) {
 	store := oms.NewService()
 	cb := &mockCallback{}
-	e := NewEngine(store, cb)
+	e, _ := newEngine(store, cb)
 
-	e.Execute(func() {
-		store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
-			constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
-			types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(49000, 0)), false, false, constants.STOP_ORDER_TYPE_STOP)
-	})
+	store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
+		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
+		types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(49000, 0)), false, false, constants.STOP_ORDER_TYPE_STOP)
 
 	e.OnPriceTick("BTCUSDT", types.Price(fixed.NewI(48500, 0)))
 
@@ -280,7 +313,7 @@ func TestEngine_OnPriceTick(t *testing.T) {
 
 func BenchmarkEngine_PlaceOrder(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -296,13 +329,85 @@ func BenchmarkEngine_PlaceOrder(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req.UserID = types.UserID(i)
-		e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_WAL measures PlaceOrder with durable persistence.
+func BenchmarkEngine_PlaceOrder_WAL(b *testing.B) {
+	store := oms.NewService()
+	persist, err := persistence.OpenStore(b.TempDir())
+	if err != nil {
+		b.Fatalf("open persistence store: %v", err)
+	}
+	e := newEngineWithPersistence(store, nil, persist)
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(10, 0)),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req.UserID = types.UserID(i)
+		if err := e.Cmd(&PlaceOrderCmd{Req: req}).Err; err != nil {
+			b.Fatalf("place order failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkEngine_PlaceOrder_WALMatch measures persistence on matching trades.
+func BenchmarkEngine_PlaceOrder_WALMatch(b *testing.B) {
+	store := oms.NewService()
+	persist, err := persistence.OpenStore(b.TempDir())
+	if err != nil {
+		b.Fatalf("open persistence store: %v", err)
+	}
+	e := newEngineWithPersistence(store, nil, persist)
+
+	makerReq := &types.PlaceOrderRequest{
+		UserID:   types.UserID(1),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_SELL,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+	}
+	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
+		b.Fatalf("setup maker failed: %v", err)
+	}
+
+	req := &types.PlaceOrderRequest{
+		UserID:   types.UserID(2),
+		Symbol:   "BTCUSDT",
+		Category: constants.CATEGORY_LINEAR,
+		Side:     constants.ORDER_SIDE_BUY,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		TIF:      constants.TIF_GTC,
+		Price:    types.Price(fixed.NewI(50000, 0)),
+		Quantity: types.Quantity(fixed.NewI(1, 0)),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req.UserID = types.UserID(i + 2)
+		if err := e.Cmd(&PlaceOrderCmd{Req: req}).Err; err != nil {
+			b.Fatalf("place order failed: %v", err)
+		}
 	}
 }
 
 func BenchmarkEngine_CancelOrder(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -310,14 +415,14 @@ func BenchmarkEngine_CancelOrder(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.CancelOrder(order.ID)
+		_ = e.Cmd(&CancelOrderCmd{OrderID: order.ID}).Err
 	}
 }
 
 // BenchmarkEngine_AmendOrder measures order amendment throughput.
 func BenchmarkEngine_AmendOrder(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -326,14 +431,14 @@ func BenchmarkEngine_AmendOrder(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		newQty := types.Quantity(fixed.NewI(10+int64(i%10), 0))
-		e.AmendOrder(order.ID, newQty)
+		_ = e.Cmd(&AmendOrderCmd{OrderID: order.ID, NewQty: newQty}).Err
 	}
 }
 
 // BenchmarkEngine_PlaceOrder_IOC measures IOC placement without liquidity.
 func BenchmarkEngine_PlaceOrder_IOC(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -349,14 +454,14 @@ func BenchmarkEngine_PlaceOrder_IOC(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req.UserID = types.UserID(i)
-		_ = e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
 	}
 }
 
 // BenchmarkEngine_PlaceOrder_FOKReject measures FOK rejection without liquidity.
 func BenchmarkEngine_PlaceOrder_FOKReject(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -372,14 +477,14 @@ func BenchmarkEngine_PlaceOrder_FOKReject(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req.UserID = types.UserID(i)
-		_ = e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
 	}
 }
 
 // BenchmarkEngine_PlaceOrder_PostOnlyReject measures post-only rejection on cross.
 func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -391,7 +496,7 @@ func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
 		Price:    types.Price(fixed.NewI(50000, 0)),
 		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
 	}
-	if err := e.PlaceOrder(makerReq); err != nil {
+	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)
 	}
 
@@ -409,14 +514,14 @@ func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req.UserID = types.UserID(i + 10)
-		_ = e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
 	}
 }
 
 // BenchmarkEngine_Match_GTC measures direct match throughput for GTC orders.
 func BenchmarkEngine_Match_GTC(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -428,7 +533,7 @@ func BenchmarkEngine_Match_GTC(b *testing.B) {
 		Price:    types.Price(fixed.NewI(50000, 0)),
 		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
 	}
-	if err := e.PlaceOrder(makerReq); err != nil {
+	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)
 	}
 
@@ -444,14 +549,93 @@ func BenchmarkEngine_Match_GTC(b *testing.B) {
 			Price:    types.Price(fixed.NewI(50000, 0)),
 			Quantity: types.Quantity(fixed.NewI(1, 0)),
 		}
-		_ = e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
+	}
+}
+
+func TestEngine_SetLeverage_PriceUnavailable(t *testing.T) {
+	store := oms.NewService()
+	e, _ := newEngine(store, nil)
+
+	cmd := &SetLeverageCmd{UserID: types.UserID(1), Symbol: "BTCUSDT", Leverage: types.Leverage(fixed.NewI(5, 0))}
+	err := e.Cmd(cmd).Err
+
+	if err != constants.ErrPriceUnavailable {
+		t.Fatalf("expected ErrPriceUnavailable, got %v", err)
+	}
+}
+
+func TestEngine_SetLeverage_LiquidationCheck(t *testing.T) {
+	store := oms.NewService()
+	e, portfolioService := newEngine(store, nil)
+
+	userID := types.UserID(1)
+	symbol := "BTCUSDT"
+	quote := balance.GetQuoteAsset(symbol)
+
+	portfolioService.Balances[userID] = map[string]*types.Balance{
+		quote: {UserID: userID, Asset: quote, Available: types.Quantity(fixed.NewI(100000, 0))},
+	}
+	portfolioService.Positions[userID] = map[string]*types.Position{
+		symbol: {
+			UserID:     userID,
+			Symbol:     symbol,
+			Size:       types.Quantity(fixed.NewI(1, 0)),
+			EntryPrice: types.Price(fixed.NewI(100, 0)),
+			Leverage:   types.Leverage(fixed.NewI(2, 0)),
+		},
+	}
+
+	e.OnPriceTick(symbol, types.Price(fixed.NewI(90, 0)))
+
+	cmd := &SetLeverageCmd{UserID: userID, Symbol: symbol, Leverage: types.Leverage(fixed.NewI(5, 0))}
+	err := e.Cmd(cmd).Err
+
+	if err != constants.ErrLeverageTooHigh {
+		t.Fatalf("expected ErrLeverageTooHigh, got %v", err)
+	}
+}
+
+func TestEngine_SetLeverage_Success(t *testing.T) {
+	store := oms.NewService()
+	e, portfolioService := newEngine(store, nil)
+
+	userID := types.UserID(1)
+	symbol := "BTCUSDT"
+	quote := balance.GetQuoteAsset(symbol)
+
+	portfolioService.Balances[userID] = map[string]*types.Balance{
+		quote: {UserID: userID, Asset: quote, Available: types.Quantity(fixed.NewI(100000, 0))},
+	}
+	portfolioService.Positions[userID] = map[string]*types.Position{
+		symbol: {
+			UserID:     userID,
+			Symbol:     symbol,
+			Size:       types.Quantity(fixed.NewI(1, 0)),
+			EntryPrice: types.Price(fixed.NewI(100, 0)),
+			Leverage:   types.Leverage(fixed.NewI(2, 0)),
+		},
+	}
+
+	e.OnPriceTick(symbol, types.Price(fixed.NewI(95, 0)))
+
+	cmd := &SetLeverageCmd{UserID: userID, Symbol: symbol, Leverage: types.Leverage(fixed.NewI(5, 0))}
+	err := e.Cmd(cmd).Err
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pos := portfolioService.GetPosition(userID, symbol)
+	if math.Cmp(pos.Leverage, types.Leverage(fixed.NewI(5, 0))) != 0 {
+		t.Fatalf("expected leverage updated to 5")
 	}
 }
 
 // BenchmarkEngine_Match_IOC measures direct match throughput for IOC orders.
 func BenchmarkEngine_Match_IOC(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -463,7 +647,7 @@ func BenchmarkEngine_Match_IOC(b *testing.B) {
 		Price:    types.Price(fixed.NewI(50000, 0)),
 		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
 	}
-	if err := e.PlaceOrder(makerReq); err != nil {
+	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)
 	}
 
@@ -479,14 +663,14 @@ func BenchmarkEngine_Match_IOC(b *testing.B) {
 			Price:    types.Price(fixed.NewI(50000, 0)),
 			Quantity: types.Quantity(fixed.NewI(1, 0)),
 		}
-		_ = e.PlaceOrder(req)
+		_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
 	}
 }
 
 // BenchmarkEngine_PlaceOrder_Parallel measures queue contention under parallel load.
 func BenchmarkEngine_PlaceOrder_Parallel(b *testing.B) {
 	store := oms.NewService()
-	e := NewEngine(store, nil)
+	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
 		UserID:   types.UserID(1),
@@ -505,7 +689,7 @@ func BenchmarkEngine_PlaceOrder_Parallel(b *testing.B) {
 		for pb.Next() {
 			localID++
 			req.UserID = types.UserID(localID)
-			_ = e.PlaceOrder(req)
+			_ = e.Cmd(&PlaceOrderCmd{Req: req}).Err
 		}
 	})
 }

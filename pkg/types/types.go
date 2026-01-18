@@ -5,15 +5,22 @@ import "github.com/robaho/fixed"
 // Basic type aliases for domain concepts
 type OrderID int64
 type TradeID int64
+type FundingID int64
 type UserID uint64
 
 type Price = fixed.Fixed
 type Quantity = fixed.Fixed
 
-// Match represents a single match between two orders
+// Match represents a single match between two orders.
 type Match struct {
-	Trade Trade
-	Maker *Order
+	ID         TradeID
+	Symbol     string
+	Category   int8
+	Price      Price
+	Quantity   Quantity
+	TakerOrder *Order
+	MakerOrder *Order
+	Timestamp  uint64
 }
 
 // Trigger represents a conditional order trigger that monitors price levels.

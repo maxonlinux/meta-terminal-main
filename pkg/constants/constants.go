@@ -40,6 +40,22 @@ const (
 	STOP_ORDER_TYPE_TRAILING    = 4
 
 	OMS_SHARD_COUNT = 256
+
+	// TradeBufferSize defines the rolling trade buffer size.
+	TRADE_BUFFER_SIZE = 50
+	// EngineCommandQueueSize defines the engine command channel size.
+	ENGINE_COMMAND_QUEUE_SIZE = 1000
+
+	FUNDING_TYPE_DEPOSIT    = "DEPOSIT"
+	FUNDING_TYPE_WITHDRAWAL = "WITHDRAWAL"
+
+	FUNDING_STATUS_PENDING   = "PENDING"
+	FUNDING_STATUS_COMPLETED = "COMPLETED"
+	FUNDING_STATUS_CANCELED  = "CANCELED"
+
+	FUNDING_CREATED_BY_USER     = "USER"
+	FUNDING_CREATED_BY_ADMIN    = "ADMIN"
+	FUNDING_CREATED_BY_PLATFORM = "PLATFORM"
 )
 
 var (
@@ -59,4 +75,8 @@ var (
 	ErrConditionalSpot          = errors.New("conditional orders not allowed for SPOT")
 	ErrReduceOnlySpot           = errors.New("reduce-only not allowed for SPOT")
 	ErrFOKInsufficientLiquidity = errors.New("FOK: insufficient liquidity in orderbook")
+	// ErrLeverageTooHigh indicates leverage would trigger immediate liquidation.
+	ErrLeverageTooHigh = errors.New("leverage would cause immediate liquidation")
+	// ErrPriceUnavailable indicates required pricing data is missing.
+	ErrPriceUnavailable = errors.New("price unavailable")
 )

@@ -48,21 +48,21 @@ func makeOrder(
 	}
 }
 
-func applyTrade(trade types.Trade) {
-	if trade.MakerOrder == nil {
+func applyTrade(match types.Match) {
+	if match.MakerOrder == nil {
 		return
 	}
 
 	now := utils.NowNano()
-	remaining := math.Sub(trade.MakerOrder.Quantity, trade.MakerOrder.Filled)
+	remaining := math.Sub(match.MakerOrder.Quantity, match.MakerOrder.Filled)
 	if remaining.Sign() == 0 {
-		trade.MakerOrder.Status = constants.ORDER_STATUS_FILLED
-		trade.MakerOrder.UpdatedAt = now
+		match.MakerOrder.Status = constants.ORDER_STATUS_FILLED
+		match.MakerOrder.UpdatedAt = now
 		return
 	}
 
-	trade.MakerOrder.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
-	trade.MakerOrder.UpdatedAt = now
+	match.MakerOrder.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+	match.MakerOrder.UpdatedAt = now
 }
 
 func TestMatch_PostOnlyRejectsCross(t *testing.T) {

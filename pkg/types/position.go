@@ -1,7 +1,9 @@
 package types
 
 type PositionMode int8
-type Leverage int8
+
+// Leverage is stored as a fixed-point ratio (e.g. 2, 5, 10).
+type Leverage = Quantity
 
 // Position represents user's position in LINEAR market (not SPOT)
 // Direction is determined by Size sign: >0 = LONG, <0 = SHORT, 0 = NONE

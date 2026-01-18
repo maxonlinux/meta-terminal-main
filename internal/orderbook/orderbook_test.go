@@ -1,4 +1,4 @@
-package prod
+package orderbook
 
 import (
 	"testing"
@@ -40,9 +40,10 @@ func TestAdd(t *testing.T) {
 		Quantity: q(10),
 	}
 	ob.Add(o)
-	b, _, ok := ob.BestBid()
-	if !ok || b.Cmp(o.Price) != 0 {
-		t.Fail()
+
+	available := ob.AvailableQuantity(constants.ORDER_SIDE_SELL, types.Price{}, q(1))
+	if available.Sign() <= 0 {
+		t.Fatal("expected available liquidity")
 	}
 }
 
@@ -65,9 +66,9 @@ func TestRemove(t *testing.T) {
 		t.Fatal("remove failed")
 	}
 
-	_, _, ok := ob.BestBid()
-	if ok {
-		t.Fatal("bid still exists")
+	available := ob.AvailableQuantity(constants.ORDER_SIDE_SELL, types.Price{}, q(1))
+	if available.Sign() > 0 {
+		t.Fatal("expected empty book")
 	}
 }
 
@@ -97,9 +98,9 @@ func TestMatch(t *testing.T) {
 		Quantity: q(5),
 	}
 
-	var trades []types.Trade
-	ob.Match(buy, types.Price{}, func(trade types.Trade) {
-		trades = append(trades, trade)
+	var trades []types.Match
+	ob.Match(buy, types.Price{}, func(match types.Match) {
+		trades = append(trades, match)
 	})
 
 	if len(trades) != 1 {
@@ -286,7 +287,7 @@ func BenchmarkMatchAllDifferentLevels(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(1000),
 		}
-		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(match types.Match) {})
 	}
 }
 
@@ -319,7 +320,7 @@ func BenchmarkMatchAllSameLevel(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(1000),
 		}
-		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(match types.Match) {})
 	}
 }
 
@@ -352,7 +353,7 @@ func BenchmarkMatchManyTrades(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(10000),
 		}
-		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(match types.Match) {})
 	}
 }
 
@@ -406,7 +407,7 @@ func BenchmarkMatchLevelTraversal(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(10000),
 		}
-		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(match types.Match) {})
 	}
 }
 
@@ -440,7 +441,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 				Price:    p(50500),
 				Quantity: q(10),
 			}
-			ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+			ob.Match(taker, types.Price{}, func(match types.Match) {})
 		}
 	}
 }
@@ -480,7 +481,7 @@ func BenchmarkMatch(b *testing.B) {
 			Price:    p(50500),
 			Quantity: q(1),
 		}
-		ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+		ob.Match(taker, types.Price{}, func(match types.Match) {})
 	}
 }
 
@@ -507,32 +508,6 @@ func BenchmarkRemove(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		ob.Remove(ids[i%1000])
-	}
-}
-
-func BenchmarkBestBid(b *testing.B) {
-	ob := New()
-	var orderID types.OrderID
-	for j := 0; j < 1000; j++ {
-		orderID++
-		ob.Add(&types.Order{
-			ID:       orderID,
-			UserID:   types.UserID(1),
-			Symbol:   "BTC-USD",
-			Category: constants.CATEGORY_LINEAR,
-			Side:     constants.ORDER_SIDE_BUY,
-			Type:     constants.ORDER_TYPE_LIMIT,
-			TIF:      constants.TIF_GTC,
-			Price:    p(50000 + int64(j)),
-			Quantity: q(1),
-		})
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < 1000; j++ {
-			ob.BestBid()
-		}
 	}
 }
 
@@ -570,7 +545,7 @@ func BenchmarkMatchBatch(b *testing.B) {
 				Price:    p(50000),
 				Quantity: q(1),
 			}
-			ob.Match(taker, types.Price{}, func(trade types.Trade) {})
+			ob.Match(taker, types.Price{}, func(match types.Match) {})
 		}
 	}
 }

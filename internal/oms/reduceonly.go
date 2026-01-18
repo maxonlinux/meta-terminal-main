@@ -8,15 +8,14 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-type ROShard struct {
-	buyHeap  *orderHeap
-	sellHeap *orderHeap
+type roShard struct {
 	exposure map[types.UserID]types.Quantity
 }
 
 type ReduceOnlyIndex struct {
-	shards      [constants.OMS_SHARD_COUNT]*ROShard
-	symbolHeaps map[uint8]map[string]*orderHeap // shard -> symbol -> heap
+	shards    [constants.OMS_SHARD_COUNT]*roShard
+	buyHeaps  map[uint8]map[string]*orderHeap
+	sellHeaps map[uint8]map[string]*orderHeap
 }
 
 type orderHeap struct{ items []*types.Order }
@@ -49,16 +48,13 @@ func (h *orderHeap) Peek() *types.Order {
 	return h.items[0]
 }
 
-func (h *orderHeap) IsEmpty() bool {
-	return h.Len() == 0
-}
-
-func NewReduceOnlyManager() *ReduceOnlyIndex {
+func NewReduceOnlyIndex() *ReduceOnlyIndex {
 	r := &ReduceOnlyIndex{
-		symbolHeaps: make(map[uint8]map[string]*orderHeap),
+		buyHeaps:  make(map[uint8]map[string]*orderHeap),
+		sellHeaps: make(map[uint8]map[string]*orderHeap),
 	}
 	for i := range r.shards {
-		r.shards[i] = &ROShard{
+		r.shards[i] = &roShard{
 			exposure: make(map[types.UserID]types.Quantity),
 		}
 	}
@@ -66,24 +62,31 @@ func NewReduceOnlyManager() *ReduceOnlyIndex {
 }
 
 func (r *ReduceOnlyIndex) getOrCreateHeap(shardIdx uint8, symbol string, isBuy bool) *orderHeap {
-	symbolMap := r.symbolHeaps[shardIdx]
-	if symbolMap == nil {
-		symbolMap = make(map[string]*orderHeap)
-		r.symbolHeaps[shardIdx] = symbolMap
-	}
-
-	key := symbol
-	if !isBuy {
-		key = "SELL:" + symbol // Separate key for sell heap
-	}
-
-	if h, ok := symbolMap[key]; ok {
+	symbolMap := r.getHeapMap(shardIdx, isBuy)
+	if h, ok := symbolMap[symbol]; ok {
 		return h
 	}
 
 	h := &orderHeap{}
-	symbolMap[key] = h
+	symbolMap[symbol] = h
 	return h
+}
+
+func (r *ReduceOnlyIndex) getHeapMap(shardIdx uint8, isBuy bool) map[string]*orderHeap {
+	if isBuy {
+		symbolMap := r.buyHeaps[shardIdx]
+		if symbolMap == nil {
+			symbolMap = make(map[string]*orderHeap)
+			r.buyHeaps[shardIdx] = symbolMap
+		}
+		return symbolMap
+	}
+	symbolMap := r.sellHeaps[shardIdx]
+	if symbolMap == nil {
+		symbolMap = make(map[string]*orderHeap)
+		r.sellHeaps[shardIdx] = symbolMap
+	}
+	return symbolMap
 }
 
 func (r *ReduceOnlyIndex) Add(o *types.Order) {
@@ -92,10 +95,9 @@ func (r *ReduceOnlyIndex) Add(o *types.Order) {
 	}
 
 	shardIdx := ShardIndex(o.Symbol)
-	shard := r.shards[shardIdx]
 
 	remaining := math.Sub(o.Quantity, o.Filled)
-	shard.exposure[o.UserID] = math.Add(shard.exposure[o.UserID], remaining)
+	r.AdjustExposure(o, remaining)
 
 	var h *orderHeap
 	switch o.Side {
@@ -110,11 +112,13 @@ func (r *ReduceOnlyIndex) Add(o *types.Order) {
 }
 
 func (r *ReduceOnlyIndex) Remove(o *types.Order) {
+	r.AdjustExposure(o, math.Sub(o.Filled, o.Quantity))
+}
+
+func (r *ReduceOnlyIndex) AdjustExposure(o *types.Order, delta types.Quantity) {
 	shardIdx := ShardIndex(o.Symbol)
 	shard := r.shards[shardIdx]
-
-	remaining := math.Sub(o.Quantity, o.Filled)
-	shard.exposure[o.UserID] = math.Sub(shard.exposure[o.UserID], remaining)
+	shard.exposure[o.UserID] = math.Add(shard.exposure[o.UserID], delta)
 }
 
 func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Quantity, userID types.UserID) {
@@ -133,18 +137,12 @@ func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Qua
 	// SHORT position (size < 0): cancel BUY orders (farthest up = lowest price)
 	var h *orderHeap
 	if positionSize.Sign() > 0 {
-		key := "SELL:" + symbol
-		if m, ok := r.symbolHeaps[shardIdx]; ok {
-			h = m[key]
-		}
+		h = r.sellHeaps[shardIdx][symbol]
 	} else {
-		// Guard missing shard map to avoid nil panics on cold symbols.
-		if m, ok := r.symbolHeaps[shardIdx]; ok {
-			h = m[symbol]
-		}
+		h = r.buyHeaps[shardIdx][symbol]
 	}
 
-	if h == nil || h.IsEmpty() {
+	if h == nil || h.Len() == 0 {
 		return
 	}
 
@@ -166,7 +164,7 @@ func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Qua
 		if math.Cmp(remaining, excess) <= 0 {
 			// Cancel entire order
 			o.Status = constants.ORDER_STATUS_CANCELED
-			shard.exposure[userID] = math.Sub(shard.exposure[userID], remaining)
+			r.AdjustExposure(o, math.Sub(math.Zero, remaining))
 			excess = math.Sub(excess, remaining)
 			heap.Pop(h)
 			continue
@@ -174,7 +172,7 @@ func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Qua
 
 		// Partial cancel
 		o.Quantity = math.Sub(o.Quantity, excess)
-		shard.exposure[userID] = math.Sub(shard.exposure[userID], excess)
+		r.AdjustExposure(o, math.Sub(math.Zero, excess))
 		excess = math.Zero
 	}
 }
