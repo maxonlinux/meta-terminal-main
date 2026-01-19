@@ -8,7 +8,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -32,21 +31,14 @@ func (m *mockCallback) OnChildOrderCreated(order *types.Order) {
 }
 
 func newEngine(store *oms.Service, cb OrderCallback) (*Engine, *portfolio.Service) {
-	e := NewEngine(store, cb, nil)
+	e := NewEngine(store, cb)
 	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
 	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
 	return e, e.portfolio
 }
 
-func newEngineWithPersistence(store *oms.Service, cb OrderCallback, persist persistence.Persistor) *Engine {
-	e := NewEngine(store, cb, persist)
-	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
-	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
-	return e
-}
-
 func TestEngine_PlaceOrder(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	cb := &mockCallback{}
 	e, _ := newEngine(store, cb)
 
@@ -77,7 +69,7 @@ func TestEngine_PlaceOrder(t *testing.T) {
 }
 
 func TestEngine_PlaceOrder_Conditional(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	cb := &mockCallback{}
 	e, _ := newEngine(store, cb)
 
@@ -122,7 +114,7 @@ func TestEngine_PlaceOrder_Conditional(t *testing.T) {
 }
 
 func TestEngine_Validate_ZeroQuantity(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -144,7 +136,7 @@ func TestEngine_Validate_ZeroQuantity(t *testing.T) {
 }
 
 func TestEngine_Validate_ConditionalSpot(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -168,7 +160,7 @@ func TestEngine_Validate_ConditionalSpot(t *testing.T) {
 }
 
 func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -192,7 +184,7 @@ func TestEngine_Validate_InvalidTriggerBuy(t *testing.T) {
 }
 
 func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -216,7 +208,7 @@ func TestEngine_Validate_InvalidTriggerSell(t *testing.T) {
 }
 
 func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -239,7 +231,7 @@ func TestEngine_Validate_ReduceOnlySpot(t *testing.T) {
 }
 
 func TestEngine_CancelOrder(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -262,7 +254,7 @@ func TestEngine_CancelOrder(t *testing.T) {
 }
 
 func TestEngine_AmendOrder(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -285,7 +277,7 @@ func TestEngine_AmendOrder(t *testing.T) {
 }
 
 func TestEngine_OnPositionReduce(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -296,7 +288,7 @@ func TestEngine_OnPositionReduce(t *testing.T) {
 }
 
 func TestEngine_OnPriceTick(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	cb := &mockCallback{}
 	e, _ := newEngine(store, cb)
 
@@ -312,7 +304,7 @@ func TestEngine_OnPriceTick(t *testing.T) {
 }
 
 func BenchmarkEngine_PlaceOrder(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -333,80 +325,8 @@ func BenchmarkEngine_PlaceOrder(b *testing.B) {
 	}
 }
 
-// BenchmarkEngine_PlaceOrder_WAL measures PlaceOrder with durable persistence.
-func BenchmarkEngine_PlaceOrder_WAL(b *testing.B) {
-	store := oms.NewService()
-	persist, err := persistence.OpenStore(b.TempDir())
-	if err != nil {
-		b.Fatalf("open persistence store: %v", err)
-	}
-	e := newEngineWithPersistence(store, nil, persist)
-
-	req := &types.PlaceOrderRequest{
-		UserID:   types.UserID(1),
-		Symbol:   "BTCUSDT",
-		Category: constants.CATEGORY_LINEAR,
-		Side:     constants.ORDER_SIDE_BUY,
-		Type:     constants.ORDER_TYPE_LIMIT,
-		TIF:      constants.TIF_GTC,
-		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(10, 0)),
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req.UserID = types.UserID(i)
-		if err := e.Cmd(&PlaceOrderCmd{Req: req}).Err; err != nil {
-			b.Fatalf("place order failed: %v", err)
-		}
-	}
-}
-
-// BenchmarkEngine_PlaceOrder_WALMatch measures persistence on matching trades.
-func BenchmarkEngine_PlaceOrder_WALMatch(b *testing.B) {
-	store := oms.NewService()
-	persist, err := persistence.OpenStore(b.TempDir())
-	if err != nil {
-		b.Fatalf("open persistence store: %v", err)
-	}
-	e := newEngineWithPersistence(store, nil, persist)
-
-	makerReq := &types.PlaceOrderRequest{
-		UserID:   types.UserID(1),
-		Symbol:   "BTCUSDT",
-		Category: constants.CATEGORY_LINEAR,
-		Side:     constants.ORDER_SIDE_SELL,
-		Type:     constants.ORDER_TYPE_LIMIT,
-		TIF:      constants.TIF_GTC,
-		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
-	}
-	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
-		b.Fatalf("setup maker failed: %v", err)
-	}
-
-	req := &types.PlaceOrderRequest{
-		UserID:   types.UserID(2),
-		Symbol:   "BTCUSDT",
-		Category: constants.CATEGORY_LINEAR,
-		Side:     constants.ORDER_SIDE_BUY,
-		Type:     constants.ORDER_TYPE_LIMIT,
-		TIF:      constants.TIF_GTC,
-		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(1, 0)),
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req.UserID = types.UserID(i + 2)
-		if err := e.Cmd(&PlaceOrderCmd{Req: req}).Err; err != nil {
-			b.Fatalf("place order failed: %v", err)
-		}
-	}
-}
-
 func BenchmarkEngine_CancelOrder(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -421,7 +341,7 @@ func BenchmarkEngine_CancelOrder(b *testing.B) {
 
 // BenchmarkEngine_AmendOrder measures order amendment throughput.
 func BenchmarkEngine_AmendOrder(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	order := store.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -437,7 +357,7 @@ func BenchmarkEngine_AmendOrder(b *testing.B) {
 
 // BenchmarkEngine_PlaceOrder_IOC measures IOC placement without liquidity.
 func BenchmarkEngine_PlaceOrder_IOC(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -460,7 +380,7 @@ func BenchmarkEngine_PlaceOrder_IOC(b *testing.B) {
 
 // BenchmarkEngine_PlaceOrder_FOKReject measures FOK rejection without liquidity.
 func BenchmarkEngine_PlaceOrder_FOKReject(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{
@@ -483,7 +403,7 @@ func BenchmarkEngine_PlaceOrder_FOKReject(b *testing.B) {
 
 // BenchmarkEngine_PlaceOrder_PostOnlyReject measures post-only rejection on cross.
 func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
@@ -520,7 +440,7 @@ func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
 
 // BenchmarkEngine_Match_GTC measures direct match throughput for GTC orders.
 func BenchmarkEngine_Match_GTC(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
@@ -554,7 +474,7 @@ func BenchmarkEngine_Match_GTC(b *testing.B) {
 }
 
 func TestEngine_SetLeverage_PriceUnavailable(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	cmd := &SetLeverageCmd{UserID: types.UserID(1), Symbol: "BTCUSDT", Leverage: types.Leverage(fixed.NewI(5, 0))}
@@ -566,7 +486,7 @@ func TestEngine_SetLeverage_PriceUnavailable(t *testing.T) {
 }
 
 func TestEngine_SetLeverage_LiquidationCheck(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, portfolioService := newEngine(store, nil)
 
 	userID := types.UserID(1)
@@ -597,7 +517,7 @@ func TestEngine_SetLeverage_LiquidationCheck(t *testing.T) {
 }
 
 func TestEngine_SetLeverage_Success(t *testing.T) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, portfolioService := newEngine(store, nil)
 
 	userID := types.UserID(1)
@@ -634,7 +554,7 @@ func TestEngine_SetLeverage_Success(t *testing.T) {
 
 // BenchmarkEngine_Match_IOC measures direct match throughput for IOC orders.
 func BenchmarkEngine_Match_IOC(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	makerReq := &types.PlaceOrderRequest{
@@ -669,7 +589,7 @@ func BenchmarkEngine_Match_IOC(b *testing.B) {
 
 // BenchmarkEngine_PlaceOrder_Parallel measures queue contention under parallel load.
 func BenchmarkEngine_PlaceOrder_Parallel(b *testing.B) {
-	store := oms.NewService()
+	store := oms.NewService(nil)
 	e, _ := newEngine(store, nil)
 
 	req := &types.PlaceOrderRequest{

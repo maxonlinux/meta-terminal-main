@@ -212,7 +212,7 @@ func TestConditionalIndex_CheckTriggers_SellPartialTrigger(t *testing.T) {
 }
 
 func TestConditionalIndex_CheckTriggers_Concurrent(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 	var wg sync.WaitGroup
 
 	for i := 0; i < 100; i++ {

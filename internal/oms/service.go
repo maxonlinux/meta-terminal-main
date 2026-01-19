@@ -6,6 +6,7 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
@@ -16,6 +17,7 @@ type Service struct {
 	all         map[types.OrderID]*types.Order
 	reduceonly  *ReduceOnlyIndex
 	conditional *ConditionalIndex
+	pebble      *persistence.PebbleKV
 }
 
 func (s *Service) removeReduceOnly(order *types.Order) {
@@ -76,12 +78,23 @@ func newOrder(
 	}
 }
 
-func NewService() *Service {
-	return &Service{
+func NewService(pkv *persistence.PebbleKV) *Service {
+	s := &Service{
 		all:         make(map[types.OrderID]*types.Order),
 		reduceonly:  NewReduceOnlyIndex(),
 		conditional: NewConditionalIndex(),
+		pebble:      pkv,
 	}
+
+	if pkv != nil {
+		pkv.RangeOrders(func(order *types.Order) bool {
+			s.all[order.ID] = order
+			s.indexOrder(order)
+			return true
+		})
+	}
+
+	return s
 }
 
 func (s *Service) Create(
@@ -101,7 +114,6 @@ func (s *Service) Create(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Single timestamp for create/update keeps state consistent.
 	now := utils.NowNano()
 	order := newOrder(
 		userID,
@@ -119,9 +131,12 @@ func (s *Service) Create(
 		now,
 	)
 
-	// Store in main order map.
 	s.all[order.ID] = order
 	s.indexOrder(order)
+
+	if s.pebble != nil {
+		s.pebble.PutOrder(order)
+	}
 
 	return order
 }
@@ -141,18 +156,6 @@ func (s *Service) Count() int {
 	return len(s.all)
 }
 
-// Orders returns a copy of all orders for engine state export.
-func (s *Service) Orders() []types.Order {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	orders := make([]types.Order, 0, len(s.all))
-	for _, order := range s.all {
-		orders = append(orders, *order)
-	}
-	return orders
-}
-
 func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,25 +165,22 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 		return errors.New("order not found")
 	}
 
-	// Validate new quantity is smaller than current
 	if math.Cmp(newQty, order.Quantity) >= 0 {
 		return errors.New("new quantity must be less than current")
 	}
 
-	// For reduceOnly orders, delta must be calculated based on REMAINING quantity
-	// (Quantity - Filled), not the original Quantity. This ensures correct exposure
-	// recalculation after partial fills.
-	// Example: qty=10, filled=3, remaining=7. Amend to 5.
-	// delta = remaining - newQty = 7 - 5 = 2
 	remaining := math.Sub(order.Quantity, order.Filled)
 	delta := math.Sub(remaining, newQty)
 
 	order.Quantity = newQty
 	order.UpdatedAt = utils.NowNano()
 
-	// Only update reduceOnly exposure if this is a reduceOnly order
 	if order.ReduceOnly {
 		s.reduceonly.AdjustExposure(order, math.Sub(math.Zero, delta))
+	}
+
+	if s.pebble != nil {
+		s.pebble.PutOrder(order)
 	}
 
 	return nil
@@ -195,28 +195,24 @@ func (s *Service) Cancel(id types.OrderID) error {
 		return errors.New("order not found")
 	}
 
-	// Validate order is in cancellable state
 	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
 		return errors.New("only active orders can be canceled")
 	}
 
-	// Partial fills keep history as partially filled + canceled.
 	if !order.Filled.IsZero() {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 	} else {
 		order.Status = constants.ORDER_STATUS_CANCELED
 	}
 
-	// Single timestamp keeps order history consistent.
 	now := utils.NowNano()
 	order.UpdatedAt = now
 
-	// Remove from reduceonly index if registered.
 	s.removeReduceOnly(order)
 
-	// Conditional orders are removed lazily during trigger checks.
-
-	// Order remains in the store for audit/history.
+	if s.pebble != nil {
+		s.pebble.PutOrder(order)
+	}
 
 	return nil
 }
@@ -230,24 +226,26 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 		return errors.New("order not found")
 	}
 
-	// Reduce-only exposure is reduced by executed quantity.
 	s.reduceonly.AdjustExposure(order, math.Sub(math.Zero, qty))
 
-	// Update fill before status to keep state consistent.
 	order.Filled = math.Add(order.Filled, qty)
 	order.UpdatedAt = utils.NowNano()
 
 	if math.Cmp(order.Filled, order.Quantity) != 0 {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
+		if s.pebble != nil {
+			s.pebble.PutOrder(order)
+		}
 		return nil
 	}
 
 	order.Status = constants.ORDER_STATUS_FILLED
 
-	// Remove from reduceonly index if this was a reduceOnly order.
 	s.removeReduceOnly(order)
 
-	// For conditional orders, cleanup happens lazily via order.Status check in CheckTriggers()
+	if s.pebble != nil {
+		s.pebble.PutOrder(order)
+	}
 
 	return nil
 }
@@ -256,7 +254,6 @@ func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionS
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Delegate to the sharded reduceonly index
 	s.reduceonly.OnPositionReduce(symbol, positionSize, userID)
 }
 
@@ -264,24 +261,5 @@ func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*t
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Use the sharded ConditionalIndex to check triggers with callback
-	// CheckTriggers handles Status and UpdatedAt internally
 	s.conditional.CheckTriggers(symbol, price, callback)
-}
-
-// LoadOrders replaces OMS state with the provided orders.
-func (s *Service) LoadOrders(orders []types.Order) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.all = make(map[types.OrderID]*types.Order, len(orders))
-	s.reduceonly = NewReduceOnlyIndex()
-	s.conditional = NewConditionalIndex()
-
-	for i := range orders {
-		stored := orders[i]
-		order := &stored
-		s.all[order.ID] = order
-		s.indexOrder(order)
-	}
 }

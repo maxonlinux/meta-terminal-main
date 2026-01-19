@@ -12,6 +12,43 @@ go test -race ./...               # Run with race detection
 go test -cover ./...              # Run with coverage
 ```
 
+### Performance Benchmarks (Pebble vs JetStream)
+```bash
+# All benchmarks
+go test -bench=. -benchmem -count=3 ./internal/bench/...
+
+# Pebble KV benchmarks
+go test -bench=BenchmarkPebble -benchmem ./internal/bench/...
+
+# JetStream KV benchmarks (requires NATS server)
+go test -bench=BenchmarkJetStream -benchmem ./internal/bench/...
+```
+
+### Persistence (PebbleKV - Self-Managing State)
+```bash
+# Open PebbleKV store
+store, err := persistence.OpenPebbleKV(path)
+
+# OMS автоматически восстанавливает состояние при инициализации
+# Все изменения (Create, Amend, Cancel, Fill) автоматически пишутся в PebbleKV
+store := oms.NewService(pkv)  # pkv == nil для тестов
+
+# Checkpoint (создаёт checkpoint директорию)
+store.Checkpoint()
+
+# Compact (оптимизирует хранение)
+store.Compact()
+```
+
+### Code Style Guidelines
+
+### Types and Domain Modeling
+- Use domain-specific type aliases: `OrderID`, `TradeID`, `UserID`, `Price`, `Quantity`
+- All IDs must use Snowflake generation for persisted/user-visible data
+- Use math/big for financial values (Price, Quantity) to avoid floating-point errors
+- Timestamps use `uint64` (nanoseconds since epoch) via `types.NowNano()`
+- Constants live in `internal/constants/` with descriptive prefixes (CATEGORY_*, ORDER_*, SIDE_*)
+
 ### Lint/Static Analysis
 ```bash
 go vet ./...                      # Static analysis

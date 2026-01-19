@@ -11,7 +11,7 @@ import (
 )
 
 func TestService_Create(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	order := s.Create(
 		types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -38,7 +38,7 @@ func TestService_Create(t *testing.T) {
 }
 
 func TestService_CreateConditional(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	order := s.Create(
 		types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
@@ -56,7 +56,7 @@ func TestService_CreateConditional(t *testing.T) {
 }
 
 func TestService_Get(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	created := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -78,7 +78,7 @@ func TestService_Get(t *testing.T) {
 }
 
 func TestService_Amend(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -100,7 +100,7 @@ func TestService_Amend(t *testing.T) {
 }
 
 func TestService_Cancel(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -122,7 +122,7 @@ func TestService_Cancel(t *testing.T) {
 }
 
 func TestService_Fill(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
@@ -153,7 +153,7 @@ func TestService_Fill(t *testing.T) {
 }
 
 func TestService_Concurrent(t *testing.T) {
-	s := NewService()
+	s := NewService(nil)
 	var wg sync.WaitGroup
 
 	for i := 0; i < 100; i++ {
@@ -174,7 +174,7 @@ func TestService_Concurrent(t *testing.T) {
 }
 
 func BenchmarkService_Create(b *testing.B) {
-	s := NewService()
+	s := NewService(nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -186,7 +186,7 @@ func BenchmarkService_Create(b *testing.B) {
 }
 
 func BenchmarkService_Get(b *testing.B) {
-	s := NewService()
+	s := NewService(nil)
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,

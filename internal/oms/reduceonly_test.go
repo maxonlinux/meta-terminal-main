@@ -105,7 +105,7 @@ func TestReduceOnlyIndex_OnPositionReduce(t *testing.T) {
 	r.Add(order1)
 	r.Add(order2)
 
-	service := NewService()
+	service := NewService(nil)
 	service.reduceonly = r
 	service.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5, 0)))
 
@@ -232,7 +232,7 @@ func BenchmarkReduceOnlyIndex_OnPositionReduce(b *testing.B) {
 		r.Add(order)
 	}
 
-	service := NewService()
+	service := NewService(nil)
 	service.reduceonly = r
 
 	b.ResetTimer()
@@ -260,7 +260,7 @@ func BenchmarkReduceOnlyIndex_OnPositionReduce1000Symbols(b *testing.B) {
 		r.Add(order)
 	}
 
-	service := NewService()
+	service := NewService(nil)
 	service.reduceonly = r
 
 	b.ResetTimer()

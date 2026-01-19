@@ -12,7 +12,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -20,12 +19,10 @@ type OrderCallback interface {
 	OnChildOrderCreated(order *types.Order)
 }
 
-// Command defines a serialized engine operation.
 type Command interface {
 	Apply(*Engine) CommandResult
 }
 
-// CommandResult contains the outcome of an engine command.
 type CommandResult struct {
 	Err     error
 	Trades  []types.Trade
@@ -46,18 +43,17 @@ var (
 
 type Engine struct {
 	store      *oms.Service
-	books      map[int8]map[string]*orderbook.OrderBook // Category + symbol orderbooks
-	persist    persistence.Persistor                    // Persistence sink
-	clearing   *clearing.Service                        // Clearing integration
-	portfolio  *portfolio.Service                       // Portfolio for leverage updates
-	tradeFeed  *marketdata.TradeFeed                    // Rolling public trades
+	books      map[int8]map[string]*orderbook.OrderBook
+	clearing   *clearing.Service
+	portfolio  *portfolio.Service
+	tradeFeed  *marketdata.TradeFeed
 	lastPrices map[string]types.Price
 	commands   chan queuedCommand
 	callback   OrderCallback
 	done       chan struct{}
 }
 
-func NewEngine(store *oms.Service, cb OrderCallback, persist persistence.Persistor) *Engine {
+func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	var engineRef *Engine
 	portfolioService := portfolio.New(func(userID types.UserID, symbol string, size types.Quantity) {
 		if engineRef != nil {
@@ -72,16 +68,13 @@ func NewEngine(store *oms.Service, cb OrderCallback, persist persistence.Persist
 			constants.CATEGORY_SPOT:   make(map[string]*orderbook.OrderBook),
 			constants.CATEGORY_LINEAR: make(map[string]*orderbook.OrderBook),
 		},
-		persist:    persist,
 		clearing:   clearingService,
 		portfolio:  portfolioService,
 		tradeFeed:  marketdata.NewTradeFeed(),
 		lastPrices: make(map[string]types.Price),
-		// Commands queue size is centralized in constants.
-		commands: make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
-
-		callback: cb,
-		done:     make(chan struct{}),
+		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
+		callback:   cb,
+		done:       make(chan struct{}),
 	}
 
 	go func() {
@@ -104,19 +97,14 @@ func NewEngine(store *oms.Service, cb OrderCallback, persist persistence.Persist
 
 func (e *Engine) Shutdown() {
 	close(e.done)
-	if e.persist != nil {
-		_ = e.persist.Close()
-	}
 }
 
-// Cmd enqueues a command and waits for the reply.
 func (e *Engine) Cmd(cmd Command) CommandResult {
 	reply := make(chan CommandResult, 1)
 	e.commands <- queuedCommand{cmd: cmd, reply: reply}
 	return <-reply
 }
 
-// Enqueue sends a command without waiting for a response.
 func (e *Engine) Enqueue(cmd Command) {
 	e.commands <- queuedCommand{cmd: cmd}
 }
@@ -142,7 +130,6 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 	e.store.OnPositionReduce(userID, symbol, size)
 }
 
-// OnPriceTick applies a price update and evaluates conditional triggers.
 func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	e.lastPrices[symbol] = price
 	e.store.OnPriceTick(symbol, price, func(order *types.Order) {
@@ -152,7 +139,6 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	})
 }
 
-// PlaceOrderCmd submits a new order.
 type PlaceOrderCmd struct {
 	Req *types.PlaceOrderRequest
 }
@@ -210,12 +196,6 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		req.StopOrderType,
 	)
 
-	if e.persist != nil {
-		if err := e.persist.AppendOrderCreated(order); err != nil {
-			return CommandResult{Err: err}
-		}
-	}
-
 	book, err := e.getBook(order.Category, order.Symbol)
 	if err != nil {
 		return CommandResult{Err: err}
@@ -228,9 +208,6 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		if math.Sign(remaining) > 0 {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
-		if e.persist != nil {
-			_ = e.persist.AppendOrderCanceled(order)
-		}
 		return CommandResult{Err: matchErr}
 	}
 
@@ -240,16 +217,9 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
 	}
-
-	if e.persist != nil {
-		if err := e.persist.AppendOrderUpdated(order); err != nil {
-			return CommandResult{Err: err}
-		}
-	}
 	return CommandResult{Order: order}
 }
 
-// CancelOrderCmd cancels an existing order.
 type CancelOrderCmd struct {
 	OrderID types.OrderID
 }
@@ -269,17 +239,11 @@ func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
 		if book, err := e.getBook(order.Category, order.Symbol); err == nil {
 			_ = book.Remove(order.ID)
 		}
-		if e.persist != nil {
-			if err := e.persist.AppendOrderCanceled(order); err != nil {
-				return CommandResult{Err: err}
-			}
-		}
 		return CommandResult{Order: order}
 	}
 	return CommandResult{}
 }
 
-// AmendOrderCmd updates order quantity.
 type AmendOrderCmd struct {
 	OrderID types.OrderID
 	NewQty  types.Quantity
@@ -293,18 +257,12 @@ func (c *AmendOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: err}
 	}
 	order, ok := e.store.Get(c.OrderID)
-	if ok && e.persist != nil {
-		if err := e.persist.AppendOrderAmended(order, c.NewQty); err != nil {
-			return CommandResult{Err: err}
-		}
-	}
 	if ok {
 		return CommandResult{Order: order}
 	}
 	return CommandResult{}
 }
 
-// SetLeverageCmd updates leverage for a symbol position.
 type SetLeverageCmd struct {
 	UserID   types.UserID
 	Symbol   string
@@ -322,7 +280,6 @@ func (c *SetLeverageCmd) Apply(e *Engine) CommandResult {
 	return CommandResult{Err: e.portfolio.SetLeverage(c.UserID, c.Symbol, c.Leverage)}
 }
 
-// PublicTradesCmd returns recent trades.
 type PublicTradesCmd struct {
 	Category int8
 	Symbol   string
@@ -332,7 +289,6 @@ func (c *PublicTradesCmd) Apply(e *Engine) CommandResult {
 	return CommandResult{Trades: e.tradeFeed.Recent(c.Category, c.Symbol)}
 }
 
-// CreateDepositCmd creates a pending deposit request.
 type CreateDepositCmd struct {
 	UserID      types.UserID
 	Asset       string
@@ -350,7 +306,6 @@ func (c *CreateDepositCmd) Apply(e *Engine) CommandResult {
 	return CommandResult{Funding: request}
 }
 
-// CreateWithdrawalCmd creates a pending withdrawal request.
 type CreateWithdrawalCmd struct {
 	UserID      types.UserID
 	Asset       string
@@ -368,7 +323,6 @@ func (c *CreateWithdrawalCmd) Apply(e *Engine) CommandResult {
 	return CommandResult{Funding: request}
 }
 
-// ApproveFundingCmd approves a funding request.
 type ApproveFundingCmd struct {
 	FundingID types.FundingID
 }
@@ -381,15 +335,9 @@ func (c *ApproveFundingCmd) Apply(e *Engine) CommandResult {
 	if err != nil {
 		return CommandResult{Err: err}
 	}
-	if e.persist != nil {
-		if err := e.persist.AppendFunding(*request); err != nil {
-			return CommandResult{Err: err}
-		}
-	}
 	return CommandResult{Funding: request}
 }
 
-// RejectFundingCmd rejects a funding request.
 type RejectFundingCmd struct {
 	FundingID types.FundingID
 }
@@ -401,11 +349,6 @@ func (c *RejectFundingCmd) Apply(e *Engine) CommandResult {
 	request, err := e.portfolio.RejectFunding(c.FundingID)
 	if err != nil {
 		return CommandResult{Err: err}
-	}
-	if e.persist != nil {
-		if err := e.persist.AppendFunding(*request); err != nil {
-			return CommandResult{Err: err}
-		}
 	}
 	return CommandResult{Funding: request}
 }

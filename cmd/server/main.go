@@ -13,32 +13,25 @@ import (
 )
 
 func main() {
-	snapshotPath := flag.String("snapshot", "", "Snapshot directory to restore on startup")
-	snapshotOut := flag.String("snapshot-out", "", "Snapshot directory to write on shutdown")
-	snapshotSeq := flag.Uint64("snapshot-seq", 0, "Last sequence to store in snapshot")
+	dataDir := flag.String("data", "", "Data directory for PebbleKV persistence")
 	flag.Parse()
 
-	store := oms.NewService()
-	eng := engine.NewEngine(store, nil, nil)
-
-	// Restore engine state from snapshot on startup.
-	if *snapshotPath != "" {
-		if _, err := persistence.LoadSnapshot(*snapshotPath, eng); err != nil {
-			log.Fatalf("restore snapshot: %v", err)
-		}
+	if *dataDir == "" {
+		log.Fatal("data directory is required")
 	}
 
-	// Placeholder server loop: wait for shutdown to capture snapshot.
+	pkv, err := persistence.OpenPebbleKV(*dataDir)
+	if err != nil {
+		log.Fatalf("open pebblekv: %v", err)
+	}
+	defer pkv.Close()
+
+	store := oms.NewService(pkv)
+	eng := engine.NewEngine(store, nil)
+
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 	<-signalCh
-
-	// Write a snapshot before shutting down if requested.
-	if *snapshotOut != "" {
-		if err := persistence.SaveSnapshot(*snapshotOut, *snapshotSeq, eng); err != nil {
-			log.Fatalf("snapshot write: %v", err)
-		}
-	}
 
 	eng.Shutdown()
 }
