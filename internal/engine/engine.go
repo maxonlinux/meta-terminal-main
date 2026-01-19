@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
@@ -51,6 +52,7 @@ type Engine struct {
 	commands   chan queuedCommand
 	callback   OrderCallback
 	done       chan struct{}
+	doneSignal chan struct{}
 }
 
 func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
@@ -75,18 +77,31 @@ func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
 		callback:   cb,
 		done:       make(chan struct{}),
+		doneSignal: make(chan struct{}),
 	}
 
 	go func() {
 		for {
 			select {
-			case item := <-e.commands:
-				result := item.cmd.Apply(e)
-				if item.reply != nil {
-					item.reply <- result
-				}
 			case <-e.done:
-				return
+				for {
+					select {
+					case item := <-e.commands:
+						item.cmd.Apply(e)
+					default:
+						close(e.doneSignal)
+						return
+					}
+				}
+			default:
+				select {
+				case item := <-e.commands:
+					result := item.cmd.Apply(e)
+					if item.reply != nil {
+						item.reply <- result
+					}
+				case <-e.done:
+				}
 			}
 		}
 	}()
@@ -95,8 +110,16 @@ func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	return e
 }
 
+func (e *Engine) Portfolio() *portfolio.Service {
+	return e.portfolio
+}
+
 func (e *Engine) Shutdown() {
 	close(e.done)
+	select {
+	case <-e.doneSignal:
+	case <-time.After(1 * time.Second):
+	}
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
