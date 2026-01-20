@@ -134,7 +134,7 @@ func (c *ConditionalIndex) CheckTriggers(symbol string, currentPrice types.Price
 		o.Status = constants.ORDER_STATUS_TRIGGERED
 		o.UpdatedAt = utils.NowNano()
 		callback(o)
-		heap.Pop(h)
+		heap.Remove(h, 0)
 	}
 
 	if h := c.getTriggerMap(shardIdx, true)[symbol]; h != nil {
@@ -145,5 +145,26 @@ func (c *ConditionalIndex) CheckTriggers(symbol string, currentPrice types.Price
 	// SELL uses min-heap: lowest trigger first (front of heap)
 	if h := c.getTriggerMap(shardIdx, false)[symbol]; h != nil {
 		triggerHeapForPrice(h, currentPrice, trigger, -1)
+	}
+}
+
+// Remove removes a conditional order from its trigger heap.
+func (c *ConditionalIndex) Remove(o *types.Order) {
+	if !o.IsConditional || o.TriggerPrice.IsZero() {
+		return
+	}
+
+	shardIdx := ShardIndex(o.Symbol)
+	triggerMap := c.getTriggerMap(shardIdx, o.Side == constants.ORDER_SIDE_BUY)
+	h := triggerMap[o.Symbol]
+	if h == nil {
+		return
+	}
+
+	for i, item := range h.items {
+		if item.ID == o.ID {
+			heap.Remove(h, i)
+			return
+		}
 	}
 }

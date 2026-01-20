@@ -26,6 +26,12 @@ func (s *Service) removeReduceOnly(order *types.Order) {
 	}
 }
 
+func (s *Service) removeConditional(order *types.Order) {
+	if order.IsConditional {
+		s.conditional.Remove(order)
+	}
+}
+
 func (s *Service) indexOrder(order *types.Order) {
 	if order.ReduceOnly {
 		s.reduceonly.Add(order)
@@ -135,11 +141,7 @@ func (s *Service) Create(
 	s.indexOrder(order)
 
 	if s.pebble != nil {
-		if s.pebble.HasActiveTx() {
-			s.pebble.PutOrder(order)
-		} else {
-			s.pebble.PutOrder(order)
-		}
+		s.pebble.PutOrder(order)
 	}
 
 	return order
@@ -184,11 +186,7 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 	}
 
 	if s.pebble != nil {
-		if s.pebble.HasActiveTx() {
-			s.pebble.PutOrder(order)
-		} else {
-			s.pebble.PutOrder(order)
-		}
+		s.pebble.PutOrder(order)
 	}
 
 	return nil
@@ -207,7 +205,9 @@ func (s *Service) Cancel(id types.OrderID) error {
 		return errors.New("only active orders can be canceled")
 	}
 
-	if !order.Filled.IsZero() {
+	if order.IsConditional {
+		order.Status = constants.ORDER_STATUS_DEACTIVATED
+	} else if !order.Filled.IsZero() {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
 	} else {
 		order.Status = constants.ORDER_STATUS_CANCELED
@@ -217,13 +217,10 @@ func (s *Service) Cancel(id types.OrderID) error {
 	order.UpdatedAt = now
 
 	s.removeReduceOnly(order)
+	s.removeConditional(order)
 
 	if s.pebble != nil {
-		if s.pebble.HasActiveTx() {
-			s.pebble.PutOrder(order)
-		} else {
-			s.pebble.PutOrder(order)
-		}
+		s.pebble.PutOrder(order)
 	}
 
 	return nil
@@ -256,11 +253,7 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 	s.removeReduceOnly(order)
 
 	if s.pebble != nil {
-		if s.pebble.HasActiveTx() {
-			s.pebble.PutOrder(order)
-		} else {
-			s.pebble.PutOrder(order)
-		}
+		s.pebble.PutOrder(order)
 	}
 
 	return nil
@@ -278,4 +271,15 @@ func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*t
 	defer s.mu.Unlock()
 
 	s.conditional.CheckTriggers(symbol, price, callback)
+}
+
+func (s *Service) Iterate(fn func(*types.Order) bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, order := range s.all {
+		if !fn(order) {
+			break
+		}
+	}
 }

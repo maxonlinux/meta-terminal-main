@@ -63,7 +63,7 @@ func NewEngine(store *oms.Service, pk *persistence.PebbleKV, reg *registry.Regis
 		if engineRef != nil {
 			engineRef.onPositionReduce(userID, symbol, size)
 		}
-	})
+	}, reg)
 	clearingService := clearing.New(portfolioService)
 
 	e := &Engine{
@@ -426,4 +426,84 @@ func (c *RejectFundingCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: err}
 	}
 	return CommandResult{Funding: request}
+}
+
+func (e *Engine) GetOrders(userID types.UserID, symbol string, category int8) []*types.Order {
+	var result []*types.Order
+	e.store.Iterate(func(o *types.Order) bool {
+		if o.UserID == userID {
+			if symbol == "" || o.Symbol == symbol {
+				if category == 0 || o.Category == category {
+					result = append(result, o)
+				}
+			}
+		}
+		return true
+	})
+	return result
+}
+
+func (e *Engine) GetOrder(id types.OrderID) (*types.Order, bool) {
+	return e.store.Get(id)
+}
+
+func (e *Engine) GetPositions(userID types.UserID) []*types.Position {
+	var result []*types.Position
+	positions := e.portfolio.GetPositions(userID)
+	for _, pos := range positions {
+		result = append(result, pos)
+	}
+	return result
+}
+
+func (e *Engine) GetBalances(userID types.UserID) []*types.Balance {
+	var result []*types.Balance
+	balances := e.portfolio.GetBalances(userID)
+	for _, bal := range balances {
+		result = append(result, bal)
+	}
+	return result
+}
+
+func (e *Engine) GetInstruments(symbol string) []*types.Instrument {
+	if symbol != "" {
+		inst := e.registry.GetInstrument(symbol)
+		if inst != nil {
+			return []*types.Instrument{inst}
+		}
+		return nil
+	}
+	return e.registry.GetInstruments()
+}
+
+func (e *Engine) GetOrderBook(symbol string) *OrderBookResponse {
+	return e.SnapshotOrderBook(symbol)
+}
+
+func (e *Engine) GetPublicTrades(symbol string) []types.Trade {
+	return e.tradeFeed.Recent(constants.CATEGORY_SPOT, symbol)
+}
+
+type OrderBookResponse struct {
+	Symbol string      `json:"symbol"`
+	Bids   []BookLevel `json:"bids"`
+	Asks   []BookLevel `json:"asks"`
+}
+
+type BookLevel struct {
+	Price string `json:"price"`
+	Total string `json:"total"`
+}
+
+func (e *Engine) SnapshotOrderBook(symbol string) *OrderBookResponse {
+	_, err := e.getBook(constants.CATEGORY_SPOT, symbol)
+	if err != nil {
+		return nil
+	}
+	// Simplified snapshot - real implementation would need proper locking
+	return &OrderBookResponse{
+		Symbol: symbol,
+		Bids:   []BookLevel{},
+		Asks:   []BookLevel{},
+	}
 }

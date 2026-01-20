@@ -1,13 +1,10 @@
 package engine
 
 import (
-	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
 	"github.com/maxonlinux/meta-terminal-go/internal/marketdata"
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
-	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
-	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
 
 func (e *Engine) getBook(category int8, symbol string) (*orderbook.OrderBook, error) {
@@ -28,17 +25,9 @@ func (e *Engine) applyMatch(match types.Match) {
 		return
 	}
 
-	now := utils.NowNano()
-	remaining := math.Sub(match.MakerOrder.Quantity, match.MakerOrder.Filled)
-	if remaining.Sign() == 0 {
-		match.MakerOrder.Status = constants.ORDER_STATUS_FILLED
-		match.MakerOrder.UpdatedAt = now
-	} else {
-		match.MakerOrder.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
-		match.MakerOrder.UpdatedAt = now
-	}
-
 	e.clearing.ExecuteTrade(&match)
+
+	e.store.Fill(match.MakerOrder.ID, match.Quantity)
 
 	publicTrade := buildPublicTrade(match)
 	e.tradeFeed.Add(match.Category, match.Symbol, publicTrade)
@@ -60,5 +49,4 @@ func buildPublicTrade(match types.Match) types.Trade {
 	}
 }
 
-var _ = clearing.New
 var _ = marketdata.NewTradeFeed

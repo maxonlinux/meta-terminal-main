@@ -1,16 +1,14 @@
 package registry
 
 import (
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
-	"github.com/maxonlinux/meta-terminal-go/internal/price"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
 
 func FromSymbol(symbol string, lastPrice int64) *types.Instrument {
-	base := balance.GetBaseAsset(symbol)
-	quote := balance.GetQuoteAsset(symbol)
-	band := price.GetFilters(float64(lastPrice))
+	base := GetBaseAsset(symbol)
+	quote := GetQuoteAsset(symbol)
+	band := GetPriceBand(float64(lastPrice))
 
 	return &types.Instrument{
 		Symbol:     symbol,

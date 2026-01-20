@@ -3,7 +3,7 @@ package portfolio
 import (
 	"testing"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -19,10 +19,16 @@ func price(v int64) types.Price {
 }
 
 func TestExecuteTradeSpotBalances(t *testing.T) {
-	svc := New(nil, nil)
+	reg := registry.New()
+	reg.SetInstrument("BTCUSDT", &types.Instrument{
+		Symbol:     "BTCUSDT",
+		BaseAsset:  "BTC",
+		QuoteAsset: "USDT",
+	})
+	svc := New(nil, nil, reg)
 
-	base := balance.GetBaseAsset("BTCUSDT")
-	quote := balance.GetQuoteAsset("BTCUSDT")
+	base := "BTC"
+	quote := "USDT"
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{
 		quote: {UserID: 1, Asset: quote, Available: qty(100000)},
@@ -61,8 +67,14 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 }
 
 func TestExecuteTradeLinearPosition(t *testing.T) {
-	svc := New(nil, nil)
-	quote := balance.GetQuoteAsset("BTCUSDT")
+	reg := registry.New()
+	reg.SetInstrument("BTCUSDT", &types.Instrument{
+		Symbol:     "BTCUSDT",
+		BaseAsset:  "BTC",
+		QuoteAsset: "USDT",
+	})
+	svc := New(nil, nil, reg)
+	quote := "USDT"
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{
 		quote: {UserID: 1, Asset: quote, Available: qty(100000), Locked: qty(1000)},

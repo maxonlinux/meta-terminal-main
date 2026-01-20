@@ -3,7 +3,6 @@ package engine
 import (
 	"testing"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
@@ -18,8 +17,8 @@ type mockCallback struct {
 }
 
 func seedBalances(portfolioService *portfolio.Service, userID types.UserID, symbol string) {
-	base := balance.GetBaseAsset(symbol)
-	quote := balance.GetQuoteAsset(symbol)
+	base := registry.GetBaseAsset(symbol)
+	quote := registry.GetQuoteAsset(symbol)
 	amount := types.Quantity(fixed.NewI(1_000_000_000, 0))
 	portfolioService.Balances[userID] = map[string]*types.Balance{
 		base:  {UserID: userID, Asset: base, Available: amount},
@@ -501,7 +500,7 @@ func TestEngine_SetLeverage_LiquidationCheck(t *testing.T) {
 
 	userID := types.UserID(1)
 	symbol := "BTCUSDT"
-	quote := balance.GetQuoteAsset(symbol)
+	quote := registry.GetQuoteAsset(symbol)
 
 	portfolioService.Balances[userID] = map[string]*types.Balance{
 		quote: {UserID: userID, Asset: quote, Available: types.Quantity(fixed.NewI(100000, 0))},
@@ -532,7 +531,7 @@ func TestEngine_SetLeverage_Success(t *testing.T) {
 
 	userID := types.UserID(1)
 	symbol := "BTCUSDT"
-	quote := balance.GetQuoteAsset(symbol)
+	quote := registry.GetQuoteAsset(symbol)
 
 	portfolioService.Balances[userID] = map[string]*types.Balance{
 		quote: {UserID: userID, Asset: quote, Available: types.Quantity(fixed.NewI(100000, 0))},

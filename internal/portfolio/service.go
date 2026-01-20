@@ -3,31 +3,33 @@ package portfolio
 import (
 	"sync"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-type PositionReduceHandler func(userID types.UserID, symbol string, size types.Quantity)
+type OnPositionReduce func(userID types.UserID, symbol string, size types.Quantity)
 
 type Service struct {
 	Balances  map[types.UserID]map[string]*types.Balance
 	Positions map[types.UserID]map[string]*types.Position
 	Fundings  map[types.FundingID]*types.FundingRequest
-	onReduce  PositionReduceHandler
 	pebble    *persistence.PebbleKV
 	mu        sync.RWMutex
+	onReduce  OnPositionReduce
+	registry  *registry.Registry
 }
 
-func New(pkv *persistence.PebbleKV, onReduce PositionReduceHandler) *Service {
+func New(pkv *persistence.PebbleKV, onReduce OnPositionReduce, reg *registry.Registry) *Service {
 	s := &Service{
 		Balances:  make(map[types.UserID]map[string]*types.Balance),
 		Positions: make(map[types.UserID]map[string]*types.Position),
 		Fundings:  make(map[types.FundingID]*types.FundingRequest),
 		onReduce:  onReduce,
 		pebble:    pkv,
+		registry:  reg,
 	}
 
 	if pkv != nil {
@@ -54,6 +56,13 @@ func New(pkv *persistence.PebbleKV, onReduce PositionReduceHandler) *Service {
 	return s
 }
 
+func (s *Service) GetInstrument(symbol string) *types.Instrument {
+	if s.registry != nil {
+		return s.registry.GetInstrument(symbol)
+	}
+	return nil
+}
+
 func (s *Service) ExecuteTrade(match *types.Match) {
 	if match.Category == constants.CATEGORY_SPOT {
 		s.executeSpotTrade(match)
@@ -63,8 +72,8 @@ func (s *Service) ExecuteTrade(match *types.Match) {
 }
 
 func (s *Service) executeSpotTrade(match *types.Match) {
-	baseAsset := balance.GetBaseAsset(match.Symbol)
-	quoteAsset := balance.GetQuoteAsset(match.Symbol)
+	inst := s.GetInstrument(match.Symbol)
+	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
 	takerGets, takerPays := baseAsset, quoteAsset
 	makerGets, makerPays := quoteAsset, baseAsset
@@ -81,7 +90,8 @@ func (s *Service) executeSpotTrade(match *types.Match) {
 }
 
 func (s *Service) executeLinearTrade(match *types.Match) {
-	quoteAsset := balance.GetQuoteAsset(match.Symbol)
+	inst := s.GetInstrument(match.Symbol)
+	quoteAsset := inst.QuoteAsset
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))
 
 	takerLeverage := s.positionLeverage(match.TakerOrder.UserID, match.Symbol)
@@ -103,4 +113,36 @@ func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNo
 	margin := types.Quantity(math.Div(tradeNotional, leverage))
 	s.adjustLocked(userID, quoteAsset, math.Neg(margin))
 	s.adjustMargin(userID, quoteAsset, margin)
+}
+
+func (s *Service) GetPositions(userID types.UserID) []*types.Position {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	positions := s.Positions[userID]
+	if positions == nil {
+		return nil
+	}
+
+	result := make([]*types.Position, 0, len(positions))
+	for _, pos := range positions {
+		result = append(result, pos)
+	}
+	return result
+}
+
+func (s *Service) GetBalances(userID types.UserID) []*types.Balance {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	balances := s.Balances[userID]
+	if balances == nil {
+		return nil
+	}
+
+	result := make([]*types.Balance, 0, len(balances))
+	for _, bal := range balances {
+		result = append(result, bal)
+	}
+	return result
 }

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -79,8 +78,8 @@ func newE2EEngine() *e2eEngine {
 }
 
 func (e *e2eEngine) seedUserBalance(userID types.UserID, symbol string) {
-	base := balance.GetBaseAsset(symbol)
-	quote := balance.GetQuoteAsset(symbol)
+	base := registry.GetBaseAsset(symbol)
+	quote := registry.GetQuoteAsset(symbol)
 	amount := types.Quantity(fixed.NewI(1000000, 0)) // 1 million instead of 1 trillion
 
 	if e.engine.portfolio.Balances[userID] == nil {

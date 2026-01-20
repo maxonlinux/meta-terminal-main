@@ -41,27 +41,40 @@ func MatchOrder(order *types.Order, book *orderbook.OrderBook, applyTrade orderb
 		// Fill-or-kill must fully execute or reject before matching.
 		needed := math.Sub(order.Quantity, order.Filled)
 		if needed.Sign() > 0 && book.AvailableQuantity(order.Side, limitPrice, needed).Cmp(needed) < 0 {
+			// error if not enough liquidity
 			return constants.ErrFOKInsufficientLiquidity
 		}
+
 		book.Match(order, limitPrice, applyTrade)
+
+		// guard
 		if math.Cmp(order.Filled, order.Quantity) != 0 {
 			panic("FOK order partially filled")
 		}
+
+		//  filled
 		setStatus(constants.ORDER_STATUS_FILLED)
+		// dont put to book
 		return nil
 
 	case constants.TIF_IOC:
 		// Immediate-or-cancel never rests on the book.
 		book.Match(order, limitPrice, applyTrade)
 		isFilled := math.Cmp(order.Filled, order.Quantity) == 0
+
+		// not filled at all - cancel
 		if order.Filled.IsZero() {
 			setStatus(constants.ORDER_STATUS_CANCELED)
 			return nil
 		}
+
+		// partial fill
 		if !isFilled {
 			setStatus(constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED)
 			return nil
 		}
+
+		// filled
 		setStatus(constants.ORDER_STATUS_FILLED)
 		return nil
 

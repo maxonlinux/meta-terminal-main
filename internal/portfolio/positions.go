@@ -1,7 +1,7 @@
 package portfolio
 
 import (
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -31,11 +31,7 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 	if math.Sign(pos.Size) == 0 {
 		pos.Leverage = newLeverage
 		if s.pebble != nil {
-			if s.pebble.HasActiveTx() {
-				s.pebble.PutPosition(pos)
-			} else {
-				s.pebble.PutPosition(pos)
-			}
+			s.pebble.PutPosition(pos)
 		}
 		return nil
 	}
@@ -45,7 +41,7 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 		return nil
 	}
 
-	quote := balance.GetQuoteAsset(symbol)
+	quote := registry.GetQuoteAsset(symbol)
 	notional := types.Quantity(math.Mul(pos.EntryPrice, absPositionSize(pos.Size)))
 	oldMargin := types.Quantity(math.Div(notional, oldLeverage))
 	newMargin := types.Quantity(math.Div(notional, newLeverage))
@@ -55,11 +51,7 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 
 	pos.Leverage = newLeverage
 	if s.pebble != nil {
-		if s.pebble.HasActiveTx() {
-			s.pebble.PutPosition(pos)
-		} else {
-			s.pebble.PutPosition(pos)
-		}
+		s.pebble.PutPosition(pos)
 	}
 	return nil
 }
@@ -88,11 +80,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 			pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
 		if s.pebble != nil {
-			if s.pebble.HasActiveTx() {
-				s.pebble.PutPosition(pos)
-			} else {
-				s.pebble.PutPosition(pos)
-			}
+			s.pebble.PutPosition(pos)
 		}
 		return
 	}
@@ -104,11 +92,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
 		if s.pebble != nil {
-			if s.pebble.HasActiveTx() {
-				s.pebble.PutPosition(pos)
-			} else {
-				s.pebble.PutPosition(pos)
-			}
+			s.pebble.PutPosition(pos)
 		}
 		return
 	}
@@ -120,28 +104,19 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
 		if s.pebble != nil {
-			if s.pebble.HasActiveTx() {
-				s.pebble.PutPosition(pos)
-				s.pebble.DeletePosition(userID, match.Symbol)
-			} else {
-				s.pebble.PutPosition(pos)
-				s.pebble.DeletePosition(userID, match.Symbol)
-			}
+			s.pebble.PutPosition(pos)
+			s.pebble.DeletePosition(userID, match.Symbol)
 		}
 	} else {
 		if s.pebble != nil {
-			if s.pebble.HasActiveTx() {
-				s.pebble.PutPosition(pos)
-			} else {
-				s.pebble.PutPosition(pos)
-			}
+			s.pebble.PutPosition(pos)
 		}
 	}
 
 	closedQty := absPositionSize(signedTrade)
 	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, pos.Size)
 	if math.Sign(rpnl) != 0 {
-		quote := balance.GetQuoteAsset(match.Symbol)
+		quote := registry.GetQuoteAsset(match.Symbol)
 		s.adjustAvailable(userID, quote, rpnl)
 	}
 	// Notify reduce-only index about updated position size.

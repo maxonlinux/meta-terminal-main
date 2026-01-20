@@ -68,6 +68,43 @@ func (s *PebbleKV) GetDB() *pebble.DB {
 	return s.db
 }
 
+func (s *PebbleKV) Set(key, value []byte) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	if s.txBatch != nil {
+		s.txBatch.Set(key, value, nil)
+		return nil
+	}
+	return s.db.Set(key, value, pebble.Sync)
+}
+
+func (s *PebbleKV) Get(key []byte) ([]byte, error) {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return nil, ErrStoreClosed
+	}
+	data, closer, err := s.db.Get(key)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return nil, ErrKeyNotFound
+		}
+		return nil, err
+	}
+	defer closer.Close()
+	return data, nil
+}
+
+func (s *PebbleKV) Delete(key []byte) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	if s.txBatch != nil {
+		s.txBatch.Delete(key, nil)
+		return nil
+	}
+	return s.db.Delete(key, pebble.Sync)
+}
+
 func (s *PebbleKV) Begin() {
 	if atomic.CompareAndSwapInt32(&s.txActive, 0, 1) {
 		s.txBatch = s.db.NewBatch()
