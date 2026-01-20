@@ -135,7 +135,11 @@ func (s *Service) Create(
 	s.indexOrder(order)
 
 	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutOrder(order)
+		} else {
+			s.pebble.PutOrder(order)
+		}
 	}
 
 	return order
@@ -180,7 +184,11 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 	}
 
 	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutOrder(order)
+		} else {
+			s.pebble.PutOrder(order)
+		}
 	}
 
 	return nil
@@ -211,7 +219,11 @@ func (s *Service) Cancel(id types.OrderID) error {
 	s.removeReduceOnly(order)
 
 	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutOrder(order)
+		} else {
+			s.pebble.PutOrder(order)
+		}
 	}
 
 	return nil
@@ -244,7 +256,11 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 	s.removeReduceOnly(order)
 
 	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutOrder(order)
+		} else {
+			s.pebble.PutOrder(order)
+		}
 	}
 
 	return nil
@@ -254,7 +270,7 @@ func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionS
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.reduceonly.OnPositionReduce(symbol, positionSize, userID)
+	s.reduceonly.OnPositionReduce(userID, symbol, positionSize)
 }
 
 func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*types.Order)) {

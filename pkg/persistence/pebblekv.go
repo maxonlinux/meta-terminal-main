@@ -14,32 +14,29 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-const (
-	cfOrders    = "orders"
-	cfBalances  = "balances"
-	cfPositions = "positions"
-	cfFundings  = "fundings"
-	cfMeta      = "meta"
-)
-
 var (
-	ErrKeyNotFound = errors.New("key not found")
-	ErrStoreClosed = errors.New("store is closed")
+	ErrKeyNotFound  = errors.New("key not found")
+	ErrStoreClosed  = errors.New("store is closed")
+	ErrTxInProgress = errors.New("transaction already in progress")
+	ErrNoTx         = errors.New("no transaction in progress")
 )
 
 type PebbleKV struct {
-	db     *pebble.DB
-	path   string
-	closed int32
+	db       *pebble.DB
+	path     string
+	closed   int32
+	txBatch  *pebble.Batch
+	txActive int32
 }
 
-func OpenPebbleKV(path string) (*PebbleKV, error) {
+func Open(path string) (*PebbleKV, error) {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return nil, err
 	}
 
 	db, err := pebble.Open(path, &pebble.Options{
-		// Use default options, can be tuned later
+		Cache:        pebble.NewCache(64 << 20),
+		MaxOpenFiles: 1000,
 	})
 	if err != nil {
 		return nil, err
@@ -71,6 +68,30 @@ func (s *PebbleKV) GetDB() *pebble.DB {
 	return s.db
 }
 
+func (s *PebbleKV) Begin() {
+	if atomic.CompareAndSwapInt32(&s.txActive, 0, 1) {
+		s.txBatch = s.db.NewBatch()
+	}
+}
+
+func (s *PebbleKV) HasActiveTx() bool {
+	return atomic.LoadInt32(&s.txActive) == 1
+}
+
+func (s *PebbleKV) Rollback() {
+	if atomic.CompareAndSwapInt32(&s.txActive, 1, 0) {
+		s.txBatch = nil
+	}
+}
+
+func (s *PebbleKV) Commit() error {
+	if !atomic.CompareAndSwapInt32(&s.txActive, 1, 0) {
+		return ErrNoTx
+	}
+	defer func() { s.txBatch = nil }()
+	return s.txBatch.Commit(pebble.Sync)
+}
+
 func (s *PebbleKV) PutOrder(order *types.Order) error {
 	if atomic.LoadInt32(&s.closed) == 1 {
 		return ErrStoreClosed
@@ -79,7 +100,22 @@ func (s *PebbleKV) PutOrder(order *types.Order) error {
 	if err != nil {
 		return err
 	}
+	if s.txBatch != nil {
+		s.txBatch.Set(orderKey(order.ID), data, nil)
+		return nil
+	}
 	return s.db.Set(orderKey(order.ID), data, pebble.Sync)
+}
+
+func (s *PebbleKV) DeleteOrder(id types.OrderID) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	if s.txBatch != nil {
+		s.txBatch.Delete(orderKey(id), nil)
+		return nil
+	}
+	return s.db.Delete(orderKey(id), pebble.Sync)
 }
 
 func (s *PebbleKV) GetOrder(id types.OrderID) (*types.Order, error) {
@@ -97,13 +133,6 @@ func (s *PebbleKV) GetOrder(id types.OrderID) (*types.Order, error) {
 	return decodeOrder(data)
 }
 
-func (s *PebbleKV) DeleteOrder(id types.OrderID) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	return s.db.Delete(orderKey(id), pebble.Sync)
-}
-
 func (s *PebbleKV) PutBalance(balance *types.Balance) error {
 	if atomic.LoadInt32(&s.closed) == 1 {
 		return ErrStoreClosed
@@ -111,6 +140,10 @@ func (s *PebbleKV) PutBalance(balance *types.Balance) error {
 	data, err := encodeBalance(balance)
 	if err != nil {
 		return err
+	}
+	if s.txBatch != nil {
+		s.txBatch.Set(balanceKey(balance.UserID, balance.Asset), data, nil)
+		return nil
 	}
 	return s.db.Set(balanceKey(balance.UserID, balance.Asset), data, pebble.Sync)
 }
@@ -138,6 +171,10 @@ func (s *PebbleKV) PutPosition(pos *types.Position) error {
 	if err != nil {
 		return err
 	}
+	if s.txBatch != nil {
+		s.txBatch.Set(positionKey(pos.UserID, pos.Symbol), data, nil)
+		return nil
+	}
 	return s.db.Set(positionKey(pos.UserID, pos.Symbol), data, pebble.Sync)
 }
 
@@ -156,30 +193,107 @@ func (s *PebbleKV) GetPosition(userID types.UserID, symbol string) (*types.Posit
 	return decodePosition(data)
 }
 
-func (s *PebbleKV) PutFunding(req *types.FundingRequest) error {
+func (s *PebbleKV) DeletePosition(userID types.UserID, symbol string) error {
 	if atomic.LoadInt32(&s.closed) == 1 {
 		return ErrStoreClosed
 	}
-	data, err := encodeFunding(req)
+	if s.txBatch != nil {
+		s.txBatch.Delete(positionKey(userID, symbol), nil)
+		return nil
+	}
+	return s.db.Delete(positionKey(userID, symbol), pebble.Sync)
+}
+
+func (s *PebbleKV) PutReduceOnly(symbol string, orderID types.OrderID, exposure []byte) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	key := reduceOnlyKey(symbol, orderID)
+	if s.txBatch != nil {
+		s.txBatch.Set(key, exposure, nil)
+		return nil
+	}
+	return s.db.Set(key, exposure, pebble.Sync)
+}
+
+func (s *PebbleKV) DeleteReduceOnly(symbol string, orderID types.OrderID) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	key := reduceOnlyKey(symbol, orderID)
+	if s.txBatch != nil {
+		s.txBatch.Delete(key, nil)
+		return nil
+	}
+	return s.db.Delete(key, pebble.Sync)
+}
+
+func (s *PebbleKV) RangeReduceOnly(symbol string, fn func(orderID types.OrderID, exposure []byte) bool) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	prefix := reduceOnlyPrefix(symbol)
+	iter, err := s.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(append([]byte{}, prefix...), 0xff),
+	})
 	if err != nil {
 		return err
 	}
-	return s.db.Set(fundingKey(req.ID), data, pebble.Sync)
+	defer iter.Close()
+	for iter.First(); iter.Valid(); iter.Next() {
+		id := extractReduceOnlyOrderID(iter.Key())
+		if !fn(id, iter.Value()) {
+			break
+		}
+	}
+	return nil
 }
 
-func (s *PebbleKV) GetFunding(id types.FundingID) (*types.FundingRequest, error) {
+func (s *PebbleKV) PutTrigger(symbol string, orderID types.OrderID, orderData []byte) error {
 	if atomic.LoadInt32(&s.closed) == 1 {
-		return nil, ErrStoreClosed
+		return ErrStoreClosed
 	}
-	data, closer, err := s.db.Get(fundingKey(id))
+	key := triggerKey(symbol, orderID)
+	if s.txBatch != nil {
+		s.txBatch.Set(key, orderData, nil)
+		return nil
+	}
+	return s.db.Set(key, orderData, pebble.Sync)
+}
+
+func (s *PebbleKV) DeleteTrigger(symbol string, orderID types.OrderID) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	key := triggerKey(symbol, orderID)
+	if s.txBatch != nil {
+		s.txBatch.Delete(key, nil)
+		return nil
+	}
+	return s.db.Delete(key, pebble.Sync)
+}
+
+func (s *PebbleKV) RangeTriggers(symbol string, fn func(orderID types.OrderID, data []byte) bool) error {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	prefix := triggerPrefix(symbol)
+	iter, err := s.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(append([]byte{}, prefix...), 0xff),
+	})
 	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
-			return nil, ErrKeyNotFound
-		}
-		return nil, err
+		return err
 	}
-	defer closer.Close()
-	return decodeFunding(data)
+	defer iter.Close()
+	for iter.First(); iter.Valid(); iter.Next() {
+		id := extractTriggerOrderID(iter.Key())
+		if !fn(id, iter.Value()) {
+			break
+		}
+	}
+	return nil
 }
 
 func (s *PebbleKV) SetMeta(key string, value uint64) error {
@@ -188,6 +302,10 @@ func (s *PebbleKV) SetMeta(key string, value uint64) error {
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, value)
+	if s.txBatch != nil {
+		s.txBatch.Set(metaKey(key), buf, nil)
+		return nil
+	}
 	return s.db.Set(metaKey(key), buf, pebble.Sync)
 }
 
@@ -207,7 +325,10 @@ func (s *PebbleKV) GetMeta(key string) (uint64, error) {
 }
 
 func (s *PebbleKV) RangeOrders(fn func(order *types.Order) bool) error {
-	return s.rangeKeys(orderPrefix(), func(key, value []byte) bool {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	return s.scanKeys(orderPrefix(), func(key, value []byte) bool {
 		order, err := decodeOrder(value)
 		if err != nil {
 			return true
@@ -217,7 +338,10 @@ func (s *PebbleKV) RangeOrders(fn func(order *types.Order) bool) error {
 }
 
 func (s *PebbleKV) RangeBalances(fn func(balance *types.Balance) bool) error {
-	return s.rangeKeys(balancePrefix(), func(key, value []byte) bool {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	return s.scanKeys(balancePrefix(), func(key, value []byte) bool {
 		balance, err := decodeBalance(value)
 		if err != nil {
 			return true
@@ -227,7 +351,10 @@ func (s *PebbleKV) RangeBalances(fn func(balance *types.Balance) bool) error {
 }
 
 func (s *PebbleKV) RangePositions(fn func(pos *types.Position) bool) error {
-	return s.rangeKeys(positionPrefix(), func(key, value []byte) bool {
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return ErrStoreClosed
+	}
+	return s.scanKeys(positionPrefix(), func(key, value []byte) bool {
 		pos, err := decodePosition(value)
 		if err != nil {
 			return true
@@ -236,20 +363,7 @@ func (s *PebbleKV) RangePositions(fn func(pos *types.Position) bool) error {
 	})
 }
 
-func (s *PebbleKV) RangeFundings(fn func(req *types.FundingRequest) bool) error {
-	return s.rangeKeys(fundingPrefix(), func(key, value []byte) bool {
-		req, err := decodeFunding(value)
-		if err != nil {
-			return true
-		}
-		return fn(req)
-	})
-}
-
-func (s *PebbleKV) rangeKeys(prefix []byte, fn func(key, value []byte) bool) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
+func (s *PebbleKV) scanKeys(prefix []byte, fn func(key, value []byte) bool) error {
 	iter, err := s.db.NewIter(&pebble.IterOptions{
 		LowerBound: prefix,
 		UpperBound: append(append([]byte{}, prefix...), 0xff),
@@ -258,7 +372,6 @@ func (s *PebbleKV) rangeKeys(prefix []byte, fn func(key, value []byte) bool) err
 		return err
 	}
 	defer iter.Close()
-
 	for iter.First(); iter.Valid(); iter.Next() {
 		if !fn(iter.Key(), iter.Value()) {
 			break
@@ -266,50 +379,6 @@ func (s *PebbleKV) rangeKeys(prefix []byte, fn func(key, value []byte) bool) err
 	}
 	return nil
 }
-
-func (s *PebbleKV) BatchWrite(ops []BatchOp) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	batch := s.db.NewBatch()
-	for _, op := range ops {
-		switch op.Kind {
-		case OpPutOrder:
-			data, _ := encodeOrder(op.Order)
-			batch.Set(orderKey(op.Order.ID), data, nil)
-		case OpDeleteOrder:
-			batch.Delete(orderKey(op.Order.ID), nil)
-		case OpPutBalance:
-			data, _ := encodeBalance(op.Balance)
-			batch.Set(balanceKey(op.Balance.UserID, op.Balance.Asset), data, nil)
-		case OpPutPosition:
-			data, _ := encodePosition(op.Position)
-			batch.Set(positionKey(op.Position.UserID, op.Position.Symbol), data, nil)
-		case OpPutFunding:
-			data, _ := encodeFunding(op.Funding)
-			batch.Set(fundingKey(op.Funding.ID), data, nil)
-		}
-	}
-	return batch.Commit(pebble.Sync)
-}
-
-type BatchOp struct {
-	Kind     BatchOpKind
-	Order    *types.Order
-	Balance  *types.Balance
-	Position *types.Position
-	Funding  *types.FundingRequest
-}
-
-type BatchOpKind int
-
-const (
-	OpPutOrder BatchOpKind = iota
-	OpDeleteOrder
-	OpPutBalance
-	OpPutPosition
-	OpPutFunding
-)
 
 func orderKey(id types.OrderID) []byte {
 	return []byte(fmt.Sprintf("o:%016x", id))
@@ -335,12 +404,32 @@ func positionPrefix() []byte {
 	return []byte("p:")
 }
 
-func fundingKey(id types.FundingID) []byte {
-	return []byte(fmt.Sprintf("f:%016x", id))
+func reduceOnlyKey(symbol string, orderID types.OrderID) []byte {
+	return []byte(fmt.Sprintf("ro:%s:%016x", symbol, orderID))
 }
 
-func fundingPrefix() []byte {
-	return []byte("f:")
+func reduceOnlyPrefix(symbol string) []byte {
+	return []byte(fmt.Sprintf("ro:%s:", symbol))
+}
+
+func extractReduceOnlyOrderID(key []byte) types.OrderID {
+	var id int64
+	fmt.Sscanf(string(key), "ro:%*s:%016x", &id)
+	return types.OrderID(id)
+}
+
+func triggerKey(symbol string, orderID types.OrderID) []byte {
+	return []byte(fmt.Sprintf("tr:%s:%016x", symbol, orderID))
+}
+
+func triggerPrefix(symbol string) []byte {
+	return []byte(fmt.Sprintf("tr:%s:", symbol))
+}
+
+func extractTriggerOrderID(key []byte) types.OrderID {
+	var id int64
+	fmt.Sscanf(string(key), "tr:%*s:%016x", &id)
+	return types.OrderID(id)
 }
 
 func metaKey(key string) []byte {
@@ -349,8 +438,7 @@ func metaKey(key string) []byte {
 
 func encodeOrder(order *types.Order) ([]byte, error) {
 	buf := bytes.Buffer{}
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(order); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(order); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -358,8 +446,7 @@ func encodeOrder(order *types.Order) ([]byte, error) {
 
 func decodeOrder(data []byte) (*types.Order, error) {
 	var order types.Order
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&order); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&order); err != nil {
 		return nil, err
 	}
 	return &order, nil
@@ -367,8 +454,7 @@ func decodeOrder(data []byte) (*types.Order, error) {
 
 func encodeBalance(balance *types.Balance) ([]byte, error) {
 	buf := bytes.Buffer{}
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(balance); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(balance); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -376,8 +462,7 @@ func encodeBalance(balance *types.Balance) ([]byte, error) {
 
 func decodeBalance(data []byte) (*types.Balance, error) {
 	var balance types.Balance
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&balance); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&balance); err != nil {
 		return nil, err
 	}
 	return &balance, nil
@@ -385,8 +470,7 @@ func decodeBalance(data []byte) (*types.Balance, error) {
 
 func encodePosition(pos *types.Position) ([]byte, error) {
 	buf := bytes.Buffer{}
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(pos); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(pos); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -394,27 +478,8 @@ func encodePosition(pos *types.Position) ([]byte, error) {
 
 func decodePosition(data []byte) (*types.Position, error) {
 	var pos types.Position
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&pos); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&pos); err != nil {
 		return nil, err
 	}
 	return &pos, nil
-}
-
-func encodeFunding(req *types.FundingRequest) ([]byte, error) {
-	buf := bytes.Buffer{}
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(req); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func decodeFunding(data []byte) (*types.FundingRequest, error) {
-	var req types.FundingRequest
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&req); err != nil {
-		return nil, err
-	}
-	return &req, nil
 }

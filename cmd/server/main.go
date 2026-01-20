@@ -1,7 +1,7 @@
 package main
 
 import (
-	"flag"
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -9,29 +9,36 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
+	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 )
 
 func main() {
-	dataDir := flag.String("data", "", "Data directory for PebbleKV persistence")
-	flag.Parse()
+	cfg := config.Load()
 
-	if *dataDir == "" {
-		log.Fatal("data directory is required")
+	if cfg.DataDir == "" {
+		log.Fatal("DATA_DIR is required")
 	}
 
-	pkv, err := persistence.OpenPebbleKV(*dataDir)
+	pkv, err := persistence.Open(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("open pebblekv: %v", err)
 	}
 	defer pkv.Close()
 
 	store := oms.NewService(pkv)
-	eng := engine.NewEngine(store, nil)
+	reg := registry.New()
 
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
-	<-signalCh
+	loader := registry.NewLoader(cfg, reg)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go loader.Start(ctx)
+
+	eng := engine.NewEngine(store, pkv, reg, nil)
+
+	<-ctx.Done()
 	eng.Shutdown()
 }

@@ -31,8 +31,12 @@ type WAL struct {
 
 // Config holds environment configuration values.
 type Config struct {
-	NATS NATS
-	WAL  WAL
+	NATS           NATS
+	WAL            WAL
+	DataDir        string
+	AssetsURL      string
+	MultiplexerURL string
+	SyncInterval   time.Duration
 }
 
 var (
@@ -62,6 +66,10 @@ func Load() Config {
 				BatchMaxBytes: envInt("WAL_BATCH_MAX_BYTES", 4<<20),
 				QueueSize:     envInt("WAL_QUEUE_SIZE", 8192),
 			},
+			DataDir:        envString("DATA_DIR", ""),
+			AssetsURL:      envString("ASSETS_URL", "http://localhost:3333/proxy/core/assets"),
+			MultiplexerURL: envString("MULTIPLEXER_URL", "http://localhost:3333/proxy/multiplexer/prices"),
+			SyncInterval:   envDuration("SYNC_INTERVAL", time.Minute),
 		}
 	})
 	return cfg

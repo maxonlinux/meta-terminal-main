@@ -12,6 +12,7 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -49,7 +50,7 @@ type e2eEngine struct {
 func newE2EEngine() *e2eEngine {
 	store := oms.NewService(nil)
 	cb := &mockCallback{}
-	e := NewEngine(store, cb)
+	e := NewEngine(store, nil, registry.New(), cb)
 
 	symbols := []string{"BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
 		"ADAUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT"}
@@ -153,10 +154,11 @@ func (e *e2eEngine) runPlaceOrders(wg *sync.WaitGroup) {
 			}
 
 			order := result.Order
-			if order.Status == constants.ORDER_STATUS_FILLED {
+			switch order.Status {
+			case constants.ORDER_STATUS_FILLED:
 				atomic.AddInt64(&e.stats.filledOrders, 1)
 				atomic.AddInt64(&e.stats.totalTrades, 1)
-			} else if order.Status == constants.ORDER_STATUS_NEW {
+			case constants.ORDER_STATUS_NEW:
 				atomic.AddInt64(&e.stats.activeOrders, 1)
 			}
 		}

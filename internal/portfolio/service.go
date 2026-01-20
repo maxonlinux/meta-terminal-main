@@ -1,34 +1,59 @@
 package portfolio
 
 import (
+	"sync"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-// PositionReduceHandler notifies the engine about reduced positions.
 type PositionReduceHandler func(userID types.UserID, symbol string, size types.Quantity)
 
-// Service stores balances and positions for users in memory.
 type Service struct {
 	Balances  map[types.UserID]map[string]*types.Balance
 	Positions map[types.UserID]map[string]*types.Position
 	Fundings  map[types.FundingID]*types.FundingRequest
 	onReduce  PositionReduceHandler
+	pebble    *persistence.PebbleKV
+	mu        sync.RWMutex
 }
 
-// New creates a portfolio service with empty state.
-func New(onReduce PositionReduceHandler) *Service {
-	return &Service{
+func New(pkv *persistence.PebbleKV, onReduce PositionReduceHandler) *Service {
+	s := &Service{
 		Balances:  make(map[types.UserID]map[string]*types.Balance),
 		Positions: make(map[types.UserID]map[string]*types.Position),
 		Fundings:  make(map[types.FundingID]*types.FundingRequest),
 		onReduce:  onReduce,
+		pebble:    pkv,
 	}
+
+	if pkv != nil {
+		pkv.RangeBalances(func(balance *types.Balance) bool {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.Balances[balance.UserID] == nil {
+				s.Balances[balance.UserID] = make(map[string]*types.Balance)
+			}
+			s.Balances[balance.UserID][balance.Asset] = balance
+			return true
+		})
+		pkv.RangePositions(func(pos *types.Position) bool {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.Positions[pos.UserID] == nil {
+				s.Positions[pos.UserID] = make(map[string]*types.Position)
+			}
+			s.Positions[pos.UserID][pos.Symbol] = pos
+			return true
+		})
+	}
+
+	return s
 }
 
-// ExecuteTrade applies a match to balances and positions.
 func (s *Service) ExecuteTrade(match *types.Match) {
 	if match.Category == constants.CATEGORY_SPOT {
 		s.executeSpotTrade(match)
@@ -37,7 +62,6 @@ func (s *Service) ExecuteTrade(match *types.Match) {
 	s.executeLinearTrade(match)
 }
 
-// executeSpotTrade transfers base/quote assets between counterparties.
 func (s *Service) executeSpotTrade(match *types.Match) {
 	baseAsset := balance.GetBaseAsset(match.Symbol)
 	quoteAsset := balance.GetQuoteAsset(match.Symbol)
@@ -56,7 +80,6 @@ func (s *Service) executeSpotTrade(match *types.Match) {
 	s.applySpotLeg(match.MakerOrder.UserID, makerGets, makerPays, amountQuote, amountBase)
 }
 
-// executeLinearTrade updates margin buckets and positions for LINEAR trades.
 func (s *Service) executeLinearTrade(match *types.Match) {
 	quoteAsset := balance.GetQuoteAsset(match.Symbol)
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))

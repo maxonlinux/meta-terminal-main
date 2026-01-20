@@ -12,7 +12,7 @@ import (
 func TestPebbleKVRecovery(t *testing.T) {
 	path := t.TempDir()
 
-	store1, err := OpenPebbleKV(path)
+	store1, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestPebbleKVRecovery(t *testing.T) {
 		t.Fatalf("close store1: %v", err)
 	}
 
-	store2, err := OpenPebbleKV(path)
+	store2, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen pebblekv: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPebbleKVRecovery(t *testing.T) {
 func TestPebbleKVRecoveryUpdate(t *testing.T) {
 	path := t.TempDir()
 
-	store1, err := OpenPebbleKV(path)
+	store1, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 	}
 	store1.Close()
 
-	store2, err := OpenPebbleKV(path)
+	store2, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen pebblekv: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 	}
 	store2.Close()
 
-	store3, err := OpenPebbleKV(path)
+	store3, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen pebblekv again: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 func TestPebbleKVDelete(t *testing.T) {
 	path := t.TempDir()
 
-	store1, err := OpenPebbleKV(path)
+	store1, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestPebbleKVDelete(t *testing.T) {
 	}
 	store1.Close()
 
-	store2, err := OpenPebbleKV(path)
+	store2, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen pebblekv: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestPebbleKVDelete(t *testing.T) {
 	}
 	store2.Close()
 
-	store3, err := OpenPebbleKV(path)
+	store3, err := Open(path)
 	if err != nil {
 		t.Fatalf("reopen pebblekv again: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPebbleKVDelete(t *testing.T) {
 func TestPebbleKVCheckpoint(t *testing.T) {
 	path := t.TempDir()
 
-	store, err := OpenPebbleKV(path)
+	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}

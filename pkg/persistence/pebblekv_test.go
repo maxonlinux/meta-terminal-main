@@ -11,7 +11,7 @@ import (
 
 func TestPebbleKVBasic(t *testing.T) {
 	path := t.TempDir()
-	store, err := OpenPebbleKV(path)
+	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestPebbleKVBasic(t *testing.T) {
 
 func TestPebbleKVRange(t *testing.T) {
 	path := t.TempDir()
-	store, err := OpenPebbleKV(path)
+	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPebbleKVRange(t *testing.T) {
 
 func TestPebbleKVMeta(t *testing.T) {
 	path := t.TempDir()
-	store, err := OpenPebbleKV(path)
+	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
@@ -99,42 +99,72 @@ func TestPebbleKVMeta(t *testing.T) {
 	}
 }
 
-func TestPebbleKVBatchWrite(t *testing.T) {
+func TestPebbleKVTransaction(t *testing.T) {
 	path := t.TempDir()
-	store, err := OpenPebbleKV(path)
+	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("open pebblekv: %v", err)
 	}
 	defer store.Close()
 
-	ops := make([]BatchOp, 100)
-	for i := 0; i < 100; i++ {
-		ops[i] = BatchOp{
-			Kind: OpPutOrder,
-			Order: &types.Order{
-				ID:       types.OrderID(i + 1),
-				UserID:   types.UserID(1),
-				Symbol:   "BTC-USD-PERP",
-				Side:     constants.ORDER_SIDE_BUY,
-				Category: constants.CATEGORY_LINEAR,
-				Type:     constants.ORDER_TYPE_LIMIT,
-				Quantity: fixed.NewI(1, 8),
-				Price:    fixed.NewI(50000, 8),
-			},
-		}
+	order := &types.Order{
+		ID:       types.OrderID(1),
+		UserID:   types.UserID(1),
+		Symbol:   "BTC-USD-PERP",
+		Side:     constants.ORDER_SIDE_BUY,
+		Category: constants.CATEGORY_LINEAR,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		Quantity: fixed.NewI(1, 8),
+		Price:    fixed.NewI(50000, 8),
 	}
 
-	if err := store.BatchWrite(ops); err != nil {
-		t.Fatalf("batch write: %v", err)
+	store.Begin()
+	if err := store.PutOrder(order); err != nil {
+		store.Rollback()
+		t.Fatalf("put order: %v", err)
+	}
+	if err := store.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 
-	count := 0
-	store.RangeOrders(func(order *types.Order) bool {
-		count++
-		return true
-	})
-	if count != 100 {
-		t.Errorf("expected 100 orders, got %d", count)
+	got, err := store.GetOrder(1)
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if got.ID != order.ID {
+		t.Errorf("expected order ID %d, got %d", order.ID, got.ID)
+	}
+}
+
+func TestPebbleKVTransactionRollback(t *testing.T) {
+	path := t.TempDir()
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("open pebblekv: %v", err)
+	}
+	defer store.Close()
+
+	order := &types.Order{
+		ID:       types.OrderID(1),
+		UserID:   types.UserID(1),
+		Symbol:   "BTC-USD-PERP",
+		Side:     constants.ORDER_SIDE_BUY,
+		Category: constants.CATEGORY_LINEAR,
+		Type:     constants.ORDER_TYPE_LIMIT,
+		Quantity: fixed.NewI(1, 8),
+		Price:    fixed.NewI(50000, 8),
+	}
+
+	store.Begin()
+	if err := store.PutOrder(order); err != nil {
+		store.Rollback()
+		t.Fatalf("put order: %v", err)
+	}
+	store.Rollback()
+
+	_, err = store.GetOrder(1)
+	if err != ErrKeyNotFound {
+		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
 }
 

@@ -28,13 +28,13 @@ func New(portfolio Portfolio) *Service {
 
 // Reserve reserves funds required for an order.
 func (s *Service) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
-	amount, asset := balance.CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol))
+	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol))
 	return s.portfolio.Reserve(userID, asset, amount)
 }
 
 // Release releases reserved funds when an order is canceled.
 func (s *Service) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) {
-	amount, asset := balance.CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol))
+	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol))
 	s.portfolio.Release(userID, asset, amount)
 }
 
@@ -64,7 +64,24 @@ func (s *Service) leverageFor(userID types.UserID, symbol string) types.Leverage
 	if math.Sign(pos.Leverage) > 0 {
 		return pos.Leverage
 	}
-	return balance.DefaultLeverage()
+	return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+}
+
+// CalculateReserveAmount computes the reservation amount for a new order.
+func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Quantity, price types.Price, leverage types.Leverage) (types.Quantity, string) {
+	if category == constants.CATEGORY_SPOT {
+		if side == constants.ORDER_SIDE_BUY {
+			return types.Quantity(math.Mul(qty, price)), balance.GetQuoteAsset(symbol)
+		}
+		return qty, balance.GetBaseAsset(symbol)
+	}
+
+	effective := leverage
+	if math.Sign(effective) <= 0 {
+		effective = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+	}
+	reserve := math.MulDiv(qty, price, effective)
+	return types.Quantity(reserve), balance.GetQuoteAsset(symbol)
 }
 
 // LiquidationPrice calculates the liquidation price based on leverage and side.

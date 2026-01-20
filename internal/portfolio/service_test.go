@@ -19,7 +19,7 @@ func price(v int64) types.Price {
 }
 
 func TestExecuteTradeSpotBalances(t *testing.T) {
-	svc := New(nil)
+	svc := New(nil, nil)
 
 	base := balance.GetBaseAsset("BTCUSDT")
 	quote := balance.GetQuoteAsset("BTCUSDT")
@@ -61,7 +61,7 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 }
 
 func TestExecuteTradeLinearPosition(t *testing.T) {
-	svc := New(nil)
+	svc := New(nil, nil)
 	quote := balance.GetQuoteAsset("BTCUSDT")
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{

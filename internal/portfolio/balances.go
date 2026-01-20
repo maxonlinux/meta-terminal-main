@@ -32,6 +32,13 @@ func (s *Service) Release(userID types.UserID, asset string, amount types.Quanti
 func (s *Service) adjustAvailable(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Available = math.Add(balance.Available, delta)
+	if s.pebble != nil {
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutBalance(balance)
+		} else {
+			s.pebble.PutBalance(balance)
+		}
+	}
 }
 
 // adjustLocked mutates the locked balance by delta.
@@ -41,12 +48,26 @@ func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Qu
 	if math.Sign(balance.Locked) < 0 {
 		balance.Locked = math.Zero
 	}
+	if s.pebble != nil {
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutBalance(balance)
+		} else {
+			s.pebble.PutBalance(balance)
+		}
+	}
 }
 
 // adjustMargin mutates the margin balance by delta.
 func (s *Service) adjustMargin(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Margin = math.Add(balance.Margin, delta)
+	if s.pebble != nil {
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutBalance(balance)
+		} else {
+			s.pebble.PutBalance(balance)
+		}
+	}
 }
 
 func (s *Service) balanceFor(userID types.UserID, asset string) *types.Balance {

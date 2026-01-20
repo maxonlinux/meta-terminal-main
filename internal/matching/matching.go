@@ -69,17 +69,24 @@ func MatchOrder(order *types.Order, book *orderbook.OrderBook, applyTrade orderb
 		// GTC rests any remaining quantity after matching.
 		book.Match(order, limitPrice, applyTrade)
 		isFilled := math.Cmp(order.Filled, order.Quantity) == 0
+
+		// full fill
 		if isFilled {
 			setStatus(constants.ORDER_STATUS_FILLED)
+			// do not add to book
 			return nil
 		}
 
-		status := int8(constants.ORDER_STATUS_PARTIALLY_FILLED)
-		if order.Filled.IsZero() {
-			status = constants.ORDER_STATUS_NEW
+		// partial fills
+		if math.Cmp(order.Filled, order.Quantity) > 0 {
+			setStatus(constants.ORDER_STATUS_PARTIALLY_FILLED)
 		}
 
-		setStatus(status)
+		// no fills at all
+		if order.Filled.IsZero() {
+			setStatus(constants.ORDER_STATUS_NEW)
+		}
+
 		book.Add(order)
 		return nil
 	default:

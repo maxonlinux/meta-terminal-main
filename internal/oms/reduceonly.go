@@ -121,7 +121,7 @@ func (r *ReduceOnlyIndex) AdjustExposure(o *types.Order, delta types.Quantity) {
 	shard.exposure[o.UserID] = math.Add(shard.exposure[o.UserID], delta)
 }
 
-func (r *ReduceOnlyIndex) OnPositionReduce(symbol string, positionSize types.Quantity, userID types.UserID) {
+func (r *ReduceOnlyIndex) OnPositionReduce(userID types.UserID, symbol string, positionSize types.Quantity) {
 	shardIdx := ShardIndex(symbol)
 	shard := r.shards[shardIdx]
 

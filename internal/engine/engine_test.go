@@ -6,6 +6,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -30,8 +31,16 @@ func (m *mockCallback) OnChildOrderCreated(order *types.Order) {
 	m.created = append(m.created, order)
 }
 
+func registerInstrument(reg *registry.Registry, symbol string, lastPrice int64) {
+	inst := registry.FromSymbol(symbol, lastPrice)
+	reg.SetInstrument(symbol, inst)
+}
+
 func newEngine(store *oms.Service, cb OrderCallback) (*Engine, *portfolio.Service) {
-	e := NewEngine(store, cb)
+	reg := registry.New()
+	registerInstrument(reg, "BTCUSDT", 5000000000000) // 50000 USDT
+	registerInstrument(reg, "ETHUSDT", 300000000000)  // 3000 USDT
+	e := NewEngine(store, nil, reg, cb)
 	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
 	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
 	return e, e.portfolio
@@ -59,9 +68,10 @@ func TestEngine_PlaceOrder(t *testing.T) {
 		t.Errorf("PlaceOrder failed: %v", err)
 	}
 
-	order, ok := store.Get(types.OrderID(1))
-	if !ok {
-		t.Error("order not found")
+	order := result.Order
+	if order == nil {
+		t.Error("order is nil")
+		return
 	}
 	if order.UserID != types.UserID(1) {
 		t.Errorf("expected userID 1, got %d", order.UserID)
@@ -414,7 +424,7 @@ func BenchmarkEngine_PlaceOrder_PostOnlyReject(b *testing.B) {
 		Type:     constants.ORDER_TYPE_LIMIT,
 		TIF:      constants.TIF_GTC,
 		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+		Quantity: types.Quantity(fixed.NewI(100, 0)),
 	}
 	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)
@@ -451,7 +461,7 @@ func BenchmarkEngine_Match_GTC(b *testing.B) {
 		Type:     constants.ORDER_TYPE_LIMIT,
 		TIF:      constants.TIF_GTC,
 		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+		Quantity: types.Quantity(fixed.NewI(100, 0)),
 	}
 	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)
@@ -565,7 +575,7 @@ func BenchmarkEngine_Match_IOC(b *testing.B) {
 		Type:     constants.ORDER_TYPE_LIMIT,
 		TIF:      constants.TIF_GTC,
 		Price:    types.Price(fixed.NewI(50000, 0)),
-		Quantity: types.Quantity(fixed.NewI(1000000000, 0)),
+		Quantity: types.Quantity(fixed.NewI(100, 0)),
 	}
 	if err := e.Cmd(&PlaceOrderCmd{Req: makerReq}).Err; err != nil {
 		b.Fatalf("setup maker failed: %v", err)

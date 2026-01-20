@@ -79,4 +79,9 @@ var (
 	ErrLeverageTooHigh = errors.New("leverage would cause immediate liquidation")
 	// ErrPriceUnavailable indicates required pricing data is missing.
 	ErrPriceUnavailable = errors.New("price unavailable")
+
+	// Instrument validation errors
+	ErrPriceOutOfBounds   = errors.New("price out of instrument bounds")
+	ErrQtyOutOfBounds     = errors.New("quantity out of instrument bounds")
+	ErrInstrumentNotFound = errors.New("instrument not found")
 )

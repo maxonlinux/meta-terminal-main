@@ -23,13 +23,19 @@ type Match struct {
 	Timestamp  uint64
 }
 
-// Trigger represents a conditional order trigger that monitors price levels.
-// When triggered, the conditional order is converted to a regular order.
-type Trigger struct {
-	Order        *Order // The conditional order to activate
-	Symbol       string // Symbol being monitored
-	Side         int8   // Order side (BUY/SELL)
-	TriggerPrice Price  // Price level that triggers the order
+// Instrument represents a trading pair with its parameters.
+type Instrument struct {
+	Symbol     string
+	BaseAsset  string
+	QuoteAsset string
+	PricePrec  int8
+	QtyPrec    int8
+	MinQty     Quantity
+	MaxQty     Quantity
+	MinPrice   Price
+	MaxPrice   Price
+	TickSize   Price
+	LotSize    Quantity
 }
 
 // Risk

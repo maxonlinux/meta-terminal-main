@@ -1,6 +1,10 @@
 package math
 
-import "github.com/robaho/fixed"
+import (
+	"strings"
+
+	"github.com/robaho/fixed"
+)
 
 var Zero = fixed.NewI(0, 0)
 
@@ -77,4 +81,23 @@ func Add(a, b fixed.Fixed) fixed.Fixed {
 
 func Sub(a, b fixed.Fixed) fixed.Fixed {
 	return a.Sub(b)
+}
+
+func RoundTo(value fixed.Fixed, step fixed.Fixed) fixed.Fixed {
+	if step.Sign() <= 0 {
+		return value
+	}
+	scale := getScale(step)
+	rounded := value.Round(scale)
+	ticks := rounded.Div(step)
+	roundedTicks := ticks.Round(0)
+	return roundedTicks.Mul(step)
+}
+
+func getScale(v fixed.Fixed) int {
+	s := v.String()
+	if idx := strings.Index(s, "."); idx >= 0 {
+		return len(s) - idx - 1
+	}
+	return 0
 }

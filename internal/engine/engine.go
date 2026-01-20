@@ -2,18 +2,19 @@ package engine
 
 import (
 	"errors"
-	"time"
 
-	"github.com/maxonlinux/meta-terminal-go/internal/balance"
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
 	"github.com/maxonlinux/meta-terminal-go/internal/marketdata"
 	"github.com/maxonlinux/meta-terminal-go/internal/matching"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
+	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
 )
 
 type OrderCallback interface {
@@ -49,15 +50,16 @@ type Engine struct {
 	portfolio  *portfolio.Service
 	tradeFeed  *marketdata.TradeFeed
 	lastPrices map[string]types.Price
+	pk         *persistence.PebbleKV
+	registry   *registry.Registry
 	commands   chan queuedCommand
 	callback   OrderCallback
 	done       chan struct{}
-	doneSignal chan struct{}
 }
 
-func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
+func NewEngine(store *oms.Service, pk *persistence.PebbleKV, reg *registry.Registry, cb OrderCallback) *Engine {
 	var engineRef *Engine
-	portfolioService := portfolio.New(func(userID types.UserID, symbol string, size types.Quantity) {
+	portfolioService := portfolio.New(pk, func(userID types.UserID, symbol string, size types.Quantity) {
 		if engineRef != nil {
 			engineRef.onPositionReduce(userID, symbol, size)
 		}
@@ -65,43 +67,33 @@ func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	clearingService := clearing.New(portfolioService)
 
 	e := &Engine{
-		store: store,
-		books: map[int8]map[string]*orderbook.OrderBook{
-			constants.CATEGORY_SPOT:   make(map[string]*orderbook.OrderBook),
-			constants.CATEGORY_LINEAR: make(map[string]*orderbook.OrderBook),
-		},
+		store:      store,
+		books:      make(map[int8]map[string]*orderbook.OrderBook),
 		clearing:   clearingService,
 		portfolio:  portfolioService,
 		tradeFeed:  marketdata.NewTradeFeed(),
 		lastPrices: make(map[string]types.Price),
+		pk:         pk,
+		registry:   reg,
 		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
 		callback:   cb,
 		done:       make(chan struct{}),
-		doneSignal: make(chan struct{}),
+	}
+
+	for _, cat := range []int8{constants.CATEGORY_SPOT, constants.CATEGORY_LINEAR} {
+		e.books[cat] = make(map[string]*orderbook.OrderBook)
 	}
 
 	go func() {
 		for {
 			select {
+			case item := <-e.commands:
+				result := item.cmd.Apply(e)
+				if item.reply != nil {
+					item.reply <- result
+				}
 			case <-e.done:
-				for {
-					select {
-					case item := <-e.commands:
-						item.cmd.Apply(e)
-					default:
-						close(e.doneSignal)
-						return
-					}
-				}
-			default:
-				select {
-				case item := <-e.commands:
-					result := item.cmd.Apply(e)
-					if item.reply != nil {
-						item.reply <- result
-					}
-				case <-e.done:
-				}
+				return
 			}
 		}
 	}()
@@ -110,16 +102,8 @@ func NewEngine(store *oms.Service, cb OrderCallback) *Engine {
 	return e
 }
 
-func (e *Engine) Portfolio() *portfolio.Service {
-	return e.portfolio
-}
-
 func (e *Engine) Shutdown() {
 	close(e.done)
-	select {
-	case <-e.doneSignal:
-	case <-time.After(1 * time.Second):
-	}
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
@@ -128,8 +112,23 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 	return <-reply
 }
 
-func (e *Engine) Enqueue(cmd Command) {
-	e.commands <- queuedCommand{cmd: cmd}
+func (e *Engine) beginTx() {
+	if e.pk != nil {
+		e.pk.Begin()
+	}
+}
+
+func (e *Engine) commitTx() error {
+	if e.pk != nil {
+		return e.pk.Commit()
+	}
+	return nil
+}
+
+func (e *Engine) rollbackTx() {
+	if e.pk != nil {
+		e.pk.Rollback()
+	}
 }
 
 func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage types.Leverage, price types.Price) error {
@@ -140,7 +139,7 @@ func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage type
 
 	effective := leverage
 	if math.Sign(effective) <= 0 {
-		effective = balance.DefaultLeverage()
+		effective = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 	}
 	liqPrice := clearing.LiquidationPrice(pos.EntryPrice, effective, pos.Size)
 	if clearing.ShouldLiquidate(price, liqPrice, pos.Size) {
@@ -179,6 +178,19 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: constants.ErrInvalidCategory}
 	}
 
+	if inst := e.registry.GetInstrument(req.Symbol); inst != nil {
+		if math.Cmp(req.Price, inst.MinPrice) < 0 || math.Cmp(req.Price, inst.MaxPrice) > 0 {
+			return CommandResult{Err: constants.ErrPriceOutOfBounds}
+		}
+		if math.Cmp(req.Quantity, inst.MinQty) < 0 || math.Cmp(req.Quantity, inst.MaxQty) > 0 {
+			return CommandResult{Err: constants.ErrQtyOutOfBounds}
+		}
+		req.Price = types.Price(math.RoundTo(req.Price, inst.TickSize))
+		req.Quantity = types.Quantity(math.RoundTo(req.Quantity, inst.LotSize))
+	} else if e.registry != nil {
+		return CommandResult{Err: constants.ErrInstrumentNotFound}
+	}
+
 	if !req.TriggerPrice.IsZero() {
 		if req.Category == constants.CATEGORY_SPOT {
 			return CommandResult{Err: constants.ErrConditionalSpot}
@@ -200,7 +212,15 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: constants.ErrReduceOnlySpot}
 	}
 
+	e.beginTx()
+	defer func() {
+		if err := recover(); err != nil {
+			e.rollbackTx()
+		}
+	}()
+
 	if err := e.clearing.Reserve(req.UserID, req.Symbol, req.Category, req.Side, req.Quantity, req.Price); err != nil {
+		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 
@@ -221,6 +241,7 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 
 	book, err := e.getBook(order.Category, order.Symbol)
 	if err != nil {
+		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 
@@ -231,6 +252,7 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		if math.Sign(remaining) > 0 {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
+		e.rollbackTx()
 		return CommandResult{Err: matchErr}
 	}
 
@@ -239,6 +261,10 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		if math.Sign(remaining) > 0 {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
+	}
+
+	if err := e.commitTx(); err != nil {
+		return CommandResult{Err: err}
 	}
 	return CommandResult{Order: order}
 }
@@ -251,7 +277,16 @@ func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
 	if c.OrderID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
+
+	e.beginTx()
+	defer func() {
+		if err := recover(); err != nil {
+			e.rollbackTx()
+		}
+	}()
+
 	if err := e.store.Cancel(c.OrderID); err != nil {
+		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 	if order, ok := e.store.Get(c.OrderID); ok {
@@ -262,8 +297,12 @@ func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
 		if book, err := e.getBook(order.Category, order.Symbol); err == nil {
 			_ = book.Remove(order.ID)
 		}
+		if err := e.commitTx(); err != nil {
+			return CommandResult{Err: err}
+		}
 		return CommandResult{Order: order}
 	}
+	e.rollbackTx()
 	return CommandResult{}
 }
 
@@ -276,13 +315,26 @@ func (c *AmendOrderCmd) Apply(e *Engine) CommandResult {
 	if c.OrderID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
+
+	e.beginTx()
+	defer func() {
+		if err := recover(); err != nil {
+			e.rollbackTx()
+		}
+	}()
+
 	if err := e.store.Amend(c.OrderID, c.NewQty); err != nil {
+		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 	order, ok := e.store.Get(c.OrderID)
 	if ok {
+		if err := e.commitTx(); err != nil {
+			return CommandResult{Err: err}
+		}
 		return CommandResult{Order: order}
 	}
+	e.rollbackTx()
 	return CommandResult{}
 }
 

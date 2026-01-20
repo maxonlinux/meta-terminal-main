@@ -5,6 +5,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
 )
 
 // GetPosition returns the stored position for the symbol.
@@ -29,6 +30,13 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 
 	if math.Sign(pos.Size) == 0 {
 		pos.Leverage = newLeverage
+		if s.pebble != nil {
+			if s.pebble.HasActiveTx() {
+				s.pebble.PutPosition(pos)
+			} else {
+				s.pebble.PutPosition(pos)
+			}
+		}
 		return nil
 	}
 
@@ -46,6 +54,13 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 	}
 
 	pos.Leverage = newLeverage
+	if s.pebble != nil {
+		if s.pebble.HasActiveTx() {
+			s.pebble.PutPosition(pos)
+		} else {
+			s.pebble.PutPosition(pos)
+		}
+	}
 	return nil
 }
 
@@ -70,7 +85,14 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		pos.Size = signedTrade
 		pos.EntryPrice = match.Price
 		if math.Sign(pos.Leverage) <= 0 {
-			pos.Leverage = balance.DefaultLeverage()
+			pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+		}
+		if s.pebble != nil {
+			if s.pebble.HasActiveTx() {
+				s.pebble.PutPosition(pos)
+			} else {
+				s.pebble.PutPosition(pos)
+			}
 		}
 		return
 	}
@@ -81,6 +103,13 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		weighted := math.Add(math.Mul(pos.EntryPrice, pos.Size), math.Mul(match.Price, signedTrade))
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
+		if s.pebble != nil {
+			if s.pebble.HasActiveTx() {
+				s.pebble.PutPosition(pos)
+			} else {
+				s.pebble.PutPosition(pos)
+			}
+		}
 		return
 	}
 
@@ -90,6 +119,23 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if math.Sign(remaining) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
+		if s.pebble != nil {
+			if s.pebble.HasActiveTx() {
+				s.pebble.PutPosition(pos)
+				s.pebble.DeletePosition(userID, match.Symbol)
+			} else {
+				s.pebble.PutPosition(pos)
+				s.pebble.DeletePosition(userID, match.Symbol)
+			}
+		}
+	} else {
+		if s.pebble != nil {
+			if s.pebble.HasActiveTx() {
+				s.pebble.PutPosition(pos)
+			} else {
+				s.pebble.PutPosition(pos)
+			}
+		}
 	}
 
 	closedQty := absPositionSize(signedTrade)
@@ -111,7 +157,7 @@ func (s *Service) positionLeverage(userID types.UserID, symbol string) types.Lev
 			return pos.Leverage
 		}
 	}
-	return balance.DefaultLeverage()
+	return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 }
 
 func (s *Service) positionFor(userID types.UserID, symbol string) *types.Position {
@@ -149,7 +195,7 @@ func absPositionSize(size types.Quantity) types.Quantity {
 
 func normalizeLeverage(leverage types.Leverage) types.Leverage {
 	if math.Sign(leverage) <= 0 {
-		return balance.DefaultLeverage()
+		return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 	}
 	return leverage
 }
