@@ -1,6 +1,7 @@
 package orderbook
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -8,6 +9,21 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
+
+var matchPool = sync.Pool{
+	New: func() interface{} {
+		return &types.Match{}
+	},
+}
+
+func getMatch() *types.Match {
+	return matchPool.Get().(*types.Match)
+}
+
+func putMatch(m *types.Match) {
+	*m = types.Match{}
+	matchPool.Put(m)
+}
 
 const CACHE_LINE = 64
 
@@ -364,17 +380,17 @@ func (sh *bookState) matchLevel(taker *types.Order, lvlIdx int32, emit func(type
 		taker.Filled = taker.Filled.Add(exec)
 		sh.levels[lvlIdx].total = sh.levels[lvlIdx].total.Sub(exec)
 
-		match := types.Match{
-			ID:         types.TradeID(snowflake.Next()),
-			Symbol:     taker.Symbol,
-			Category:   taker.Category,
-			TakerOrder: taker,
-			MakerOrder: maker,
-			Price:      sh.levels[lvlIdx].price,
-			Quantity:   exec,
-			Timestamp:  utils.NowNano(),
-		}
-		emit(match)
+		match := getMatch()
+		match.ID = types.TradeID(snowflake.Next())
+		match.Symbol = taker.Symbol
+		match.Category = taker.Category
+		match.TakerOrder = taker
+		match.MakerOrder = maker
+		match.Price = sh.levels[lvlIdx].price
+		match.Quantity = exec
+		match.Timestamp = utils.NowNano()
+		emit(*match)
+		putMatch(match)
 
 		if remaining(maker).Sign() == 0 {
 			sh.removeNode(makerNodeIdx)

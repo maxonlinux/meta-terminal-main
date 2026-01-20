@@ -2,6 +2,7 @@ package oms
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -11,6 +12,38 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
+
+var orderPool = sync.Pool{
+	New: func() interface{} {
+		return &types.Order{}
+	},
+}
+
+func getOrder() *types.Order {
+	return orderPool.Get().(*types.Order)
+}
+
+func putOrder(o *types.Order) {
+	o.ID = 0
+	o.UserID = 0
+	o.Symbol = ""
+	o.Category = 0
+	o.Side = 0
+	o.Type = 0
+	o.TIF = 0
+	o.Status = 0
+	o.Price = math.Zero
+	o.Quantity = math.Zero
+	o.Filled = math.Zero
+	o.TriggerPrice = math.Zero
+	o.ReduceOnly = false
+	o.CloseOnTrigger = false
+	o.StopOrderType = 0
+	o.IsConditional = false
+	o.CreatedAt = 0
+	o.UpdatedAt = 0
+	orderPool.Put(o)
+}
 
 type Service struct {
 	all         map[types.OrderID]*types.Order
@@ -56,32 +89,29 @@ func newOrder(
 	stopOrderType int8,
 	now uint64,
 ) *types.Order {
-	isConditional := !triggerPrice.IsZero()
-	status := int8(constants.ORDER_STATUS_NEW)
-	if isConditional {
-		status = constants.ORDER_STATUS_UNTRIGGERED
+	o := getOrder()
+	o.ID = types.OrderID(snowflake.Next())
+	o.UserID = userID
+	o.Symbol = symbol
+	o.Category = category
+	o.Side = side
+	o.Type = otype
+	o.TIF = tif
+	o.Status = int8(constants.ORDER_STATUS_NEW)
+	if !triggerPrice.IsZero() {
+		o.Status = constants.ORDER_STATUS_UNTRIGGERED
 	}
-
-	return &types.Order{
-		ID:             types.OrderID(snowflake.Next()),
-		UserID:         userID,
-		Symbol:         symbol,
-		Category:       category,
-		Side:           side,
-		Type:           otype,
-		TIF:            tif,
-		Status:         status,
-		Price:          price,
-		Quantity:       quantity,
-		Filled:         math.Zero,
-		TriggerPrice:   triggerPrice,
-		ReduceOnly:     reduceOnly,
-		CloseOnTrigger: closeOnTrigger,
-		StopOrderType:  stopOrderType,
-		IsConditional:  isConditional,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
+	o.Price = price
+	o.Quantity = quantity
+	o.Filled = math.Zero
+	o.TriggerPrice = triggerPrice
+	o.ReduceOnly = reduceOnly
+	o.CloseOnTrigger = closeOnTrigger
+	o.StopOrderType = stopOrderType
+	o.IsConditional = !triggerPrice.IsZero()
+	o.CreatedAt = now
+	o.UpdatedAt = now
+	return o
 }
 
 func NewService(store *persistence.Store) *Service {

@@ -4,12 +4,12 @@ import (
 	"errors"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
-	"github.com/maxonlinux/meta-terminal-go/internal/marketdata"
 	"github.com/maxonlinux/meta-terminal-go/internal/matching"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
+	"github.com/maxonlinux/meta-terminal-go/internal/trades"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -47,7 +47,7 @@ type Engine struct {
 	books      map[int8]map[string]*orderbook.OrderBook
 	clearing   *clearing.Service
 	portfolio  *portfolio.Service
-	tradeFeed  *marketdata.TradeFeed
+	tradeFeed  *trades.TradeFeed
 	lastPrices map[string]types.Price
 	registry   *registry.Registry
 	commands   chan queuedCommand
@@ -69,7 +69,7 @@ func NewEngine(store *oms.Service, reg *registry.Registry, cb OrderCallback) *En
 		books:      make(map[int8]map[string]*orderbook.OrderBook),
 		clearing:   clearingService,
 		portfolio:  portfolioService,
-		tradeFeed:  marketdata.NewTradeFeed(),
+		tradeFeed:  trades.NewTradeFeed(),
 		lastPrices: make(map[string]types.Price),
 		registry:   reg,
 		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),

@@ -1,11 +1,30 @@
 package engine
 
 import (
-	"github.com/maxonlinux/meta-terminal-go/internal/marketdata"
+	"sync"
+
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
 )
+
+var defaultLeverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+
+var tradePool = sync.Pool{
+	New: func() interface{} {
+		return &types.Trade{}
+	},
+}
+
+func getTrade() *types.Trade {
+	return tradePool.Get().(*types.Trade)
+}
+
+func putTrade(t *types.Trade) {
+	*t = types.Trade{}
+	tradePool.Put(t)
+}
 
 func (e *Engine) getBook(category int8, symbol string) (*orderbook.OrderBook, error) {
 	bookSet, ok := e.books[category]
@@ -29,24 +48,18 @@ func (e *Engine) applyMatch(match types.Match) {
 
 	e.store.Fill(match.MakerOrder.ID, match.Quantity)
 
-	publicTrade := buildPublicTrade(match)
-	e.tradeFeed.Add(match.Category, match.Symbol, publicTrade)
+	publicTrade := getTrade()
+	publicTrade.ID = match.ID
+	publicTrade.MatchID = match.ID
+	publicTrade.OrderID = 0
+	publicTrade.UserID = 0
+	publicTrade.Symbol = match.Symbol
+	publicTrade.Category = match.Category
+	publicTrade.Side = match.TakerOrder.Side
+	publicTrade.Price = match.Price
+	publicTrade.Quantity = match.Quantity
+	publicTrade.IsMaker = false
+	publicTrade.Timestamp = match.Timestamp
+	e.tradeFeed.Add(match.Category, match.Symbol, *publicTrade)
+	putTrade(publicTrade)
 }
-
-func buildPublicTrade(match types.Match) types.Trade {
-	return types.Trade{
-		ID:        match.ID,
-		MatchID:   match.ID,
-		OrderID:   0,
-		UserID:    0,
-		Symbol:    match.Symbol,
-		Category:  match.Category,
-		Side:      match.TakerOrder.Side,
-		Price:     match.Price,
-		Quantity:  match.Quantity,
-		IsMaker:   false,
-		Timestamp: match.Timestamp,
-	}
-}
-
-var _ = marketdata.NewTradeFeed

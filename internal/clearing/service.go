@@ -8,6 +8,8 @@ import (
 	"github.com/robaho/fixed"
 )
 
+var one = fixed.NewI(1, 0)
+
 type Portfolio interface {
 	Reserve(userID types.UserID, asset string, amount types.Quantity) error
 	Release(userID types.UserID, asset string, amount types.Quantity)
@@ -83,7 +85,6 @@ func LiquidationPrice(entryPrice types.Price, leverage types.Leverage, size type
 		return types.Price(math.Zero)
 	}
 
-	one := fixed.NewI(1, 0)
 	invLeverage := math.Div(one, leverage)
 	maintenance := fixed.NewF(constants.MM_RATIO)
 	ratio := math.Sub(invLeverage, maintenance)

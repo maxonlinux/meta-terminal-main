@@ -216,13 +216,13 @@ func (s *Store) Get(key []byte) ([]byte, error) {
 }
 
 func orderKey(id types.OrderID) []byte {
-	return []byte(fmt.Sprintf("o:%016x", id))
+	return fmt.Appendf(nil, "o:%016x", id)
 }
 
 func balanceKey(userID types.UserID, asset string) []byte {
-	return []byte(fmt.Sprintf("b:%016x:%s", userID, asset))
+	return fmt.Appendf(nil, "b:%016x:%s", userID, asset)
 }
 
 func positionKey(userID types.UserID, symbol string) []byte {
-	return []byte(fmt.Sprintf("p:%016x:%s", userID, symbol))
+	return fmt.Appendf(nil, "p:%016x:%s", userID, symbol)
 }
