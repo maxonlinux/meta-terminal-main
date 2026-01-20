@@ -49,7 +49,7 @@ type e2eEngine struct {
 func newE2EEngine() *e2eEngine {
 	store := oms.NewService(nil)
 	cb := &mockCallback{}
-	e := NewEngine(store, nil, registry.New(), cb)
+	e := NewEngine(store, registry.New(), cb)
 
 	symbols := []string{"BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
 		"ADAUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT"}

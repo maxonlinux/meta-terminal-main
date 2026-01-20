@@ -12,7 +12,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -50,21 +49,20 @@ type Engine struct {
 	portfolio  *portfolio.Service
 	tradeFeed  *marketdata.TradeFeed
 	lastPrices map[string]types.Price
-	pk         *persistence.PebbleKV
 	registry   *registry.Registry
 	commands   chan queuedCommand
 	callback   OrderCallback
 	done       chan struct{}
 }
 
-func NewEngine(store *oms.Service, pk *persistence.PebbleKV, reg *registry.Registry, cb OrderCallback) *Engine {
+func NewEngine(store *oms.Service, reg *registry.Registry, cb OrderCallback) *Engine {
 	var engineRef *Engine
-	portfolioService := portfolio.New(pk, func(userID types.UserID, symbol string, size types.Quantity) {
+	portfolioService := portfolio.New(nil, func(userID types.UserID, symbol string, size types.Quantity) {
 		if engineRef != nil {
 			engineRef.onPositionReduce(userID, symbol, size)
 		}
 	}, reg)
-	clearingService := clearing.New(portfolioService)
+	clearingService := clearing.New(portfolioService, reg)
 
 	e := &Engine{
 		store:      store,
@@ -73,7 +71,6 @@ func NewEngine(store *oms.Service, pk *persistence.PebbleKV, reg *registry.Regis
 		portfolio:  portfolioService,
 		tradeFeed:  marketdata.NewTradeFeed(),
 		lastPrices: make(map[string]types.Price),
-		pk:         pk,
 		registry:   reg,
 		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
 		callback:   cb,
@@ -103,32 +100,18 @@ func NewEngine(store *oms.Service, pk *persistence.PebbleKV, reg *registry.Regis
 }
 
 func (e *Engine) Shutdown() {
-	close(e.done)
+	select {
+	case <-e.done:
+		return
+	default:
+		close(e.done)
+	}
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
 	reply := make(chan CommandResult, 1)
 	e.commands <- queuedCommand{cmd: cmd, reply: reply}
 	return <-reply
-}
-
-func (e *Engine) beginTx() {
-	if e.pk != nil {
-		e.pk.Begin()
-	}
-}
-
-func (e *Engine) commitTx() error {
-	if e.pk != nil {
-		return e.pk.Commit()
-	}
-	return nil
-}
-
-func (e *Engine) rollbackTx() {
-	if e.pk != nil {
-		e.pk.Rollback()
-	}
 }
 
 func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage types.Leverage, price types.Price) error {
@@ -212,15 +195,7 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: constants.ErrReduceOnlySpot}
 	}
 
-	e.beginTx()
-	defer func() {
-		if err := recover(); err != nil {
-			e.rollbackTx()
-		}
-	}()
-
 	if err := e.clearing.Reserve(req.UserID, req.Symbol, req.Category, req.Side, req.Quantity, req.Price); err != nil {
-		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 
@@ -241,7 +216,6 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 
 	book, err := e.getBook(order.Category, order.Symbol)
 	if err != nil {
-		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 
@@ -252,7 +226,6 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		if math.Sign(remaining) > 0 {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
-		e.rollbackTx()
 		return CommandResult{Err: matchErr}
 	}
 
@@ -261,10 +234,6 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		if math.Sign(remaining) > 0 {
 			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
-	}
-
-	if err := e.commitTx(); err != nil {
-		return CommandResult{Err: err}
 	}
 	return CommandResult{Order: order}
 }
@@ -278,15 +247,7 @@ func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
 
-	e.beginTx()
-	defer func() {
-		if err := recover(); err != nil {
-			e.rollbackTx()
-		}
-	}()
-
 	if err := e.store.Cancel(c.OrderID); err != nil {
-		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 	if order, ok := e.store.Get(c.OrderID); ok {
@@ -297,12 +258,8 @@ func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
 		if book, err := e.getBook(order.Category, order.Symbol); err == nil {
 			_ = book.Remove(order.ID)
 		}
-		if err := e.commitTx(); err != nil {
-			return CommandResult{Err: err}
-		}
 		return CommandResult{Order: order}
 	}
-	e.rollbackTx()
 	return CommandResult{}
 }
 
@@ -316,25 +273,13 @@ func (c *AmendOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
 
-	e.beginTx()
-	defer func() {
-		if err := recover(); err != nil {
-			e.rollbackTx()
-		}
-	}()
-
 	if err := e.store.Amend(c.OrderID, c.NewQty); err != nil {
-		e.rollbackTx()
 		return CommandResult{Err: err}
 	}
 	order, ok := e.store.Get(c.OrderID)
 	if ok {
-		if err := e.commitTx(); err != nil {
-			return CommandResult{Err: err}
-		}
 		return CommandResult{Order: order}
 	}
-	e.rollbackTx()
 	return CommandResult{}
 }
 

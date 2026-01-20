@@ -1,7 +1,6 @@
 package persistence
 
 import (
-	"os"
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -9,12 +8,12 @@ import (
 	"github.com/robaho/fixed"
 )
 
-func TestPebbleKVRecovery(t *testing.T) {
+func TestStoreRecovery(t *testing.T) {
 	path := t.TempDir()
 
 	store1, err := Open(path)
 	if err != nil {
-		t.Fatalf("open pebblekv: %v", err)
+		t.Fatalf("open store: %v", err)
 	}
 
 	for i := 0; i < 100; i++ {
@@ -28,8 +27,8 @@ func TestPebbleKVRecovery(t *testing.T) {
 			Quantity: fixed.NewI(1, 8),
 			Price:    fixed.NewI(50000, 8),
 		}
-		if err := store1.PutOrder(order); err != nil {
-			t.Fatalf("put order %d: %v", i, err)
+		if err := store1.SaveOrder(order); err != nil {
+			t.Fatalf("save order %d: %v", i, err)
 		}
 	}
 
@@ -39,12 +38,12 @@ func TestPebbleKVRecovery(t *testing.T) {
 
 	store2, err := Open(path)
 	if err != nil {
-		t.Fatalf("reopen pebblekv: %v", err)
+		t.Fatalf("reopen store: %v", err)
 	}
 	defer store2.Close()
 
 	count := 0
-	err = store2.RangeOrders(func(order *types.Order) bool {
+	err = store2.LoadOrders(func(order *types.Order) bool {
 		count++
 		if order.ID == types.OrderID(0) {
 			t.Error("invalid order ID 0")
@@ -52,19 +51,19 @@ func TestPebbleKVRecovery(t *testing.T) {
 		return true
 	})
 	if err != nil {
-		t.Fatalf("range orders: %v", err)
+		t.Fatalf("load orders: %v", err)
 	}
 	if count != 100 {
 		t.Errorf("expected 100 orders after recovery, got %d", count)
 	}
 }
 
-func TestPebbleKVRecoveryUpdate(t *testing.T) {
+func TestStoreRecoveryUpdate(t *testing.T) {
 	path := t.TempDir()
 
 	store1, err := Open(path)
 	if err != nil {
-		t.Fatalf("open pebblekv: %v", err)
+		t.Fatalf("open store: %v", err)
 	}
 
 	order := &types.Order{
@@ -77,14 +76,14 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 		Quantity: fixed.NewI(10, 8),
 		Price:    fixed.NewI(50000, 8),
 	}
-	if err := store1.PutOrder(order); err != nil {
-		t.Fatalf("put order: %v", err)
+	if err := store1.SaveOrder(order); err != nil {
+		t.Fatalf("save order: %v", err)
 	}
 	store1.Close()
 
 	store2, err := Open(path)
 	if err != nil {
-		t.Fatalf("reopen pebblekv: %v", err)
+		t.Fatalf("reopen store: %v", err)
 	}
 
 	recovered, err := store2.GetOrder(1)
@@ -96,14 +95,14 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 	}
 
 	recovered.Quantity = fixed.NewI(5, 8)
-	if err := store2.PutOrder(recovered); err != nil {
+	if err := store2.SaveOrder(recovered); err != nil {
 		t.Fatalf("update order: %v", err)
 	}
 	store2.Close()
 
 	store3, err := Open(path)
 	if err != nil {
-		t.Fatalf("reopen pebblekv again: %v", err)
+		t.Fatalf("reopen store again: %v", err)
 	}
 	defer store3.Close()
 
@@ -116,82 +115,32 @@ func TestPebbleKVRecoveryUpdate(t *testing.T) {
 	}
 }
 
-func TestPebbleKVDelete(t *testing.T) {
-	path := t.TempDir()
-
-	store1, err := Open(path)
-	if err != nil {
-		t.Fatalf("open pebblekv: %v", err)
-	}
-
-	order := &types.Order{
-		ID:       types.OrderID(1),
-		UserID:   types.UserID(1),
-		Symbol:   "BTC-USD-PERP",
-		Side:     constants.ORDER_SIDE_BUY,
-		Category: constants.CATEGORY_LINEAR,
-		Type:     constants.ORDER_TYPE_LIMIT,
-		Quantity: fixed.NewI(1, 8),
-		Price:    fixed.NewI(50000, 8),
-	}
-	if err := store1.PutOrder(order); err != nil {
-		t.Fatalf("put order: %v", err)
-	}
-	store1.Close()
-
-	store2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen pebblekv: %v", err)
-	}
-
-	if err := store2.DeleteOrder(1); err != nil {
-		t.Fatalf("delete order: %v", err)
-	}
-	store2.Close()
-
-	store3, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen pebblekv again: %v", err)
-	}
-	defer store3.Close()
-
-	_, err = store3.GetOrder(1)
-	if err != ErrKeyNotFound {
-		t.Errorf("expected ErrKeyNotFound after delete, got %v", err)
-	}
-}
-
-func TestPebbleKVCheckpoint(t *testing.T) {
+func TestStoreKeyValue(t *testing.T) {
 	path := t.TempDir()
 
 	store, err := Open(path)
 	if err != nil {
-		t.Fatalf("open pebblekv: %v", err)
+		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
 
-	for i := 0; i < 100; i++ {
-		order := &types.Order{
-			ID:       types.OrderID(i + 1),
-			UserID:   types.UserID(1),
-			Symbol:   "BTC-USD-PERP",
-			Side:     constants.ORDER_SIDE_BUY,
-			Category: constants.CATEGORY_LINEAR,
-			Type:     constants.ORDER_TYPE_LIMIT,
-			Quantity: fixed.NewI(1, 8),
-			Price:    fixed.NewI(50000, 8),
-		}
-		if err := store.PutOrder(order); err != nil {
-			t.Fatalf("put order %d: %v", i, err)
-		}
+	key := []byte("test:key")
+	value := []byte("test_value")
+
+	if err := store.Set(key, value); err != nil {
+		t.Fatalf("set key: %v", err)
 	}
 
-	if err := store.Checkpoint(); err != nil {
-		t.Fatalf("checkpoint: %v", err)
+	got, err := store.Get(key)
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if string(got) != string(value) {
+		t.Errorf("expected %s, got %s", value, got)
 	}
 
-	checkpointDir := path + "/checkpoint"
-	if _, err := os.Stat(checkpointDir); os.IsNotExist(err) {
-		t.Error("checkpoint directory was not created")
+	_, err = store.Get([]byte("nonexistent"))
+	if err != ErrKeyNotFound {
+		t.Errorf("expected ErrKeyNotFound, got %v", err)
 	}
 }

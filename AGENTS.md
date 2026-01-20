@@ -12,16 +12,13 @@ go test -race ./...               # Run with race detection
 go test -cover ./...              # Run with coverage
 ```
 
-### Performance Benchmarks (Pebble vs JetStream)
+### Performance Benchmarks (Pebble KV)
 ```bash
 # All benchmarks
 go test -bench=. -benchmem -count=3 ./internal/bench/...
 
 # Pebble KV benchmarks
 go test -bench=BenchmarkPebble -benchmem ./internal/bench/...
-
-# JetStream KV benchmarks (requires NATS server)
-go test -bench=BenchmarkJetStream -benchmem ./internal/bench/...
 ```
 
 ### Persistence (PebbleKV - Self-Managing State)
@@ -124,7 +121,7 @@ var (
 - Table-driven tests for validation scenarios
 
 ### Persistence and Messaging
-- Use GOB encoding for NATS messaging
+- Use GOB encoding for internal messaging
 - WAL + Snapshot pattern for state recovery
 - Outbox pattern for async history writing to DuckDB
 - Events are immutable facts (OrderEvent, TradeEvent, RPNLEvent)

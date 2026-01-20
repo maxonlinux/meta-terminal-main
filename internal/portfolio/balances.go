@@ -6,12 +6,10 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-// GetBalance returns the stored balance for the requested asset.
 func (s *Service) GetBalance(userID types.UserID, asset string) *types.Balance {
 	return s.balanceFor(userID, asset)
 }
 
-// Reserve locks user funds for an order placement.
 func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quantity) error {
 	balance := s.balanceFor(userID, asset)
 	if math.Lt(balance.Available, amount) {
@@ -22,39 +20,35 @@ func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quanti
 	return nil
 }
 
-// Release unlocks reserved funds back to the available balance.
 func (s *Service) Release(userID types.UserID, asset string, amount types.Quantity) {
 	s.adjustLocked(userID, asset, math.Neg(amount))
 	s.adjustAvailable(userID, asset, amount)
 }
 
-// adjustAvailable mutates the available balance by delta.
 func (s *Service) adjustAvailable(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Available = math.Add(balance.Available, delta)
-	if s.pebble != nil {
-		s.pebble.PutBalance(balance)
+	if s.store != nil {
+		s.store.SaveBalance(balance)
 	}
 }
 
-// adjustLocked mutates the locked balance by delta.
 func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Locked = math.Add(balance.Locked, delta)
 	if math.Sign(balance.Locked) < 0 {
 		balance.Locked = math.Zero
 	}
-	if s.pebble != nil {
-		s.pebble.PutBalance(balance)
+	if s.store != nil {
+		s.store.SaveBalance(balance)
 	}
 }
 
-// adjustMargin mutates the margin balance by delta.
 func (s *Service) adjustMargin(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Margin = math.Add(balance.Margin, delta)
-	if s.pebble != nil {
-		s.pebble.PutBalance(balance)
+	if s.store != nil {
+		s.store.SaveBalance(balance)
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"github.com/robaho/fixed"
 )
 
-// GetPosition returns the stored position for the symbol.
 func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Position {
 	pos := s.positionFor(userID, symbol)
 	if pos == nil {
@@ -18,7 +17,6 @@ func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Positio
 	return pos
 }
 
-// SetLeverage updates the leverage for a symbol and adjusts margin buckets.
 func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage types.Leverage) error {
 	pos := s.positionFor(userID, symbol)
 	if pos == nil {
@@ -30,8 +28,8 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 
 	if math.Sign(pos.Size) == 0 {
 		pos.Leverage = newLeverage
-		if s.pebble != nil {
-			s.pebble.PutPosition(pos)
+		if s.store != nil {
+			s.store.SavePosition(pos)
 		}
 		return nil
 	}
@@ -50,13 +48,12 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 	}
 
 	pos.Leverage = newLeverage
-	if s.pebble != nil {
-		s.pebble.PutPosition(pos)
+	if s.store != nil {
+		s.store.SavePosition(pos)
 	}
 	return nil
 }
 
-// updatePosition applies trade size and average price changes.
 func (s *Service) updatePosition(userID types.UserID, match *types.Match, order *types.Order) {
 	pos := s.positionFor(userID, match.Symbol)
 	if pos == nil {
@@ -72,44 +69,40 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		return
 	}
 
-	// New position: set size and entry price using the trade direction.
 	if posSign == 0 {
 		pos.Size = signedTrade
 		pos.EntryPrice = match.Price
 		if math.Sign(pos.Leverage) <= 0 {
 			pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
-		if s.pebble != nil {
-			s.pebble.PutPosition(pos)
+		if s.store != nil {
+			s.store.SavePosition(pos)
 		}
 		return
 	}
 
-	// Increase: trade matches the current position direction.
 	if posSign == tradeSign {
 		newSize := math.Add(pos.Size, signedTrade)
 		weighted := math.Add(math.Mul(pos.EntryPrice, pos.Size), math.Mul(match.Price, signedTrade))
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
-		if s.pebble != nil {
-			s.pebble.PutPosition(pos)
+		if s.store != nil {
+			s.store.SavePosition(pos)
 		}
 		return
 	}
 
-	// Reduce/flip: trade direction opposes the current position.
 	remaining := math.Add(pos.Size, signedTrade)
 	pos.Size = remaining
 	if math.Sign(remaining) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
-		if s.pebble != nil {
-			s.pebble.PutPosition(pos)
-			s.pebble.DeletePosition(userID, match.Symbol)
+		if s.store != nil {
+			s.store.SavePosition(pos)
 		}
 	} else {
-		if s.pebble != nil {
-			s.pebble.PutPosition(pos)
+		if s.store != nil {
+			s.store.SavePosition(pos)
 		}
 	}
 
@@ -119,13 +112,11 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		quote := registry.GetQuoteAsset(match.Symbol)
 		s.adjustAvailable(userID, quote, rpnl)
 	}
-	// Notify reduce-only index about updated position size.
 	if s.onReduce != nil {
 		s.onReduce(userID, match.Symbol, pos.Size)
 	}
 }
 
-// positionLeverage returns the active leverage for a symbol.
 func (s *Service) positionLeverage(userID types.UserID, symbol string) types.Leverage {
 	if pos := s.positionFor(userID, symbol); pos != nil {
 		if math.Sign(pos.Leverage) > 0 {
@@ -142,7 +133,6 @@ func (s *Service) positionFor(userID types.UserID, symbol string) *types.Positio
 	return nil
 }
 
-// ensurePositions returns or creates the positions map for a user.
 func (s *Service) ensurePositions(userID types.UserID) map[string]*types.Position {
 	userPositions := s.Positions[userID]
 	if userPositions == nil {
@@ -152,7 +142,6 @@ func (s *Service) ensurePositions(userID types.UserID) map[string]*types.Positio
 	return userPositions
 }
 
-// sideSignedQty returns order quantity signed by order side.
 func sideSignedQty(side int8, qty types.Quantity) types.Quantity {
 	if side == constants.ORDER_SIDE_BUY {
 		return qty
@@ -160,7 +149,6 @@ func sideSignedQty(side int8, qty types.Quantity) types.Quantity {
 	return types.Quantity(math.Neg(qty))
 }
 
-// absPositionSize returns the absolute position size.
 func absPositionSize(size types.Quantity) types.Quantity {
 	if math.Sign(size) < 0 {
 		return types.Quantity(math.Neg(size))
@@ -195,7 +183,6 @@ func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin 
 	return nil
 }
 
-// realizedPnL calculates realized PnL for the closing quantity.
 func realizedPnL(entryPrice types.Price, tradePrice types.Price, closedQty types.Quantity, remaining types.Quantity) types.Quantity {
 	if math.Sign(closedQty) == 0 {
 		return types.Quantity(math.Zero)

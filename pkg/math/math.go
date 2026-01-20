@@ -59,14 +59,6 @@ func Sign(a fixed.Fixed) int {
 	return a.Sign()
 }
 
-func Gt(a, b fixed.Fixed) bool {
-	return a.GreaterThan(b)
-}
-
-func Gte(a, b fixed.Fixed) bool {
-	return a.GreaterThanOrEqual(b)
-}
-
 func Lt(a, b fixed.Fixed) bool {
 	return a.LessThan(b)
 }

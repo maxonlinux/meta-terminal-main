@@ -1,7 +1,6 @@
 package bench
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -10,35 +9,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/nats-io/nats.go"
 )
-
-// Benchmarks Summary (M4 Pro):
-//
-// Pebble KV Store:
-//   - Write1k:     ~8.5 ms/op   (1000 key-value pairs)
-//   - Read:        ~720 ns/op   (single key lookup)
-//   - Checkpoint:  ~35 ms/op    (database checkpoint)
-//   - IterScan:    ~750 µs/op   (full table scan)
-//   - Batch100:    ~4.5 ms/op
-//   - Batch500:    ~5.8 ms/op
-//   - Batch1000:   ~7.7 ms/op
-//   - Batch5000:   ~34 ms/op
-//   - RangeOrders: ~1.4 ms/op  (1000 orders)
-//   - Save:        ~15 ms/op   (full state save)
-//   - Restore:     ~12 ms/op   (full state restore)
-//
-// JetStream KV (requires NATS server):
-//   - Write1k:     ~5000 ms/op  (573x slower than Pebble!)
-//   - Read:        ~85 µs/op    (8.5x slower than Pebble)
-//   - Snapshot:    ~3.3 ms/op   (WatchAll operation)
-//
-// Key Findings:
-// 1. Pebble is 500-700x faster than JetStream for writes
-// 2. Pebble is 8-10x faster than JetStream for reads
-// 3. Save/Restore with PebbleKV is fast enough for checkpointing
-//
-// Recommendation: Use PebbleKV as primary state storage
 
 type kvBenchData struct {
 	keys   []string
@@ -170,120 +141,6 @@ func benchPebbleReplay(b *testing.B, data kvBenchData) {
 	}
 }
 
-func benchJetStreamWrite(b *testing.B, data kvBenchData, batchSize int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	nc, err := nats.Connect(nats.DefaultURL)
-	if err != nil {
-		b.Fatalf("connect nats: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		b.Fatalf("jetstream: %v", err)
-	}
-
-	stream := "bench_kv"
-	_ = js.DeleteStream(stream)
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:      stream,
-		Subjects:  []string{"bench.kv"},
-		Retention: nats.LimitsPolicy,
-		Storage:   nats.FileStorage,
-	})
-	if err != nil {
-		b.Fatalf("add stream: %v", err)
-	}
-	defer js.DeleteStream(stream)
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "bench_kv"})
-	if err != nil {
-		b.Fatalf("create kv: %v", err)
-	}
-	defer kv.Delete("*")
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < batchSize; j++ {
-			idx := (i*batchSize + j) % len(data.keys)
-			if _, err := kv.PutString(data.keys[idx], string(data.values[idx])); err != nil {
-				b.Fatalf("kv put: %v", err)
-			}
-		}
-	}
-	<-ctx.Done()
-}
-
-func benchJetStreamRead(b *testing.B, data kvBenchData) {
-	nc, err := nats.Connect(nats.DefaultURL)
-	if err != nil {
-		b.Fatalf("connect nats: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		b.Fatalf("jetstream: %v", err)
-	}
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "bench_kv_read"})
-	if err != nil {
-		b.Fatalf("create kv: %v", err)
-	}
-	defer kv.Delete("*")
-
-	for i := range data.keys {
-		if _, err := kv.PutString(data.keys[i], string(data.values[i])); err != nil {
-			b.Fatalf("seed kv: %v", err)
-		}
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		idx := i % len(data.keys)
-		if _, err := kv.Get(data.keys[idx]); err != nil {
-			b.Fatalf("kv get: %v", err)
-		}
-	}
-}
-
-func benchJetStreamSnapshot(b *testing.B, data kvBenchData) {
-	nc, err := nats.Connect(nats.DefaultURL)
-	if err != nil {
-		b.Fatalf("connect nats: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		b.Fatalf("jetstream: %v", err)
-	}
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "bench_kv_snapshot"})
-	if err != nil {
-		b.Fatalf("create kv: %v", err)
-	}
-	defer kv.Delete("*")
-
-	for i := range data.keys {
-		if _, err := kv.PutString(data.keys[i], string(data.values[i])); err != nil {
-			b.Fatalf("seed kv: %v", err)
-		}
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		watcher, err := kv.WatchAll()
-		if err != nil {
-			b.Fatalf("kv watch: %v", err)
-		}
-		_ = watcher.Updates()
-		_ = watcher.Stop()
-	}
-}
-
 func BenchmarkPebbleWrite1k(b *testing.B) {
 	data := newBenchData(20000, 256)
 	benchPebbleWrite(b, data, 1000)
@@ -357,21 +214,6 @@ func BenchmarkPebbleBatch1000(b *testing.B) {
 func BenchmarkPebbleBatch5000(b *testing.B) {
 	data := newBenchData(20000, 256)
 	benchPebbleWrite(b, data, 5000)
-}
-
-func BenchmarkJetStreamWrite1k(b *testing.B) {
-	data := newBenchData(20000, 256)
-	benchJetStreamWrite(b, data, 1000)
-}
-
-func BenchmarkJetStreamRead(b *testing.B) {
-	data := newBenchData(20000, 256)
-	benchJetStreamRead(b, data)
-}
-
-func BenchmarkJetStreamSnapshot(b *testing.B) {
-	data := newBenchData(20000, 256)
-	benchJetStreamSnapshot(b, data)
 }
 
 func TestMain(m *testing.M) {

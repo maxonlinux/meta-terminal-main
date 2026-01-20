@@ -1,8 +1,6 @@
 package portfolio
 
 import (
-	"sync"
-
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
@@ -16,35 +14,30 @@ type Service struct {
 	Balances  map[types.UserID]map[string]*types.Balance
 	Positions map[types.UserID]map[string]*types.Position
 	Fundings  map[types.FundingID]*types.FundingRequest
-	pebble    *persistence.PebbleKV
-	mu        sync.RWMutex
+	store     *persistence.Store
 	onReduce  OnPositionReduce
 	registry  *registry.Registry
 }
 
-func New(pkv *persistence.PebbleKV, onReduce OnPositionReduce, reg *registry.Registry) *Service {
+func New(store *persistence.Store, onReduce OnPositionReduce, reg *registry.Registry) *Service {
 	s := &Service{
 		Balances:  make(map[types.UserID]map[string]*types.Balance),
 		Positions: make(map[types.UserID]map[string]*types.Position),
 		Fundings:  make(map[types.FundingID]*types.FundingRequest),
 		onReduce:  onReduce,
-		pebble:    pkv,
+		store:     store,
 		registry:  reg,
 	}
 
-	if pkv != nil {
-		pkv.RangeBalances(func(balance *types.Balance) bool {
-			s.mu.Lock()
-			defer s.mu.Unlock()
+	if store != nil {
+		store.LoadBalances(func(balance *types.Balance) bool {
 			if s.Balances[balance.UserID] == nil {
 				s.Balances[balance.UserID] = make(map[string]*types.Balance)
 			}
 			s.Balances[balance.UserID][balance.Asset] = balance
 			return true
 		})
-		pkv.RangePositions(func(pos *types.Position) bool {
-			s.mu.Lock()
-			defer s.mu.Unlock()
+		store.LoadPositions(func(pos *types.Position) bool {
 			if s.Positions[pos.UserID] == nil {
 				s.Positions[pos.UserID] = make(map[string]*types.Position)
 			}
@@ -116,9 +109,6 @@ func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNo
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	positions := s.Positions[userID]
 	if positions == nil {
 		return nil
@@ -132,9 +122,6 @@ func (s *Service) GetPositions(userID types.UserID) []*types.Position {
 }
 
 func (s *Service) GetBalances(userID types.UserID) []*types.Balance {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	balances := s.Balances[userID]
 	if balances == nil {
 		return nil

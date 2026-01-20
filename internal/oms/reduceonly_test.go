@@ -141,15 +141,8 @@ func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
 
 	// Verify exposure is stored in correct shards by checking each shard's heaps
 	shardCounts := make(map[uint8]int)
-	for shardIdx, symbolMap := range r.buyHeaps {
+	for shardIdx, symbolMap := range r.heaps {
 		count := 0
-		for range symbolMap {
-			count++
-		}
-		shardCounts[shardIdx] = count
-	}
-	for shardIdx, symbolMap := range r.sellHeaps {
-		count := shardCounts[shardIdx]
 		for range symbolMap {
 			count++
 		}

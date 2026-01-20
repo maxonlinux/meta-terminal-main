@@ -1,7 +1,6 @@
 package oms
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -208,32 +207,6 @@ func TestConditionalIndex_CheckTriggers_SellPartialTrigger(t *testing.T) {
 	}
 	if order3.Status != constants.ORDER_STATUS_UNTRIGGERED {
 		t.Errorf("expected highest trigger to remain untriggered")
-	}
-}
-
-func TestConditionalIndex_CheckTriggers_Concurrent(t *testing.T) {
-	s := NewService(nil)
-	var wg sync.WaitGroup
-
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			s.Create(types.UserID(id), "BTCUSDT", constants.CATEGORY_LINEAR,
-				constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
-				types.Price(fixed.NewI(50000, 0)), types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(int64(48000+id%10), 0)), false, false, constants.STOP_ORDER_TYPE_STOP)
-		}(i)
-	}
-
-	wg.Wait()
-
-	triggered := 0
-	s.OnPriceTick("BTCUSDT", types.Price(fixed.NewI(47500, 0)), func(o *types.Order) {
-		triggered++
-	})
-
-	if triggered != 100 {
-		t.Errorf("expected 100 triggered orders, got %d", triggered)
 	}
 }
 

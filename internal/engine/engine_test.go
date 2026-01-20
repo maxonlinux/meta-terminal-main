@@ -39,7 +39,7 @@ func newEngine(store *oms.Service, cb OrderCallback) (*Engine, *portfolio.Servic
 	reg := registry.New()
 	registerInstrument(reg, "BTCUSDT", 5000000000000) // 50000 USDT
 	registerInstrument(reg, "ETHUSDT", 300000000000)  // 3000 USDT
-	e := NewEngine(store, nil, reg, cb)
+	e := NewEngine(store, reg, cb)
 	seedBalances(e.portfolio, types.UserID(1), "BTCUSDT")
 	seedBalances(e.portfolio, types.UserID(2), "BTCUSDT")
 	return e, e.portfolio

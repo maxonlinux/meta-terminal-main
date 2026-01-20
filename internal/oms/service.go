@@ -2,7 +2,7 @@ package oms
 
 import (
 	"errors"
-	"sync"
+	"sync/atomic"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
@@ -13,11 +13,11 @@ import (
 )
 
 type Service struct {
-	mu          sync.RWMutex
 	all         map[types.OrderID]*types.Order
+	count       int64
 	reduceonly  *ReduceOnlyIndex
 	conditional *ConditionalIndex
-	pebble      *persistence.PebbleKV
+	store       *persistence.Store
 }
 
 func (s *Service) removeReduceOnly(order *types.Order) {
@@ -84,17 +84,18 @@ func newOrder(
 	}
 }
 
-func NewService(pkv *persistence.PebbleKV) *Service {
+func NewService(store *persistence.Store) *Service {
 	s := &Service{
 		all:         make(map[types.OrderID]*types.Order),
 		reduceonly:  NewReduceOnlyIndex(),
 		conditional: NewConditionalIndex(),
-		pebble:      pkv,
+		store:       store,
 	}
 
-	if pkv != nil {
-		pkv.RangeOrders(func(order *types.Order) bool {
+	if store != nil {
+		store.LoadOrders(func(order *types.Order) bool {
 			s.all[order.ID] = order
+			atomic.AddInt64(&s.count, 1)
 			s.indexOrder(order)
 			return true
 		})
@@ -117,9 +118,6 @@ func (s *Service) Create(
 	closeOnTrigger bool,
 	stopOrderType int8,
 ) *types.Order {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	now := utils.NowNano()
 	order := newOrder(
 		userID,
@@ -138,34 +136,29 @@ func (s *Service) Create(
 	)
 
 	s.all[order.ID] = order
+	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
 
-	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+	if s.store != nil {
+		s.store.SaveOrder(order)
 	}
 
 	return order
 }
 
 func (s *Service) Get(id types.OrderID) (*types.Order, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	order, ok := s.all[id]
-	return order, ok
+	if !ok {
+		return nil, false
+	}
+	return order, true
 }
 
 func (s *Service) Count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return len(s.all)
+	return int(atomic.LoadInt64(&s.count))
 }
 
 func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
@@ -182,20 +175,19 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 	order.UpdatedAt = utils.NowNano()
 
 	if order.ReduceOnly {
-		s.reduceonly.AdjustExposure(order, math.Sub(math.Zero, delta))
+		s.reduceonly.adjustExposure(order.UserID, order.Symbol, math.Neg(delta))
 	}
 
-	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+	s.all[id] = order
+
+	if s.store != nil {
+		s.store.SaveOrder(order)
 	}
 
 	return nil
 }
 
 func (s *Service) Cancel(id types.OrderID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
@@ -219,31 +211,31 @@ func (s *Service) Cancel(id types.OrderID) error {
 	s.removeReduceOnly(order)
 	s.removeConditional(order)
 
-	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+	s.all[id] = order
+
+	if s.store != nil {
+		s.store.SaveOrder(order)
 	}
 
 	return nil
 }
 
 func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
 	}
 
-	s.reduceonly.AdjustExposure(order, math.Sub(math.Zero, qty))
+	s.reduceonly.adjustExposure(order.UserID, order.Symbol, math.Neg(qty))
 
 	order.Filled = math.Add(order.Filled, qty)
 	order.UpdatedAt = utils.NowNano()
 
 	if math.Cmp(order.Filled, order.Quantity) != 0 {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
-		if s.pebble != nil {
-			s.pebble.PutOrder(order)
+		s.all[id] = order
+		if s.store != nil {
+			s.store.SaveOrder(order)
 		}
 		return nil
 	}
@@ -252,34 +244,26 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 
 	s.removeReduceOnly(order)
 
-	if s.pebble != nil {
-		s.pebble.PutOrder(order)
+	s.all[id] = order
+	if s.store != nil {
+		s.store.SaveOrder(order)
 	}
 
 	return nil
 }
 
 func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionSize types.Quantity) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.reduceonly.OnPositionReduce(userID, symbol, positionSize)
 }
 
 func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*types.Order)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.conditional.CheckTriggers(symbol, price, callback)
 }
 
 func (s *Service) Iterate(fn func(*types.Order) bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	for _, order := range s.all {
 		if !fn(order) {
-			break
+			return
 		}
 	}
 }

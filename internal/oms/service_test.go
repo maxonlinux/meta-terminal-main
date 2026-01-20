@@ -1,7 +1,6 @@
 package oms
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -149,27 +148,6 @@ func TestService_Fill(t *testing.T) {
 	}
 	if order.Status != constants.ORDER_STATUS_FILLED {
 		t.Errorf("expected status FILLED, got %d", order.Status)
-	}
-}
-
-func TestService_Concurrent(t *testing.T) {
-	s := NewService(nil)
-	var wg sync.WaitGroup
-
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			s.Create(types.UserID(id), "BTCUSDT", constants.CATEGORY_LINEAR,
-				constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
-				math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-				false, false, 0)
-		}(i)
-	}
-
-	wg.Wait()
-	if s.Count() != 100 {
-		t.Errorf("expected count 100, got %d", s.Count())
 	}
 }
 
