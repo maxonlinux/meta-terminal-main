@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	"github.com/maxonlinux/meta-terminal-go/internal/query"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -13,10 +14,11 @@ import (
 
 type OrdersHandler struct {
 	engine *engine.Engine
+	query  *query.Service
 }
 
-func NewOrdersHandler(eng *engine.Engine) *OrdersHandler {
-	return &OrdersHandler{engine: eng}
+func NewOrdersHandler(eng *engine.Engine, q *query.Service) *OrdersHandler {
+	return &OrdersHandler{engine: eng, query: q}
 }
 
 type OrderRequest struct {
@@ -114,7 +116,7 @@ func (h *OrdersHandler) List(c echo.Context) error {
 		cat = int8(v)
 	}
 
-	orders := h.engine.GetOrders(claims.UserID, symbol, cat)
+	orders := h.query.GetOrders(claims.UserID, symbol, cat)
 
 	resp := make([]map[string]interface{}, len(orders))
 	for i, o := range orders {
@@ -135,7 +137,7 @@ func (h *OrdersHandler) Get(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
 
-	order, ok := h.engine.GetOrder(types.OrderID(id))
+	order, ok := h.query.GetOrder(types.OrderID(id))
 	if !ok {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
 	}

@@ -2,9 +2,9 @@ package engine
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
-	"github.com/maxonlinux/meta-terminal-go/internal/matching"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
@@ -12,7 +12,11 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/trades"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
+	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 	"github.com/robaho/fixed"
 )
 
@@ -21,7 +25,7 @@ type OrderCallback interface {
 }
 
 type Command interface {
-	Apply(*Engine) CommandResult
+	Apply(*Engine, outbox.Writer) CommandResult
 }
 
 type CommandResult struct {
@@ -31,87 +35,134 @@ type CommandResult struct {
 	Order   *types.Order
 }
 
-type queuedCommand struct {
-	cmd   Command
-	reply chan CommandResult
-}
-
 var (
 	errInvalidCommand      = errors.New("invalid engine command")
 	errInvalidOrderRequest = errors.New("invalid order request")
 	errInvalidFundingID    = errors.New("invalid funding id")
+	errOrderNotFound       = errors.New("order not found")
 )
 
 type Engine struct {
 	store      *oms.Service
-	books      map[int8]map[string]*orderbook.OrderBook
+	persist    *persistence.Store
+	outbox     *outbox.Outbox
+	books      map[int8]map[string]*orderbook.OrderBook // category -> symbol -> orderbook
 	clearing   *clearing.Service
 	portfolio  *portfolio.Service
 	tradeFeed  *trades.TradeFeed
-	lastPrices map[string]types.Price
+	lastPrices map[string]types.Price // symbol -> price
 	registry   *registry.Registry
-	commands   chan queuedCommand
 	callback   OrderCallback
-	done       chan struct{}
+	locksMu    sync.Mutex
+	locks      map[bookLockKey]*sync.Mutex // symbol & category -> mutex
 }
 
-func NewEngine(store *oms.Service, reg *registry.Registry, cb OrderCallback) *Engine {
-	var engineRef *Engine
-	portfolioService := portfolio.New(nil, func(userID types.UserID, symbol string, size types.Quantity) {
-		if engineRef != nil {
-			engineRef.onPositionReduce(userID, symbol, size)
-		}
-	}, reg)
-	clearingService := clearing.New(portfolioService, reg)
-
+func NewEngine(persist *persistence.Store, ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) *Engine {
+	store := oms.NewService()
 	e := &Engine{
 		store:      store,
+		persist:    persist,
+		outbox:     ob,
 		books:      make(map[int8]map[string]*orderbook.OrderBook),
-		clearing:   clearingService,
-		portfolio:  portfolioService,
 		tradeFeed:  trades.NewTradeFeed(),
 		lastPrices: make(map[string]types.Price),
 		registry:   reg,
-		commands:   make(chan queuedCommand, constants.ENGINE_COMMAND_QUEUE_SIZE),
 		callback:   cb,
-		done:       make(chan struct{}),
+		locks:      make(map[bookLockKey]*sync.Mutex),
 	}
+	portfolioService := portfolio.New(func(userID types.UserID, symbol string, size types.Quantity) {
+		e.onPositionReduce(userID, symbol, size)
+	}, reg)
+	clearingService := clearing.New(portfolioService, reg)
+
+	e.clearing = clearingService
+	e.portfolio = portfolioService
 
 	for _, cat := range []int8{constants.CATEGORY_SPOT, constants.CATEGORY_LINEAR} {
 		e.books[cat] = make(map[string]*orderbook.OrderBook)
 	}
 
-	go func() {
-		for {
-			select {
-			case item := <-e.commands:
-				result := item.cmd.Apply(e)
-				if item.reply != nil {
-					item.reply <- result
-				}
-			case <-e.done:
-				return
-			}
-		}
-	}()
+	e.restoreState()
 
-	engineRef = e
 	return e
 }
 
 func (e *Engine) Shutdown() {
-	select {
-	case <-e.done:
-		return
-	default:
-		close(e.done)
+}
+
+func (e *Engine) Registry() *registry.Registry {
+	return e.registry
+}
+
+func (e *Engine) Portfolio() *portfolio.Service {
+	return e.portfolio
+}
+
+func (e *Engine) Store() *oms.Service {
+	return e.store
+}
+
+func (e *Engine) TradeFeed() *trades.TradeFeed {
+	return e.tradeFeed
+}
+
+func (e *Engine) ReadBook(category int8, symbol string) *orderbook.OrderBook {
+	bookSet, ok := e.books[category]
+	if !ok {
+		return nil
 	}
+	return bookSet[symbol]
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
-	reply := make(chan CommandResult, 1)
-	e.commands <- queuedCommand{cmd: cmd, reply: reply}
-	return <-reply
+	var tx *outbox.Tx
+	if e.outbox != nil {
+		tx = e.outbox.Begin()
+	}
+
+	apply := func(symbol string, category int8) CommandResult {
+		return e.withBookLock(symbol, category, func() CommandResult {
+			return cmd.Apply(e, tx)
+		})
+	}
+
+	var result CommandResult
+	switch c := cmd.(type) {
+	case *PlaceOrderCmd:
+		if c.Req != nil {
+			result = apply(c.Req.Symbol, c.Req.Category)
+		} else {
+			result = CommandResult{Err: errInvalidOrderRequest}
+		}
+	case *CancelOrderCmd:
+		if order, ok := e.store.Get(c.OrderID); ok {
+			result = apply(order.Symbol, order.Category)
+		} else {
+			result = CommandResult{Err: errOrderNotFound}
+		}
+	case *AmendOrderCmd:
+		if order, ok := e.store.Get(c.OrderID); ok {
+			result = apply(order.Symbol, order.Category)
+		} else {
+			result = CommandResult{Err: errOrderNotFound}
+		}
+	case *SetLeverageCmd:
+		if c.Symbol != "" {
+			result = apply(c.Symbol, constants.CATEGORY_LINEAR)
+		} else {
+			result = CommandResult{Err: errInvalidOrderRequest}
+		}
+	default:
+		result = cmd.Apply(e, tx)
+	}
+	if tx != nil {
+		if result.Err != nil {
+			_ = tx.Abort()
+		} else {
+			_ = tx.Commit()
+		}
+	}
+	return result
 }
 
 func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage types.Leverage, price types.Price) error {
@@ -144,11 +195,70 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	})
 }
 
+type bookLockKey struct {
+	symbol   string
+	category int8
+}
+
+func (e *Engine) withBookLock(symbol string, category int8, fn func() CommandResult) CommandResult {
+	lock := e.bookLock(symbol, category)
+	lock.Lock()
+	defer lock.Unlock()
+	return fn()
+}
+
+func (e *Engine) bookLock(symbol string, category int8) *sync.Mutex {
+	key := bookLockKey{symbol: symbol, category: category}
+	e.locksMu.Lock()
+	defer e.locksMu.Unlock()
+	lock := e.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		e.locks[key] = lock
+	}
+	return lock
+}
+
+func (e *Engine) restoreState() {
+	if e.persist == nil {
+		return
+	}
+	_ = e.persist.LoadBalances(func(balance *types.Balance) bool {
+		e.portfolio.LoadBalance(balance)
+		return true
+	})
+	_ = e.persist.LoadPositions(func(pos *types.Position) bool {
+		e.portfolio.LoadPosition(pos)
+		return true
+	})
+	_ = e.persist.LoadOrders(func(order *types.Order) bool {
+		e.store.Load(order)
+		if order == nil {
+			return true
+		}
+		if order.IsConditional {
+			return true
+		}
+		if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED {
+			return true
+		}
+		remaining := math.Sub(order.Quantity, order.Filled)
+		if math.Sign(remaining) <= 0 {
+			return true
+		}
+		book, err := e.getBook(order.Category, order.Symbol)
+		if err == nil {
+			book.Add(order)
+		}
+		return true
+	})
+}
+
 type PlaceOrderCmd struct {
 	Req *types.PlaceOrderRequest
 }
 
-func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
+func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	req := c.Req
 	if req == nil {
 		return CommandResult{Err: errInvalidOrderRequest}
@@ -195,11 +305,18 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		return CommandResult{Err: constants.ErrReduceOnlySpot}
 	}
 
-	if err := e.clearing.Reserve(req.UserID, req.Symbol, req.Category, req.Side, req.Quantity, req.Price); err != nil {
+	book, err := e.getBook(req.Category, req.Symbol)
+	if err != nil {
 		return CommandResult{Err: err}
 	}
 
-	order := e.store.Create(
+	if req.TIF == constants.TIF_POST_ONLY {
+		if req.Type == constants.ORDER_TYPE_MARKET || book.WouldCross(req.Side, req.Price) {
+			return CommandResult{Err: constants.ErrPostOnlyWouldMatch}
+		}
+	}
+
+	order := e.store.Build(
 		req.UserID,
 		req.Symbol,
 		req.Category,
@@ -214,26 +331,67 @@ func (c *PlaceOrderCmd) Apply(e *Engine) CommandResult {
 		req.StopOrderType,
 	)
 
-	book, err := e.getBook(order.Category, order.Symbol)
-	if err != nil {
-		return CommandResult{Err: err}
+	if order.IsConditional {
+		e.store.Add(order, writer)
+		return CommandResult{Order: order}
 	}
 
-	matchErr := matching.MatchOrder(order, book, e.applyMatch)
-	if matchErr != nil {
-		_ = e.store.Cancel(order.ID)
-		remaining := math.Sub(order.Quantity, order.Filled)
-		if math.Sign(remaining) > 0 {
-			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
-		}
-		return CommandResult{Err: matchErr}
+	limitPrice := order.Price
+	if order.Type == constants.ORDER_TYPE_MARKET {
+		limitPrice = types.Price{}
 	}
 
-	if order.Status == constants.ORDER_STATUS_CANCELED || order.Status == constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED {
-		remaining := math.Sub(order.Quantity, order.Filled)
-		if math.Sign(remaining) > 0 {
-			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+	var buf [8]types.Match
+	matches := book.GetMatches(order, limitPrice, buf[:0])
+	var matchQty types.Quantity
+	var matchNotional types.Quantity
+	for i := range matches {
+		matchQty = math.Add(matchQty, matches[i].Quantity)
+		matchNotional = math.Add(matchNotional, math.Mul(matches[i].Price, matches[i].Quantity))
+	}
+	remaining := math.Sub(order.Quantity, matchQty)
+
+	if req.TIF == constants.TIF_FOK && math.Sign(remaining) > 0 {
+		return CommandResult{Err: constants.ErrFOKInsufficientLiquidity}
+	}
+
+	if math.Sign(matchQty) > 0 {
+		avgPrice := types.Price(math.Div(matchNotional, matchQty))
+		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, matchQty, avgPrice, writer); err != nil {
+			return CommandResult{Err: err}
 		}
+	}
+
+	if math.Sign(remaining) > 0 && (req.TIF == constants.TIF_POST_ONLY || req.TIF == constants.TIF_GTC) {
+		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price, writer); err != nil {
+			return CommandResult{Err: err}
+		}
+	}
+
+	e.store.Add(order, writer)
+
+	for i := range matches {
+		match := matches[i]
+		match.ID = types.TradeID(snowflake.Next())
+		match.Timestamp = utils.NowNano()
+		e.applyTrade(book, match, writer)
+	}
+
+	if req.TIF == constants.TIF_IOC || order.Type == constants.ORDER_TYPE_MARKET {
+		if math.Cmp(order.Filled, order.Quantity) != 0 {
+			_ = e.store.Cancel(order.ID, writer)
+			return CommandResult{Order: order}
+		}
+		return CommandResult{Order: order}
+	}
+
+	if req.TIF == constants.TIF_POST_ONLY {
+		book.Add(order)
+		return CommandResult{Order: order}
+	}
+
+	if math.Sign(remaining) > 0 {
+		book.Add(order)
 	}
 	return CommandResult{Order: order}
 }
@@ -242,18 +400,18 @@ type CancelOrderCmd struct {
 	OrderID types.OrderID
 }
 
-func (c *CancelOrderCmd) Apply(e *Engine) CommandResult {
+func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if c.OrderID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
 
-	if err := e.store.Cancel(c.OrderID); err != nil {
+	if err := e.store.Cancel(c.OrderID, writer); err != nil {
 		return CommandResult{Err: err}
 	}
 	if order, ok := e.store.Get(c.OrderID); ok {
 		remaining := math.Sub(order.Quantity, order.Filled)
 		if math.Sign(remaining) > 0 {
-			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price, writer)
 		}
 		if book, err := e.getBook(order.Category, order.Symbol); err == nil {
 			_ = book.Remove(order.ID)
@@ -268,12 +426,12 @@ type AmendOrderCmd struct {
 	NewQty  types.Quantity
 }
 
-func (c *AmendOrderCmd) Apply(e *Engine) CommandResult {
+func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if c.OrderID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
 
-	if err := e.store.Amend(c.OrderID, c.NewQty); err != nil {
+	if err := e.store.Amend(c.OrderID, c.NewQty, writer); err != nil {
 		return CommandResult{Err: err}
 	}
 	order, ok := e.store.Get(c.OrderID)
@@ -289,7 +447,7 @@ type SetLeverageCmd struct {
 	Leverage types.Leverage
 }
 
-func (c *SetLeverageCmd) Apply(e *Engine) CommandResult {
+func (c *SetLeverageCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	price := e.lastPrices[c.Symbol]
 	if price.Sign() <= 0 {
 		return CommandResult{Err: constants.ErrPriceUnavailable}
@@ -297,7 +455,7 @@ func (c *SetLeverageCmd) Apply(e *Engine) CommandResult {
 	if err := e.checkLeverage(c.UserID, c.Symbol, c.Leverage, price); err != nil {
 		return CommandResult{Err: err}
 	}
-	return CommandResult{Err: e.portfolio.SetLeverage(c.UserID, c.Symbol, c.Leverage)}
+	return CommandResult{Err: e.portfolio.SetLeverage(c.UserID, c.Symbol, c.Leverage, writer)}
 }
 
 type PublicTradesCmd struct {
@@ -305,7 +463,7 @@ type PublicTradesCmd struct {
 	Symbol   string
 }
 
-func (c *PublicTradesCmd) Apply(e *Engine) CommandResult {
+func (c *PublicTradesCmd) Apply(e *Engine, _ outbox.Writer) CommandResult {
 	return CommandResult{Trades: e.tradeFeed.Recent(c.Category, c.Symbol)}
 }
 
@@ -318,8 +476,8 @@ type CreateDepositCmd struct {
 	Message     string
 }
 
-func (c *CreateDepositCmd) Apply(e *Engine) CommandResult {
-	request, err := e.portfolio.CreateDeposit(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message)
+func (c *CreateDepositCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
+	request, err := e.portfolio.CreateDeposit(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message, writer)
 	if err != nil {
 		return CommandResult{Err: err}
 	}
@@ -335,8 +493,8 @@ type CreateWithdrawalCmd struct {
 	Message     string
 }
 
-func (c *CreateWithdrawalCmd) Apply(e *Engine) CommandResult {
-	request, err := e.portfolio.CreateWithdrawal(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message)
+func (c *CreateWithdrawalCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
+	request, err := e.portfolio.CreateWithdrawal(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message, writer)
 	if err != nil {
 		return CommandResult{Err: err}
 	}
@@ -347,11 +505,11 @@ type ApproveFundingCmd struct {
 	FundingID types.FundingID
 }
 
-func (c *ApproveFundingCmd) Apply(e *Engine) CommandResult {
+func (c *ApproveFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if c.FundingID == 0 {
 		return CommandResult{Err: errInvalidFundingID}
 	}
-	request, err := e.portfolio.ApproveFunding(c.FundingID)
+	request, err := e.portfolio.ApproveFunding(c.FundingID, writer)
 	if err != nil {
 		return CommandResult{Err: err}
 	}
@@ -362,93 +520,13 @@ type RejectFundingCmd struct {
 	FundingID types.FundingID
 }
 
-func (c *RejectFundingCmd) Apply(e *Engine) CommandResult {
+func (c *RejectFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if c.FundingID == 0 {
 		return CommandResult{Err: errInvalidFundingID}
 	}
-	request, err := e.portfolio.RejectFunding(c.FundingID)
+	request, err := e.portfolio.RejectFunding(c.FundingID, writer)
 	if err != nil {
 		return CommandResult{Err: err}
 	}
 	return CommandResult{Funding: request}
-}
-
-func (e *Engine) GetOrders(userID types.UserID, symbol string, category int8) []*types.Order {
-	var result []*types.Order
-	e.store.Iterate(func(o *types.Order) bool {
-		if o.UserID == userID {
-			if symbol == "" || o.Symbol == symbol {
-				if category == 0 || o.Category == category {
-					result = append(result, o)
-				}
-			}
-		}
-		return true
-	})
-	return result
-}
-
-func (e *Engine) GetOrder(id types.OrderID) (*types.Order, bool) {
-	return e.store.Get(id)
-}
-
-func (e *Engine) GetPositions(userID types.UserID) []*types.Position {
-	var result []*types.Position
-	positions := e.portfolio.GetPositions(userID)
-	for _, pos := range positions {
-		result = append(result, pos)
-	}
-	return result
-}
-
-func (e *Engine) GetBalances(userID types.UserID) []*types.Balance {
-	var result []*types.Balance
-	balances := e.portfolio.GetBalances(userID)
-	for _, bal := range balances {
-		result = append(result, bal)
-	}
-	return result
-}
-
-func (e *Engine) GetInstruments(symbol string) []*types.Instrument {
-	if symbol != "" {
-		inst := e.registry.GetInstrument(symbol)
-		if inst != nil {
-			return []*types.Instrument{inst}
-		}
-		return nil
-	}
-	return e.registry.GetInstruments()
-}
-
-func (e *Engine) GetOrderBook(symbol string) *OrderBookResponse {
-	return e.SnapshotOrderBook(symbol)
-}
-
-func (e *Engine) GetPublicTrades(symbol string) []types.Trade {
-	return e.tradeFeed.Recent(constants.CATEGORY_SPOT, symbol)
-}
-
-type OrderBookResponse struct {
-	Symbol string      `json:"symbol"`
-	Bids   []BookLevel `json:"bids"`
-	Asks   []BookLevel `json:"asks"`
-}
-
-type BookLevel struct {
-	Price string `json:"price"`
-	Total string `json:"total"`
-}
-
-func (e *Engine) SnapshotOrderBook(symbol string) *OrderBookResponse {
-	_, err := e.getBook(constants.CATEGORY_SPOT, symbol)
-	if err != nil {
-		return nil
-	}
-	// Simplified snapshot - real implementation would need proper locking
-	return &OrderBookResponse{
-		Symbol: symbol,
-		Bids:   []BookLevel{},
-		Asks:   []BookLevel{},
-	}
 }

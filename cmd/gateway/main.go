@@ -6,16 +6,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	apihandlers "github.com/maxonlinux/meta-terminal-go/internal/api/http"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
-	"github.com/maxonlinux/meta-terminal-go/internal/oms"
+	"github.com/maxonlinux/meta-terminal-go/internal/query"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
+	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
+	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 )
 
 func main() {
@@ -29,8 +32,21 @@ func main() {
 	loader := registry.NewLoader(cfg, reg)
 	go loader.Start(ctx)
 
-	store := oms.NewService(nil)
-	eng := engine.NewEngine(store, reg, nil)
+	tradingPath := filepath.Join(cfg.DataDir, "trading")
+	store, err := persistence.Open(tradingPath)
+	if err != nil {
+		log.Fatalf("persistence open: %v", err)
+	}
+	defer store.Close()
+
+	ob, err := outbox.Open(cfg.DataDir, store.DB())
+	if err != nil {
+		log.Fatalf("outbox open: %v", err)
+	}
+	defer ob.Close()
+	ob.Start()
+
+	eng := engine.NewEngine(store, ob, reg, nil)
 
 	go func() {
 		if err := runServer(eng, cfg); err != nil {
@@ -52,7 +68,8 @@ func runServer(eng *engine.Engine, cfg config.Config) error {
 	jwtService := users.NewJWTService()
 	authService := users.NewService(userStore)
 
-	router := apihandlers.NewRouter(eng, userStore, jwtService, authService)
+	queryService := query.New(eng.Registry(), eng.Portfolio(), eng.Store(), eng.TradeFeed(), eng.ReadBook)
+	router := apihandlers.NewRouter(eng, queryService, userStore, jwtService, authService)
 
 	e := echo.New()
 	e.HideBanner = true

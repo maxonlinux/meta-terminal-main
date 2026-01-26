@@ -21,7 +21,7 @@ func (b *bytesBuffer) reset() {
 	b.data = b.data[:0]
 }
 
-func orderEncode(o *types.Order) []byte {
+func EncodeOrder(o *types.Order) []byte {
 	buf := orderBufPool.Get().(*bytesBuffer)
 	buf.reset()
 
@@ -54,7 +54,7 @@ func orderEncode(o *types.Order) []byte {
 	return result
 }
 
-func orderDecode(data []byte) (*types.Order, error) {
+func DecodeOrder(data []byte) (*types.Order, error) {
 	o := &types.Order{}
 	off := 0
 
@@ -87,7 +87,7 @@ func orderDecode(data []byte) (*types.Order, error) {
 	return o, nil
 }
 
-func balanceEncode(b *types.Balance) []byte {
+func EncodeBalance(b *types.Balance) []byte {
 	buf := balanceBufPool.Get().(*bytesBuffer)
 	buf.reset()
 
@@ -103,7 +103,7 @@ func balanceEncode(b *types.Balance) []byte {
 	return result
 }
 
-func balanceDecode(data []byte) (*types.Balance, error) {
+func DecodeBalance(data []byte) (*types.Balance, error) {
 	b := &types.Balance{}
 	off := 0
 
@@ -117,7 +117,7 @@ func balanceDecode(data []byte) (*types.Balance, error) {
 	return b, nil
 }
 
-func positionEncode(p *types.Position) []byte {
+func EncodePosition(p *types.Position) []byte {
 	buf := posBufPool.Get().(*bytesBuffer)
 	buf.reset()
 
@@ -138,7 +138,7 @@ func positionEncode(p *types.Position) []byte {
 	return result
 }
 
-func positionDecode(data []byte) (*types.Position, error) {
+func DecodePosition(data []byte) (*types.Position, error) {
 	p := &types.Position{}
 	off := 0
 

@@ -95,3 +95,18 @@ func BenchmarkMulDiv(b *testing.B) {
 		MulDiv(a, bb, c)
 	}
 }
+
+func BenchmarkRoundTo(b *testing.B) {
+	value := fixed.NewI(50000, 0)
+	step := fixed.NewI(10, 0)
+	for i := 0; i < b.N; i++ {
+		RoundTo(value, step)
+	}
+}
+
+func BenchmarkGetScale(b *testing.B) {
+	v := fixed.NewI(50000, 1)
+	for i := 0; i < b.N; i++ {
+		getScale(v)
+	}
+}

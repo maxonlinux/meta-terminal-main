@@ -4,15 +4,15 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	"github.com/maxonlinux/meta-terminal-go/internal/query"
 )
 
 type MarketHandler struct {
-	engine *engine.Engine
+	query *query.Service
 }
 
-func NewMarketHandler(eng *engine.Engine) *MarketHandler {
-	return &MarketHandler{engine: eng}
+func NewMarketHandler(q *query.Service) *MarketHandler {
+	return &MarketHandler{query: q}
 }
 
 type InstrumentResponse struct {
@@ -31,7 +31,7 @@ type InstrumentResponse struct {
 
 func (h *MarketHandler) Instruments(c echo.Context) error {
 	symbol := c.QueryParam("symbol")
-	instruments := h.engine.GetInstruments(symbol)
+	instruments := h.query.GetInstruments(symbol)
 
 	resp := make([]InstrumentResponse, len(instruments))
 	for i, inst := range instruments {
@@ -70,12 +70,20 @@ func (h *MarketHandler) OrderBook(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "symbol is required"})
 	}
 
-	book := h.engine.GetOrderBook(symbol)
+	book := h.query.GetOrderBook(symbol)
 	if book == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order book not found"})
 	}
 
-	return c.JSON(http.StatusOK, book)
+	resp := OrderBookResponse{Symbol: book.Symbol}
+	for _, bid := range book.Bids {
+		resp.Bids = append(resp.Bids, BookLevel{Price: bid.Price.String(), Total: bid.Total.String()})
+	}
+	for _, ask := range book.Asks {
+		resp.Asks = append(resp.Asks, BookLevel{Price: ask.Price.String(), Total: ask.Total.String()})
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 type TradeResponse struct {
@@ -95,7 +103,7 @@ func (h *MarketHandler) Trades(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "symbol is required"})
 	}
 
-	trades := h.engine.GetPublicTrades(symbol)
+	trades := h.query.GetPublicTrades(symbol)
 
 	resp := make([]TradeResponse, len(trades))
 	for i, t := range trades {

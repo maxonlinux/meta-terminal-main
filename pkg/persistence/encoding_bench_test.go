@@ -49,7 +49,7 @@ func BenchmarkCustomEncodeOrder(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = orderEncode(order)
+		_ = EncodeOrder(order)
 	}
 }
 
@@ -94,10 +94,10 @@ func BenchmarkCustomDecodeOrder(b *testing.B) {
 		Filled:   types.Quantity(fixed.NewI(0, 0)),
 	}
 
-	data := orderEncode(order)
+	data := EncodeOrder(order)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = orderDecode(data)
+		_, _ = DecodeOrder(data)
 	}
 }

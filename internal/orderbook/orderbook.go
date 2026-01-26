@@ -1,29 +1,11 @@
 package orderbook
 
 import (
-	"sync"
 	"sync/atomic"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
-	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
-	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
-
-var matchPool = sync.Pool{
-	New: func() interface{} {
-		return &types.Match{}
-	},
-}
-
-func getMatch() *types.Match {
-	return matchPool.Get().(*types.Match)
-}
-
-func putMatch(m *types.Match) {
-	*m = types.Match{}
-	matchPool.Put(m)
-}
 
 const CACHE_LINE = 64
 
@@ -67,6 +49,16 @@ type bookState struct {
 
 type OrderBook struct {
 	state *bookState // Single-symbol orderbook: state holds all price levels
+}
+
+type LevelSnapshot struct {
+	Price types.Price
+	Total types.Quantity
+}
+
+type Snapshot struct {
+	Bids []LevelSnapshot
+	Asks []LevelSnapshot
 }
 
 func New() *OrderBook {
@@ -353,6 +345,21 @@ func (sh *bookState) Remove(orderID types.OrderID) bool {
 	return true
 }
 
+func (sh *bookState) applyFill(orderID types.OrderID, qty types.Quantity) {
+	nodeIdx, ok := sh.orders[orderID]
+	if !ok {
+		return
+	}
+	n := sh.nodes[nodeIdx]
+	lvl := &sh.levels[n.level]
+	if qty.Sign() > 0 {
+		lvl.total = lvl.total.Sub(qty)
+	}
+	if remaining(n.order).Sign() <= 0 {
+		sh.removeNode(nodeIdx)
+	}
+}
+
 func (ob *OrderBook) Remove(orderID types.OrderID) bool {
 	sh := ob.state
 	sh.lock()
@@ -360,83 +367,94 @@ func (ob *OrderBook) Remove(orderID types.OrderID) bool {
 	return sh.Remove(orderID)
 }
 
-func (sh *bookState) matchLevel(taker *types.Order, lvlIdx int32, emit func(types.Match)) {
-	for remaining(taker).Sign() > 0 && sh.levels[lvlIdx].head != -1 {
-		makerNodeIdx := sh.levels[lvlIdx].head
-		maker := sh.nodes[makerNodeIdx].order
-		makerRemaining := remaining(maker)
-
-		if makerRemaining.Sign() <= 0 {
-			sh.removeNode(makerNodeIdx)
-			continue
-		}
-
-		exec := makerRemaining
-		if remaining(taker).Cmp(makerRemaining) < 0 {
-			exec = remaining(taker)
-		}
-
-		maker.Filled = maker.Filled.Add(exec)
-		taker.Filled = taker.Filled.Add(exec)
-		sh.levels[lvlIdx].total = sh.levels[lvlIdx].total.Sub(exec)
-
-		match := getMatch()
-		match.ID = types.TradeID(snowflake.Next())
-		match.Symbol = taker.Symbol
-		match.Category = taker.Category
-		match.TakerOrder = taker
-		match.MakerOrder = maker
-		match.Price = sh.levels[lvlIdx].price
-		match.Quantity = exec
-		match.Timestamp = utils.NowNano()
-		emit(*match)
-		putMatch(match)
-
-		if remaining(maker).Sign() == 0 {
-			sh.removeNode(makerNodeIdx)
-		}
-	}
-}
-
-func (sh *bookState) matchSide(taker *types.Order, limitPrice types.Price, emit func(types.Match), side int8) {
-	var limitCmp int
-	if side == constants.ORDER_SIDE_BUY {
-		limitCmp = 1
-	} else {
-		limitCmp = -1
-	}
-
-	for remaining(taker).Sign() > 0 {
-		lvlIdx := sh.bestBid
-		if side == constants.ORDER_SIDE_BUY {
-			lvlIdx = sh.bestAsk
-		}
-		if lvlIdx == -1 {
-			return
-		}
-		if limitPrice.Sign() > 0 && sh.levels[lvlIdx].price.Cmp(limitPrice) == limitCmp {
-			return
-		}
-		sh.matchLevel(taker, lvlIdx, emit)
-	}
-}
-
-type TradeHandler func(match types.Match)
-
-func (sh *bookState) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
-	if remaining(taker).Sign() <= 0 {
-		return
-	}
-	if taker.Side == constants.ORDER_SIDE_BUY {
-		sh.matchSide(taker, limitPrice, handler, constants.ORDER_SIDE_BUY)
-		return
-	}
-	sh.matchSide(taker, limitPrice, handler, constants.ORDER_SIDE_SELL)
-}
-
-func (ob *OrderBook) Match(taker *types.Order, limitPrice types.Price, handler TradeHandler) {
+func (ob *OrderBook) ApplyFill(orderID types.OrderID, qty types.Quantity) {
 	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
-	sh.Match(taker, limitPrice, handler)
+	sh.applyFill(orderID, qty)
+}
+
+func (sh *bookState) getMatches(taker *types.Order, limitPrice types.Price, matches []types.Match) []types.Match {
+	if remaining(taker).Sign() <= 0 {
+		return nil
+	}
+
+	rem := remaining(taker)
+	limitCmp := -1
+	levelIdx := sh.bestBid
+	if taker.Side == constants.ORDER_SIDE_BUY {
+		limitCmp = 1
+		levelIdx = sh.bestAsk
+	}
+
+	if matches == nil {
+		matches = make([]types.Match, 0, 8)
+	} else {
+		matches = matches[:0]
+	}
+	for rem.Sign() > 0 && levelIdx != -1 {
+		level := &sh.levels[levelIdx]
+		if limitPrice.Sign() > 0 && level.price.Cmp(limitPrice) == limitCmp {
+			break
+		}
+		nodeIdx := level.head
+		for nodeIdx != -1 && rem.Sign() > 0 {
+			makerNode := sh.nodes[nodeIdx]
+			maker := makerNode.order
+			makerRemaining := remaining(maker)
+			if makerRemaining.Sign() <= 0 {
+				nodeIdx = makerNode.next
+				continue
+			}
+			exec := makerRemaining
+			if rem.Cmp(makerRemaining) < 0 {
+				exec = rem
+			}
+			matches = append(matches, types.Match{
+				Symbol:     taker.Symbol,
+				Category:   taker.Category,
+				Price:      level.price,
+				Quantity:   exec,
+				TakerOrder: taker,
+				MakerOrder: maker,
+			})
+			rem = rem.Sub(exec)
+			nodeIdx = makerNode.next
+		}
+		levelIdx = level.next
+	}
+	return matches
+}
+
+func (ob *OrderBook) GetMatches(taker *types.Order, limitPrice types.Price, matches []types.Match) []types.Match {
+	sh := ob.state
+	sh.lock()
+	defer sh.unlock()
+	return sh.getMatches(taker, limitPrice, matches)
+}
+
+func (ob *OrderBook) Snapshot(limit int) Snapshot {
+	sh := ob.state
+	if limit <= 0 {
+		limit = 50
+	}
+
+	bids := make([]LevelSnapshot, 0, limit)
+	asks := make([]LevelSnapshot, 0, limit)
+
+	idx := sh.bestBid
+	for idx != -1 && len(bids) < limit {
+		lvl := sh.levels[idx]
+		bids = append(bids, LevelSnapshot{Price: lvl.price, Total: lvl.total})
+		idx = lvl.next
+	}
+
+	idx = sh.bestAsk
+	for idx != -1 && len(asks) < limit {
+		lvl := sh.levels[idx]
+		asks = append(asks, LevelSnapshot{Price: lvl.price, Total: lvl.total})
+		idx = lvl.next
+	}
+
+	return Snapshot{Bids: bids, Asks: asks}
 }

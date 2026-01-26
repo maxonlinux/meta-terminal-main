@@ -5,11 +5,9 @@ import (
 
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
-	"github.com/robaho/fixed"
 )
-
-var defaultLeverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 
 var tradePool = sync.Pool{
 	New: func() interface{} {
@@ -39,14 +37,18 @@ func (e *Engine) getBook(category int8, symbol string) (*orderbook.OrderBook, er
 	return book, nil
 }
 
-func (e *Engine) applyMatch(match types.Match) {
+func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer outbox.Writer) {
 	if match.MakerOrder == nil || match.TakerOrder == nil {
 		return
 	}
 
-	e.clearing.ExecuteTrade(&match)
+	e.clearing.ExecuteTrade(&match, writer)
 
-	e.store.Fill(match.MakerOrder.ID, match.Quantity)
+	_ = e.store.Fill(match.MakerOrder.ID, match.Quantity, writer)
+	_ = e.store.Fill(match.TakerOrder.ID, match.Quantity, writer)
+	if book != nil {
+		book.ApplyFill(match.MakerOrder.ID, match.Quantity)
+	}
 
 	publicTrade := getTrade()
 	publicTrade.ID = match.ID

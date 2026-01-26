@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	"github.com/maxonlinux/meta-terminal-go/internal/query"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 )
 
@@ -18,13 +19,13 @@ type Router struct {
 	jwtService       *users.JWTService
 }
 
-func NewRouter(eng *engine.Engine, userStore users.UserStore, jwtService *users.JWTService, authService *users.Service) *Router {
+func NewRouter(eng *engine.Engine, queryService *query.Service, userStore users.UserStore, jwtService *users.JWTService, authService *users.Service) *Router {
 	return &Router{
 		AuthHandler:      NewAuthHandler(authService, jwtService),
-		OrdersHandler:    NewOrdersHandler(eng),
-		PositionsHandler: NewPositionsHandler(eng),
-		BalancesHandler:  NewBalancesHandler(eng),
-		MarketHandler:    NewMarketHandler(eng),
+		OrdersHandler:    NewOrdersHandler(eng, queryService),
+		PositionsHandler: NewPositionsHandler(eng, queryService),
+		BalancesHandler:  NewBalancesHandler(queryService),
+		MarketHandler:    NewMarketHandler(queryService),
 		jwtService:       jwtService,
 	}
 }

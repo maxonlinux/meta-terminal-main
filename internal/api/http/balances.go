@@ -4,15 +4,15 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	"github.com/maxonlinux/meta-terminal-go/internal/query"
 )
 
 type BalancesHandler struct {
-	engine *engine.Engine
+	query *query.Service
 }
 
-func NewBalancesHandler(eng *engine.Engine) *BalancesHandler {
-	return &BalancesHandler{engine: eng}
+func NewBalancesHandler(q *query.Service) *BalancesHandler {
+	return &BalancesHandler{query: q}
 }
 
 func (h *BalancesHandler) List(c echo.Context) error {
@@ -21,7 +21,7 @@ func (h *BalancesHandler) List(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	balances := h.engine.GetBalances(claims.UserID)
+	balances := h.query.GetBalances(claims.UserID)
 
 	resp := make([]map[string]interface{}, len(balances))
 	for i, b := range balances {

@@ -25,18 +25,18 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 	})
-	svc := New(nil, nil, reg)
+	svc := New(nil, reg)
 
 	base := "BTC"
 	quote := "USDT"
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{
-		quote: {UserID: 1, Asset: quote, Available: qty(100000)},
+		quote: {UserID: 1, Asset: quote, Available: qty(50000), Locked: qty(50000)},
 		base:  {UserID: 1, Asset: base, Available: qty(0)},
 	}
 	svc.Balances[types.UserID(2)] = map[string]*types.Balance{
 		quote: {UserID: 2, Asset: quote, Available: qty(0)},
-		base:  {UserID: 2, Asset: base, Available: qty(1)},
+		base:  {UserID: 2, Asset: base, Available: qty(0), Locked: qty(1)},
 	}
 
 	taker := &types.Order{UserID: 1, Side: constants.ORDER_SIDE_BUY}
@@ -50,7 +50,7 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 		MakerOrder: maker,
 	}
 
-	svc.ExecuteTrade(match)
+	svc.ExecuteTrade(match, nil)
 
 	if math.Sign(svc.GetBalance(1, base).Available) == 0 {
 		t.Fatalf("expected taker base balance increase")
@@ -73,7 +73,7 @@ func TestExecuteTradeLinearPosition(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 	})
-	svc := New(nil, nil, reg)
+	svc := New(nil, reg)
 	quote := "USDT"
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{
@@ -94,7 +94,7 @@ func TestExecuteTradeLinearPosition(t *testing.T) {
 		MakerOrder: maker,
 	}
 
-	svc.ExecuteTrade(match)
+	svc.ExecuteTrade(match, nil)
 
 	if pos := svc.GetPosition(1, "BTCUSDT"); math.Sign(pos.Size) <= 0 {
 		t.Fatalf("expected taker long position")

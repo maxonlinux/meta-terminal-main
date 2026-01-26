@@ -26,6 +26,20 @@ func q(v int64) types.Quantity {
 	return types.Quantity(fixed.NewI(v*p10(scl), scl))
 }
 
+func applyMatches(ob *OrderBook, taker *types.Order, limit types.Price) []types.Match {
+	matches := ob.GetMatches(taker, limit, nil)
+	for i := range matches {
+		match := matches[i]
+		if match.MakerOrder == nil || match.TakerOrder == nil {
+			continue
+		}
+		match.MakerOrder.Filled = match.MakerOrder.Filled.Add(match.Quantity)
+		match.TakerOrder.Filled = match.TakerOrder.Filled.Add(match.Quantity)
+		ob.ApplyFill(match.MakerOrder.ID, match.Quantity)
+	}
+	return matches
+}
+
 func TestAdd(t *testing.T) {
 	ob := New()
 	o := &types.Order{
@@ -98,10 +112,7 @@ func TestMatch(t *testing.T) {
 		Quantity: q(5),
 	}
 
-	var trades []types.Match
-	ob.Match(buy, types.Price{}, func(match types.Match) {
-		trades = append(trades, match)
-	})
+	trades := applyMatches(ob, buy, types.Price{})
 
 	if len(trades) != 1 {
 		t.Fatalf("expected 1 trade, got %d", len(trades))
@@ -287,7 +298,7 @@ func BenchmarkMatchAllDifferentLevels(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(1000),
 		}
-		ob.Match(taker, types.Price{}, func(match types.Match) {})
+		applyMatches(ob, taker, types.Price{})
 	}
 }
 
@@ -320,7 +331,7 @@ func BenchmarkMatchAllSameLevel(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(1000),
 		}
-		ob.Match(taker, types.Price{}, func(match types.Match) {})
+		applyMatches(ob, taker, types.Price{})
 	}
 }
 
@@ -353,7 +364,7 @@ func BenchmarkMatchManyTrades(b *testing.B) {
 			Price:    p(50000),
 			Quantity: q(10000),
 		}
-		ob.Match(taker, types.Price{}, func(match types.Match) {})
+		applyMatches(ob, taker, types.Price{})
 	}
 }
 
@@ -407,7 +418,7 @@ func BenchmarkMatchLevelTraversal(b *testing.B) {
 			Price:    p(60000),
 			Quantity: q(10000),
 		}
-		ob.Match(taker, types.Price{}, func(match types.Match) {})
+		applyMatches(ob, taker, types.Price{})
 	}
 }
 
@@ -441,7 +452,7 @@ func BenchmarkMixedWorkload(b *testing.B) {
 				Price:    p(50500),
 				Quantity: q(10),
 			}
-			ob.Match(taker, types.Price{}, func(match types.Match) {})
+			applyMatches(ob, taker, types.Price{})
 		}
 	}
 }
@@ -481,7 +492,7 @@ func BenchmarkMatch(b *testing.B) {
 			Price:    p(50500),
 			Quantity: q(1),
 		}
-		ob.Match(taker, types.Price{}, func(match types.Match) {})
+		applyMatches(ob, taker, types.Price{})
 	}
 }
 
@@ -545,7 +556,7 @@ func BenchmarkMatchBatch(b *testing.B) {
 				Price:    p(50000),
 				Quantity: q(1),
 			}
-			ob.Match(taker, types.Price{}, func(match types.Match) {})
+			applyMatches(ob, taker, types.Price{})
 		}
 	}
 }

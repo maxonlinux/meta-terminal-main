@@ -7,7 +7,7 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
+	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
@@ -50,7 +50,6 @@ type Service struct {
 	count       int64
 	reduceonly  *ReduceOnlyIndex
 	conditional *ConditionalIndex
-	store       *persistence.Store
 }
 
 func (s *Service) removeReduceOnly(order *types.Order) {
@@ -114,24 +113,66 @@ func newOrder(
 	return o
 }
 
-func NewService(store *persistence.Store) *Service {
+func NewService() *Service {
 	s := &Service{
 		all:         make(map[types.OrderID]*types.Order),
 		reduceonly:  NewReduceOnlyIndex(),
 		conditional: NewConditionalIndex(),
-		store:       store,
 	}
-
-	if store != nil {
-		store.LoadOrders(func(order *types.Order) bool {
-			s.all[order.ID] = order
-			atomic.AddInt64(&s.count, 1)
-			s.indexOrder(order)
-			return true
-		})
-	}
-
 	return s
+}
+
+func (s *Service) Load(order *types.Order) {
+	if order == nil {
+		return
+	}
+	s.all[order.ID] = order
+	atomic.AddInt64(&s.count, 1)
+	s.indexOrder(order)
+}
+
+func (s *Service) Build(
+	userID types.UserID,
+	symbol string,
+	category int8,
+	side int8,
+	otype int8,
+	tif int8,
+	price types.Price,
+	quantity types.Quantity,
+	triggerPrice types.Price,
+	reduceOnly bool,
+	closeOnTrigger bool,
+	stopOrderType int8,
+) *types.Order {
+	now := utils.NowNano()
+	return newOrder(
+		userID,
+		symbol,
+		category,
+		side,
+		otype,
+		tif,
+		price,
+		quantity,
+		triggerPrice,
+		reduceOnly,
+		closeOnTrigger,
+		stopOrderType,
+		now,
+	)
+}
+
+func (s *Service) Add(order *types.Order, writer outbox.Writer) {
+	if order == nil {
+		return
+	}
+	s.all[order.ID] = order
+	atomic.AddInt64(&s.count, 1)
+	s.indexOrder(order)
+	if writer != nil {
+		_ = writer.SaveOrder(order)
+	}
 }
 
 func (s *Service) Create(
@@ -147,6 +188,7 @@ func (s *Service) Create(
 	reduceOnly bool,
 	closeOnTrigger bool,
 	stopOrderType int8,
+	writer outbox.Writer,
 ) *types.Order {
 	now := utils.NowNano()
 	order := newOrder(
@@ -169,8 +211,8 @@ func (s *Service) Create(
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
 
-	if s.store != nil {
-		s.store.SaveOrder(order)
+	if writer != nil {
+		writer.SaveOrder(order)
 	}
 
 	return order
@@ -188,7 +230,7 @@ func (s *Service) Count() int {
 	return int(atomic.LoadInt64(&s.count))
 }
 
-func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
+func (s *Service) Amend(id types.OrderID, newQty types.Quantity, writer outbox.Writer) error {
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
@@ -210,14 +252,14 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity) error {
 
 	s.all[id] = order
 
-	if s.store != nil {
-		s.store.SaveOrder(order)
+	if writer != nil {
+		writer.SaveOrder(order)
 	}
 
 	return nil
 }
 
-func (s *Service) Cancel(id types.OrderID) error {
+func (s *Service) Cancel(id types.OrderID, writer outbox.Writer) error {
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
@@ -243,14 +285,14 @@ func (s *Service) Cancel(id types.OrderID) error {
 
 	s.all[id] = order
 
-	if s.store != nil {
-		s.store.SaveOrder(order)
+	if writer != nil {
+		writer.SaveOrder(order)
 	}
 
 	return nil
 }
 
-func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
+func (s *Service) Fill(id types.OrderID, qty types.Quantity, writer outbox.Writer) error {
 	order, ok := s.all[id]
 	if !ok {
 		return errors.New("order not found")
@@ -264,8 +306,8 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 	if math.Cmp(order.Filled, order.Quantity) != 0 {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
 		s.all[id] = order
-		if s.store != nil {
-			s.store.SaveOrder(order)
+		if writer != nil {
+			writer.SaveOrder(order)
 		}
 		return nil
 	}
@@ -275,8 +317,8 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity) error {
 	s.removeReduceOnly(order)
 
 	s.all[id] = order
-	if s.store != nil {
-		s.store.SaveOrder(order)
+	if writer != nil {
+		writer.SaveOrder(order)
 	}
 
 	return nil
