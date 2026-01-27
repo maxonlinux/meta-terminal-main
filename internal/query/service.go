@@ -29,25 +29,25 @@ func New(reg *registry.Registry, portfolio *portfolio.Service, store *oms.Servic
 }
 
 func (s *Service) GetOrders(userID types.UserID, symbol string, category int8) []*types.Order {
-	var result []*types.Order
-	s.store.Iterate(func(o *types.Order) bool {
-		if o.UserID != userID {
-			return true
-		}
+	orders := s.store.GetUserOrders(userID)
+	if symbol == "" && category == 0 {
+		return orders
+	}
+	result := make([]*types.Order, 0, len(orders))
+	for _, o := range orders {
 		if symbol != "" && o.Symbol != symbol {
-			return true
+			continue
 		}
 		if category != 0 && o.Category != category {
-			return true
+			continue
 		}
 		result = append(result, o)
-		return true
-	})
+	}
 	return result
 }
 
-func (s *Service) GetOrder(id types.OrderID) (*types.Order, bool) {
-	return s.store.Get(id)
+func (s *Service) GetOrder(userID types.UserID, id types.OrderID) (*types.Order, bool) {
+	return s.store.GetUserOrder(userID, id)
 }
 
 func (s *Service) GetBalances(userID types.UserID) []*types.Balance {

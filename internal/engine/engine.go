@@ -9,8 +9,10 @@ import (
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
+	"github.com/maxonlinux/meta-terminal-go/internal/replay"
 	"github.com/maxonlinux/meta-terminal-go/internal/trades"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
@@ -36,7 +38,6 @@ type CommandResult struct {
 }
 
 var (
-	errInvalidCommand      = errors.New("invalid engine command")
 	errInvalidOrderRequest = errors.New("invalid order request")
 	errInvalidFundingID    = errors.New("invalid funding id")
 	errOrderNotFound       = errors.New("order not found")
@@ -135,13 +136,13 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 			result = CommandResult{Err: errInvalidOrderRequest}
 		}
 	case *CancelOrderCmd:
-		if order, ok := e.store.Get(c.OrderID); ok {
+		if order, ok := e.store.GetUserOrder(c.UserID, c.OrderID); ok {
 			result = apply(order.Symbol, order.Category)
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
 		}
 	case *AmendOrderCmd:
-		if order, ok := e.store.Get(c.OrderID); ok {
+		if order, ok := e.store.GetUserOrder(c.UserID, c.OrderID); ok {
 			result = apply(order.Symbol, order.Category)
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
@@ -188,11 +189,27 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 
 func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	e.lastPrices[symbol] = price
+	var tx *outbox.Tx
+	var recorded bool
 	e.store.OnPriceTick(symbol, price, func(order *types.Order) {
+		if tx == nil && e.outbox != nil {
+			tx = e.outbox.Begin()
+		}
+		if tx != nil {
+			recorded = true
+			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt}))
+		}
 		if e.callback != nil {
 			e.callback.OnChildOrderCreated(order)
 		}
 	})
+	if tx != nil {
+		if recorded {
+			_ = tx.Commit()
+		} else {
+			_ = tx.Abort()
+		}
+	}
 }
 
 type bookLockKey struct {
@@ -223,20 +240,17 @@ func (e *Engine) restoreState() {
 	if e.persist == nil {
 		return
 	}
-	_ = e.persist.LoadBalances(func(balance *types.Balance) bool {
-		e.portfolio.LoadBalance(balance)
-		return true
-	})
-	_ = e.persist.LoadPositions(func(pos *types.Position) bool {
-		e.portfolio.LoadPosition(pos)
-		return true
-	})
-	_ = e.persist.LoadOrders(func(order *types.Order) bool {
-		e.store.Load(order)
+	replayer := replay.New(e.registry, e.store, e.portfolio, e.clearing)
+	_ = replayer.Replay(e.persist)
+	// rebuild books from active limit orders
+	e.store.Iterate(func(order *types.Order) bool {
 		if order == nil {
 			return true
 		}
 		if order.IsConditional {
+			return true
+		}
+		if order.Type != constants.ORDER_TYPE_LIMIT {
 			return true
 		}
 		if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED {
@@ -332,7 +346,10 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	)
 
 	if order.IsConditional {
-		e.store.Add(order, writer)
+		e.store.Add(order)
+		if writer != nil {
+			_ = writer.Record(events.EncodeOrderPlaced(order))
+		}
 		return CommandResult{Order: order}
 	}
 
@@ -357,18 +374,21 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 
 	if math.Sign(matchQty) > 0 {
 		avgPrice := types.Price(math.Div(matchNotional, matchQty))
-		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, matchQty, avgPrice, writer); err != nil {
+		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, matchQty, avgPrice); err != nil {
 			return CommandResult{Err: err}
 		}
 	}
 
 	if math.Sign(remaining) > 0 && (req.TIF == constants.TIF_POST_ONLY || req.TIF == constants.TIF_GTC) {
-		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price, writer); err != nil {
+		if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
 			return CommandResult{Err: err}
 		}
 	}
 
-	e.store.Add(order, writer)
+	e.store.Add(order)
+	if writer != nil {
+		_ = writer.Record(events.EncodeOrderPlaced(order))
+	}
 
 	for i := range matches {
 		match := matches[i]
@@ -379,7 +399,7 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 
 	if req.TIF == constants.TIF_IOC || order.Type == constants.ORDER_TYPE_MARKET {
 		if math.Cmp(order.Filled, order.Quantity) != 0 {
-			_ = e.store.Cancel(order.ID, writer)
+			_ = e.store.Cancel(order.UserID, order.ID)
 			return CommandResult{Order: order}
 		}
 		return CommandResult{Order: order}
@@ -397,24 +417,34 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 }
 
 type CancelOrderCmd struct {
+	UserID  types.UserID
 	OrderID types.OrderID
 }
 
 func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
-	if c.OrderID == 0 {
+	if c.OrderID == 0 || c.UserID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
 
-	if err := e.store.Cancel(c.OrderID, writer); err != nil {
+	if err := e.store.Cancel(c.UserID, c.OrderID); err != nil {
 		return CommandResult{Err: err}
 	}
-	if order, ok := e.store.Get(c.OrderID); ok {
+	if order, ok := e.store.GetUserOrder(c.UserID, c.OrderID); ok {
+		if order.IsConditional {
+			if writer != nil {
+				_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: order.UserID, OrderID: order.ID}))
+			}
+			return CommandResult{Order: order}
+		}
 		remaining := math.Sub(order.Quantity, order.Filled)
 		if math.Sign(remaining) > 0 {
-			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price, writer)
+			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 		}
 		if book, err := e.getBook(order.Category, order.Symbol); err == nil {
 			_ = book.Remove(order.ID)
+		}
+		if writer != nil {
+			_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: order.UserID, OrderID: order.ID}))
 		}
 		return CommandResult{Order: order}
 	}
@@ -422,23 +452,41 @@ func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 }
 
 type AmendOrderCmd struct {
+	UserID  types.UserID
 	OrderID types.OrderID
 	NewQty  types.Quantity
 }
 
 func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
-	if c.OrderID == 0 {
+	if c.OrderID == 0 || c.UserID == 0 {
 		return CommandResult{Err: errInvalidOrderRequest}
 	}
+	order, ok := e.store.GetUserOrder(c.UserID, c.OrderID)
+	if !ok {
+		return CommandResult{Err: errOrderNotFound}
+	}
 
-	if err := e.store.Amend(c.OrderID, c.NewQty, writer); err != nil {
+	oldRemaining := math.Sub(order.Quantity, order.Filled)
+	if err := e.store.Amend(c.UserID, c.OrderID, c.NewQty); err != nil {
 		return CommandResult{Err: err}
 	}
-	order, ok := e.store.Get(c.OrderID)
-	if ok {
-		return CommandResult{Order: order}
+	if writer != nil {
+		_ = writer.Record(events.EncodeOrderAmended(events.OrderAmendedEvent{UserID: c.UserID, OrderID: c.OrderID, NewQty: c.NewQty}))
 	}
-	return CommandResult{}
+	order, ok = e.store.GetUserOrder(c.UserID, c.OrderID)
+	if !ok {
+		return CommandResult{}
+	}
+	if !order.IsConditional && order.Type == constants.ORDER_TYPE_LIMIT {
+		newRemaining := math.Sub(order.Quantity, order.Filled)
+		delta := math.Sub(newRemaining, oldRemaining)
+		if math.Sign(delta) > 0 {
+			_ = e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, delta, order.Price)
+		} else if math.Sign(delta) < 0 {
+			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price)
+		}
+	}
+	return CommandResult{Order: order}
 }
 
 type SetLeverageCmd struct {
@@ -455,7 +503,11 @@ func (c *SetLeverageCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if err := e.checkLeverage(c.UserID, c.Symbol, c.Leverage, price); err != nil {
 		return CommandResult{Err: err}
 	}
-	return CommandResult{Err: e.portfolio.SetLeverage(c.UserID, c.Symbol, c.Leverage, writer)}
+	err := e.portfolio.SetLeverage(c.UserID, c.Symbol, c.Leverage)
+	if err == nil && writer != nil {
+		_ = writer.Record(events.EncodeLeverage(events.LeverageEvent{UserID: c.UserID, Symbol: c.Symbol, Leverage: c.Leverage}))
+	}
+	return CommandResult{Err: err}
 }
 
 type PublicTradesCmd struct {
@@ -477,9 +529,12 @@ type CreateDepositCmd struct {
 }
 
 func (c *CreateDepositCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
-	request, err := e.portfolio.CreateDeposit(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message, writer)
+	request, err := e.portfolio.CreateDeposit(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message)
 	if err != nil {
 		return CommandResult{Err: err}
+	}
+	if writer != nil {
+		_ = writer.Record(events.EncodeFundingCreated(*request))
 	}
 	return CommandResult{Funding: request}
 }
@@ -494,9 +549,12 @@ type CreateWithdrawalCmd struct {
 }
 
 func (c *CreateWithdrawalCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
-	request, err := e.portfolio.CreateWithdrawal(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message, writer)
+	request, err := e.portfolio.CreateWithdrawal(c.UserID, c.Asset, c.Amount, c.Destination, c.CreatedBy, c.Message)
 	if err != nil {
 		return CommandResult{Err: err}
+	}
+	if writer != nil {
+		_ = writer.Record(events.EncodeFundingCreated(*request))
 	}
 	return CommandResult{Funding: request}
 }
@@ -509,9 +567,12 @@ func (c *ApproveFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult
 	if c.FundingID == 0 {
 		return CommandResult{Err: errInvalidFundingID}
 	}
-	request, err := e.portfolio.ApproveFunding(c.FundingID, writer)
+	request, err := e.portfolio.ApproveFunding(c.FundingID)
 	if err != nil {
 		return CommandResult{Err: err}
+	}
+	if writer != nil {
+		_ = writer.Record(events.EncodeFundingStatus(events.FundingApproved, request.ID))
 	}
 	return CommandResult{Funding: request}
 }
@@ -524,9 +585,12 @@ func (c *RejectFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult 
 	if c.FundingID == 0 {
 		return CommandResult{Err: errInvalidFundingID}
 	}
-	request, err := e.portfolio.RejectFunding(c.FundingID, writer)
+	request, err := e.portfolio.RejectFunding(c.FundingID)
 	if err != nil {
 		return CommandResult{Err: err}
+	}
+	if writer != nil {
+		_ = writer.Record(events.EncodeFundingStatus(events.FundingRejected, request.ID))
 	}
 	return CommandResult{Funding: request}
 }

@@ -50,7 +50,7 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 		MakerOrder: maker,
 	}
 
-	svc.ExecuteTrade(match, nil)
+	svc.ExecuteTrade(match)
 
 	if math.Sign(svc.GetBalance(1, base).Available) == 0 {
 		t.Fatalf("expected taker base balance increase")
@@ -94,7 +94,7 @@ func TestExecuteTradeLinearPosition(t *testing.T) {
 		MakerOrder: maker,
 	}
 
-	svc.ExecuteTrade(match, nil)
+	svc.ExecuteTrade(match)
 
 	if pos := svc.GetPosition(1, "BTCUSDT"); math.Sign(pos.Size) <= 0 {
 		t.Fatalf("expected taker long position")

@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -37,18 +36,6 @@ func envString(key, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func envInt(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {

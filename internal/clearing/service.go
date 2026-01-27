@@ -4,7 +4,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -12,9 +11,9 @@ import (
 var one = fixed.NewI(1, 0)
 
 type Portfolio interface {
-	Reserve(userID types.UserID, asset string, amount types.Quantity, writer outbox.Writer) error
-	Release(userID types.UserID, asset string, amount types.Quantity, writer outbox.Writer)
-	ExecuteTrade(match *types.Match, writer outbox.Writer)
+	Reserve(userID types.UserID, asset string, amount types.Quantity) error
+	Release(userID types.UserID, asset string, amount types.Quantity)
+	ExecuteTrade(match *types.Match)
 	GetPosition(userID types.UserID, symbol string) *types.Position
 }
 
@@ -27,18 +26,18 @@ func New(portfolio Portfolio, reg *registry.Registry) *Service {
 	return &Service{portfolio: portfolio, registry: reg}
 }
 
-func (s *Service) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price, writer outbox.Writer) error {
+func (s *Service) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
 	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
-	return s.portfolio.Reserve(userID, asset, amount, writer)
+	return s.portfolio.Reserve(userID, asset, amount)
 }
 
-func (s *Service) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price, writer outbox.Writer) {
+func (s *Service) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) {
 	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
-	s.portfolio.Release(userID, asset, amount, writer)
+	s.portfolio.Release(userID, asset, amount)
 }
 
-func (s *Service) ExecuteTrade(match *types.Match, writer outbox.Writer) {
-	s.portfolio.ExecuteTrade(match, writer)
+func (s *Service) ExecuteTrade(match *types.Match) {
+	s.portfolio.ExecuteTrade(match)
 }
 
 func (s *Service) leverageFor(userID types.UserID, symbol string) types.Leverage {

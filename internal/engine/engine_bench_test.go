@@ -67,7 +67,7 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		false,
 		0,
 	)
-	eng.store.Add(makerOrder, nil)
+	eng.store.Add(makerOrder)
 	book.Add(makerOrder)
 
 	eng.portfolio.Balances[types.UserID(1)] = map[string]*types.Balance{

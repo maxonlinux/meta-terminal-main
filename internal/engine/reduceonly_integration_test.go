@@ -55,8 +55,8 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		0,
 	)
 
-	eng.store.Add(order1, nil)
-	eng.store.Add(order2, nil)
+	eng.store.Add(order1)
+	eng.store.Add(order2)
 
 	eng.onPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(4, 0)))
 

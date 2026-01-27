@@ -37,13 +37,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("persistence open: %v", err)
 	}
-	defer store.Close()
+	defer func() {
+		_ = store.Close()
+	}()
 
 	ob, err := outbox.Open(cfg.DataDir, store.DB())
 	if err != nil {
 		log.Fatalf("outbox open: %v", err)
 	}
-	defer ob.Close()
+	defer func() {
+		_ = ob.Close()
+	}()
 	ob.Start()
 
 	eng := engine.NewEngine(store, ob, reg, nil)
@@ -63,7 +67,9 @@ func runServer(eng *engine.Engine, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	defer userStore.Close()
+	defer func() {
+		_ = userStore.Close()
+	}()
 
 	jwtService := users.NewJWTService()
 	authService := users.NewService(userStore)

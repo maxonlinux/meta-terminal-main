@@ -4,7 +4,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -18,7 +17,7 @@ func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Positio
 	return pos
 }
 
-func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage types.Leverage, writer outbox.Writer) error {
+func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage types.Leverage) error {
 	pos := s.positionFor(userID, symbol)
 	if pos == nil {
 		pos = &types.Position{UserID: userID, Symbol: symbol}
@@ -29,9 +28,6 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 
 	if math.Sign(pos.Size) == 0 {
 		pos.Leverage = newLeverage
-		if writer != nil {
-			writer.SavePosition(pos)
-		}
 		return nil
 	}
 
@@ -44,18 +40,15 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 	notional := types.Quantity(math.Mul(pos.EntryPrice, absPositionSize(pos.Size)))
 	oldMargin := types.Quantity(math.Div(notional, oldLeverage))
 	newMargin := types.Quantity(math.Div(notional, newLeverage))
-	if err := s.applyMarginDelta(userID, quote, oldMargin, newMargin, writer); err != nil {
+	if err := s.applyMarginDelta(userID, quote, oldMargin, newMargin); err != nil {
 		return err
 	}
 
 	pos.Leverage = newLeverage
-	if writer != nil {
-		writer.SavePosition(pos)
-	}
 	return nil
 }
 
-func (s *Service) updatePosition(userID types.UserID, match *types.Match, order *types.Order, writer outbox.Writer) {
+func (s *Service) updatePosition(userID types.UserID, match *types.Match, order *types.Order) {
 	pos := s.positionFor(userID, match.Symbol)
 	if pos == nil {
 		pos = &types.Position{UserID: userID, Symbol: match.Symbol}
@@ -76,9 +69,6 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		if math.Sign(pos.Leverage) <= 0 {
 			pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
-		if writer != nil {
-			writer.SavePosition(pos)
-		}
 		return
 	}
 
@@ -87,9 +77,6 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		weighted := math.Add(math.Mul(pos.EntryPrice, pos.Size), math.Mul(match.Price, signedTrade))
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
-		if writer != nil {
-			writer.SavePosition(pos)
-		}
 		return
 	}
 
@@ -98,20 +85,13 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if math.Sign(remaining) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
-		if writer != nil {
-			writer.SavePosition(pos)
-		}
-	} else {
-		if writer != nil {
-			writer.SavePosition(pos)
-		}
 	}
 
 	closedQty := absPositionSize(signedTrade)
 	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, pos.Size)
 	if math.Sign(rpnl) != 0 {
 		quote := registry.GetQuoteAsset(match.Symbol)
-		s.adjustAvailable(userID, quote, rpnl, writer)
+		s.adjustAvailable(userID, quote, rpnl)
 	}
 	if s.onReduce != nil {
 		s.onReduce(userID, match.Symbol, pos.Size)
@@ -165,14 +145,14 @@ func normalizeLeverage(leverage types.Leverage) types.Leverage {
 	return leverage
 }
 
-func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin types.Quantity, newMargin types.Quantity, writer outbox.Writer) error {
+func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin types.Quantity, newMargin types.Quantity) error {
 	delta := types.Quantity(math.Sub(oldMargin, newMargin))
 	if math.Sign(delta) == 0 {
 		return nil
 	}
 	if math.Sign(delta) > 0 {
-		s.adjustAvailable(userID, quote, delta, writer)
-		s.adjustMargin(userID, quote, math.Neg(delta), writer)
+		s.adjustAvailable(userID, quote, delta)
+		s.adjustMargin(userID, quote, math.Neg(delta))
 		return nil
 	}
 
@@ -180,8 +160,8 @@ func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin 
 	if math.Lt(s.GetBalance(userID, quote).Available, required) {
 		return constants.ErrInsufficientBalance
 	}
-	s.adjustAvailable(userID, quote, math.Neg(required), writer)
-	s.adjustMargin(userID, quote, required, writer)
+	s.adjustAvailable(userID, quote, math.Neg(required))
+	s.adjustMargin(userID, quote, required)
 	return nil
 }
 

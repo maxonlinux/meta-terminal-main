@@ -5,6 +5,7 @@ import (
 
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
@@ -42,10 +43,10 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 		return
 	}
 
-	e.clearing.ExecuteTrade(&match, writer)
+	e.clearing.ExecuteTrade(&match)
 
-	_ = e.store.Fill(match.MakerOrder.ID, match.Quantity, writer)
-	_ = e.store.Fill(match.TakerOrder.ID, match.Quantity, writer)
+	_ = e.store.Fill(match.MakerOrder.UserID, match.MakerOrder.ID, match.Quantity)
+	_ = e.store.Fill(match.TakerOrder.UserID, match.TakerOrder.ID, match.Quantity)
 	if book != nil {
 		book.ApplyFill(match.MakerOrder.ID, match.Quantity)
 	}
@@ -64,4 +65,20 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 	publicTrade.Timestamp = match.Timestamp
 	e.tradeFeed.Add(match.Category, match.Symbol, *publicTrade)
 	putTrade(publicTrade)
+
+	if writer != nil {
+		_ = writer.Record(events.EncodeTrade(events.TradeEvent{
+			TradeID:      match.ID,
+			MakerUserID:  match.MakerOrder.UserID,
+			TakerUserID:  match.TakerOrder.UserID,
+			MakerOrderID: match.MakerOrder.ID,
+			TakerOrderID: match.TakerOrder.ID,
+			Symbol:       match.Symbol,
+			Category:     match.Category,
+			Price:        match.Price,
+			Quantity:     match.Quantity,
+			TakerSide:    match.TakerOrder.Side,
+			Timestamp:    match.Timestamp,
+		}))
+	}
 }

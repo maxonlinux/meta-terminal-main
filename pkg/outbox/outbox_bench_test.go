@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -67,43 +68,16 @@ func buildPreparedRecords() []preparedRecord {
 		ReduceOnly: true,
 	}
 
-	records := make([]preparedRecord, 0, 1+2+20)
+	records := make([]preparedRecord, 0, 3)
 	records = append(records, preparedRecord{recordType: logRecordBegin, txID: txID})
+	event := events.EncodeOrderPlaced(order)
+	value := append([]byte{byte(event.Type)}, event.Data...)
 	records = append(records, preparedRecord{
 		recordType: logRecordData,
 		txID:       txID,
-		key:        persistence.OrderKey(order.ID),
-		value:      persistence.EncodeOrder(order),
+		key:        persistence.EventKey(1),
+		value:      value,
 	})
-
-	for i := 0; i < 10; i++ {
-		balance := &types.Balance{
-			UserID:    types.UserID(42),
-			Asset:     "USDT",
-			Available: fixed.NewI(100000-int64(i), 0),
-			Locked:    fixed.NewI(500+int64(i), 0),
-			Margin:    fixed.NewI(200+int64(i), 0),
-		}
-		position := &types.Position{
-			UserID:     types.UserID(42),
-			Symbol:     "BTCUSDT",
-			Size:       fixed.NewI(1+int64(i), 0),
-			EntryPrice: fixed.NewI(50000+int64(i), 0),
-			Leverage:   fixed.NewI(10, 0),
-		}
-		records = append(records, preparedRecord{
-			recordType: logRecordData,
-			txID:       txID,
-			key:        persistence.BalanceKey(balance.UserID, balance.Asset),
-			value:      persistence.EncodeBalance(balance),
-		})
-		records = append(records, preparedRecord{
-			recordType: logRecordData,
-			txID:       txID,
-			key:        persistence.PositionKey(position.UserID, position.Symbol),
-			value:      persistence.EncodePosition(position),
-		})
-	}
 	records = append(records, preparedRecord{recordType: logRecordCommit, txID: txID})
 	return records
 }

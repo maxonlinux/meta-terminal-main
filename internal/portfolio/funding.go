@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
@@ -19,7 +18,7 @@ var (
 )
 
 // CreateWithdrawal locks available funds and stores a pending request.
-func (s *Service) CreateWithdrawal(userID types.UserID, asset string, amount types.Quantity, destination string, createdBy types.FundingCreatedBy, message string, writer outbox.Writer) (*types.FundingRequest, error) {
+func (s *Service) CreateWithdrawal(userID types.UserID, asset string, amount types.Quantity, destination string, createdBy types.FundingCreatedBy, message string) (*types.FundingRequest, error) {
 	if amount.Sign() <= 0 {
 		return nil, ErrFundingAmountZero
 	}
@@ -27,7 +26,7 @@ func (s *Service) CreateWithdrawal(userID types.UserID, asset string, amount typ
 		return nil, ErrFundingDestination
 	}
 
-	if err := s.Reserve(userID, asset, amount, writer); err != nil {
+	if err := s.Reserve(userID, asset, amount); err != nil {
 		return nil, err
 	}
 
@@ -37,7 +36,7 @@ func (s *Service) CreateWithdrawal(userID types.UserID, asset string, amount typ
 }
 
 // CreateDeposit stores a pending deposit request.
-func (s *Service) CreateDeposit(userID types.UserID, asset string, amount types.Quantity, destination string, createdBy types.FundingCreatedBy, message string, writer outbox.Writer) (*types.FundingRequest, error) {
+func (s *Service) CreateDeposit(userID types.UserID, asset string, amount types.Quantity, destination string, createdBy types.FundingCreatedBy, message string) (*types.FundingRequest, error) {
 	if amount.Sign() <= 0 {
 		return nil, ErrFundingAmountZero
 	}
@@ -51,13 +50,13 @@ func (s *Service) CreateDeposit(userID types.UserID, asset string, amount types.
 }
 
 // ApproveFunding completes a pending funding request.
-func (s *Service) ApproveFunding(id types.FundingID, writer outbox.Writer) (*types.FundingRequest, error) {
+func (s *Service) ApproveFunding(id types.FundingID) (*types.FundingRequest, error) {
 	request, err := s.pendingFunding(id)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.applyFundingApproval(request, writer); err != nil {
+	if err := s.applyFundingApproval(request); err != nil {
 		return nil, err
 	}
 
@@ -66,14 +65,14 @@ func (s *Service) ApproveFunding(id types.FundingID, writer outbox.Writer) (*typ
 }
 
 // RejectFunding cancels a pending funding request.
-func (s *Service) RejectFunding(id types.FundingID, writer outbox.Writer) (*types.FundingRequest, error) {
+func (s *Service) RejectFunding(id types.FundingID) (*types.FundingRequest, error) {
 	request, err := s.pendingFunding(id)
 	if err != nil {
 		return nil, err
 	}
 
 	if request.Type == types.FundingTypeWithdrawal {
-		s.Release(request.UserID, request.Asset, request.Amount, writer)
+		s.Release(request.UserID, request.Asset, request.Amount)
 	}
 
 	s.transitionFunding(request, types.FundingStatusCanceled)
@@ -91,13 +90,13 @@ func (s *Service) pendingFunding(id types.FundingID) (*types.FundingRequest, err
 	return request, nil
 }
 
-func (s *Service) applyFundingApproval(request *types.FundingRequest, writer outbox.Writer) error {
+func (s *Service) applyFundingApproval(request *types.FundingRequest) error {
 	switch request.Type {
 	case types.FundingTypeDeposit:
-		s.adjustAvailable(request.UserID, request.Asset, request.Amount, writer)
+		s.adjustAvailable(request.UserID, request.Asset, request.Amount)
 		return nil
 	case types.FundingTypeWithdrawal:
-		s.adjustLocked(request.UserID, request.Asset, math.Neg(request.Amount), writer)
+		s.adjustLocked(request.UserID, request.Asset, math.Neg(request.Amount))
 		return nil
 	default:
 		return ErrFundingInvalidType

@@ -7,7 +7,6 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
@@ -23,30 +22,8 @@ func getOrder() *types.Order {
 	return orderPool.Get().(*types.Order)
 }
 
-func putOrder(o *types.Order) {
-	o.ID = 0
-	o.UserID = 0
-	o.Symbol = ""
-	o.Category = 0
-	o.Side = 0
-	o.Type = 0
-	o.TIF = 0
-	o.Status = 0
-	o.Price = math.Zero
-	o.Quantity = math.Zero
-	o.Filled = math.Zero
-	o.TriggerPrice = math.Zero
-	o.ReduceOnly = false
-	o.CloseOnTrigger = false
-	o.StopOrderType = 0
-	o.IsConditional = false
-	o.CreatedAt = 0
-	o.UpdatedAt = 0
-	orderPool.Put(o)
-}
-
 type Service struct {
-	all         map[types.OrderID]*types.Order
+	byUser      map[types.UserID]map[types.OrderID]*types.Order
 	count       int64
 	reduceonly  *ReduceOnlyIndex
 	conditional *ConditionalIndex
@@ -115,18 +92,27 @@ func newOrder(
 
 func NewService() *Service {
 	s := &Service{
-		all:         make(map[types.OrderID]*types.Order),
+		byUser:      make(map[types.UserID]map[types.OrderID]*types.Order),
 		reduceonly:  NewReduceOnlyIndex(),
 		conditional: NewConditionalIndex(),
 	}
 	return s
 }
 
+func (s *Service) indexUser(order *types.Order) {
+	userOrders := s.byUser[order.UserID]
+	if userOrders == nil {
+		userOrders = make(map[types.OrderID]*types.Order)
+		s.byUser[order.UserID] = userOrders
+	}
+	userOrders[order.ID] = order
+}
+
 func (s *Service) Load(order *types.Order) {
 	if order == nil {
 		return
 	}
-	s.all[order.ID] = order
+	s.indexUser(order)
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
 }
@@ -163,16 +149,13 @@ func (s *Service) Build(
 	)
 }
 
-func (s *Service) Add(order *types.Order, writer outbox.Writer) {
+func (s *Service) Add(order *types.Order) {
 	if order == nil {
 		return
 	}
-	s.all[order.ID] = order
+	s.indexUser(order)
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
-	if writer != nil {
-		_ = writer.SaveOrder(order)
-	}
 }
 
 func (s *Service) Create(
@@ -188,7 +171,6 @@ func (s *Service) Create(
 	reduceOnly bool,
 	closeOnTrigger bool,
 	stopOrderType int8,
-	writer outbox.Writer,
 ) *types.Order {
 	now := utils.NowNano()
 	order := newOrder(
@@ -207,31 +189,40 @@ func (s *Service) Create(
 		now,
 	)
 
-	s.all[order.ID] = order
+	s.indexUser(order)
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
-
-	if writer != nil {
-		writer.SaveOrder(order)
-	}
 
 	return order
 }
 
-func (s *Service) Get(id types.OrderID) (*types.Order, bool) {
-	order, ok := s.all[id]
-	if !ok {
+func (s *Service) GetUserOrder(userID types.UserID, id types.OrderID) (*types.Order, bool) {
+	orders := s.byUser[userID]
+	if orders == nil {
 		return nil, false
 	}
-	return order, true
+	order, ok := orders[id]
+	return order, ok
+}
+
+func (s *Service) GetUserOrders(userID types.UserID) []*types.Order {
+	orders := s.byUser[userID]
+	if orders == nil {
+		return nil
+	}
+	result := make([]*types.Order, 0, len(orders))
+	for _, order := range orders {
+		result = append(result, order)
+	}
+	return result
 }
 
 func (s *Service) Count() int {
 	return int(atomic.LoadInt64(&s.count))
 }
 
-func (s *Service) Amend(id types.OrderID, newQty types.Quantity, writer outbox.Writer) error {
-	order, ok := s.all[id]
+func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quantity) error {
+	order, ok := s.GetUserOrder(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -250,17 +241,11 @@ func (s *Service) Amend(id types.OrderID, newQty types.Quantity, writer outbox.W
 		s.reduceonly.adjustExposure(order.UserID, order.Symbol, math.Neg(delta))
 	}
 
-	s.all[id] = order
-
-	if writer != nil {
-		writer.SaveOrder(order)
-	}
-
 	return nil
 }
 
-func (s *Service) Cancel(id types.OrderID, writer outbox.Writer) error {
-	order, ok := s.all[id]
+func (s *Service) Cancel(userID types.UserID, id types.OrderID) error {
+	order, ok := s.GetUserOrder(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -283,17 +268,11 @@ func (s *Service) Cancel(id types.OrderID, writer outbox.Writer) error {
 	s.removeReduceOnly(order)
 	s.removeConditional(order)
 
-	s.all[id] = order
-
-	if writer != nil {
-		writer.SaveOrder(order)
-	}
-
 	return nil
 }
 
-func (s *Service) Fill(id types.OrderID, qty types.Quantity, writer outbox.Writer) error {
-	order, ok := s.all[id]
+func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity) error {
+	order, ok := s.GetUserOrder(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -305,21 +284,12 @@ func (s *Service) Fill(id types.OrderID, qty types.Quantity, writer outbox.Write
 
 	if math.Cmp(order.Filled, order.Quantity) != 0 {
 		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED
-		s.all[id] = order
-		if writer != nil {
-			writer.SaveOrder(order)
-		}
 		return nil
 	}
 
 	order.Status = constants.ORDER_STATUS_FILLED
 
 	s.removeReduceOnly(order)
-
-	s.all[id] = order
-	if writer != nil {
-		writer.SaveOrder(order)
-	}
 
 	return nil
 }
@@ -333,9 +303,11 @@ func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*t
 }
 
 func (s *Service) Iterate(fn func(*types.Order) bool) {
-	for _, order := range s.all {
-		if !fn(order) {
-			return
+	for _, orders := range s.byUser {
+		for _, order := range orders {
+			if !fn(order) {
+				return
+			}
 		}
 	}
 }

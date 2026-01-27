@@ -27,7 +27,9 @@ func BenchmarkGOBEncodeOrder(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf := bytes.Buffer{}
-		gob.NewEncoder(&buf).Encode(order)
+		if err := gob.NewEncoder(&buf).Encode(order); err != nil {
+			b.Fatal(err)
+		}
 		_ = buf.Bytes()
 	}
 }
@@ -69,13 +71,17 @@ func BenchmarkGOBDecodeOrder(b *testing.B) {
 	}
 
 	buf := bytes.Buffer{}
-	gob.NewEncoder(&buf).Encode(order)
+	if err := gob.NewEncoder(&buf).Encode(order); err != nil {
+		b.Fatal(err)
+	}
 	data := buf.Bytes()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var o types.Order
-		gob.NewDecoder(bytes.NewReader(data)).Decode(&o)
+		if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&o); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

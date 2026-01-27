@@ -16,7 +16,7 @@ func TestService_Create(t *testing.T) {
 		types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil,
+		false, false, 0,
 	)
 
 	if order.ID == 0 {
@@ -43,7 +43,7 @@ func TestService_CreateConditional(t *testing.T) {
 		types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), types.Price(fixed.NewI(49000, 0)),
-		false, false, constants.STOP_ORDER_TYPE_STOP, nil,
+		false, false, constants.STOP_ORDER_TYPE_STOP,
 	)
 
 	if !order.IsConditional {
@@ -60,9 +60,9 @@ func TestService_Get(t *testing.T) {
 	created := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil)
+		false, false, 0)
 
-	order, ok := s.Get(created.ID)
+	order, ok := s.GetUserOrder(created.UserID, created.ID)
 	if !ok {
 		t.Error("order not found")
 	}
@@ -70,7 +70,7 @@ func TestService_Get(t *testing.T) {
 		t.Errorf("expected ID %d, got %d", created.ID, order.ID)
 	}
 
-	_, ok = s.Get(types.OrderID(99999))
+	_, ok = s.GetUserOrder(created.UserID, types.OrderID(99999))
 	if ok {
 		t.Error("should not find non-existent order")
 	}
@@ -82,9 +82,9 @@ func TestService_Amend(t *testing.T) {
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil)
+		false, false, 0)
 
-	err := s.Amend(order.ID, types.Quantity(fixed.NewI(5, 0)), nil)
+	err := s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(5, 0)))
 	if err != nil {
 		t.Errorf("amend failed: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestService_Amend(t *testing.T) {
 		t.Errorf("expected quantity 5")
 	}
 
-	err = s.Amend(order.ID, types.Quantity(fixed.NewI(15, 0)), nil)
+	err = s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(15, 0)))
 	if err == nil {
 		t.Error("amend to larger quantity should fail")
 	}
@@ -104,9 +104,9 @@ func TestService_Cancel(t *testing.T) {
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil)
+		false, false, 0)
 
-	err := s.Cancel(order.ID, nil)
+	err := s.Cancel(order.UserID, order.ID)
 	if err != nil {
 		t.Errorf("cancel failed: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestService_Cancel(t *testing.T) {
 		t.Errorf("expected status CANCELED, got %d", order.Status)
 	}
 
-	err = s.Cancel(order.ID, nil)
+	err = s.Cancel(order.UserID, order.ID)
 	if err == nil {
 		t.Error("cancel already canceled order should fail")
 	}
@@ -126,9 +126,9 @@ func TestService_Fill(t *testing.T) {
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil)
+		false, false, 0)
 
-	err := s.Fill(order.ID, types.Quantity(fixed.NewI(5, 0)), nil)
+	err := s.Fill(order.UserID, order.ID, types.Quantity(fixed.NewI(5, 0)))
 	if err != nil {
 		t.Errorf("fill failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestService_Fill(t *testing.T) {
 		t.Errorf("expected status PARTIALLY_FILLED, got %d", order.Status)
 	}
 
-	err = s.Fill(order.ID, types.Quantity(fixed.NewI(5, 0)), nil)
+	err = s.Fill(order.UserID, order.ID, types.Quantity(fixed.NewI(5, 0)))
 	if err != nil {
 		t.Errorf("fill failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func BenchmarkService_Create(b *testing.B) {
 		s.Create(types.UserID(i), "BTCUSDT", constants.CATEGORY_LINEAR,
 			constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 			math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-			false, false, 0, nil)
+			false, false, 0)
 	}
 }
 
@@ -168,10 +168,10 @@ func BenchmarkService_Get(b *testing.B) {
 	order := s.Create(types.UserID(1), "BTCUSDT", constants.CATEGORY_LINEAR,
 		constants.ORDER_SIDE_BUY, constants.ORDER_TYPE_LIMIT, constants.TIF_GTC,
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
-		false, false, 0, nil)
+		false, false, 0)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.Get(order.ID)
+		s.GetUserOrder(order.UserID, order.ID)
 	}
 }

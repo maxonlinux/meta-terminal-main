@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 var (
@@ -70,116 +69,24 @@ func (s *Store) Compact() error {
 	return s.db.RunValueLogGC(0.5)
 }
 
-func (s *Store) SaveOrder(order *types.Order) error {
+func (s *Store) IterateEvents(fn func(key, value []byte) bool) error {
 	if atomic.LoadInt32(&s.closed) == 1 {
 		return ErrStoreClosed
 	}
-	data := EncodeOrder(order)
-	return s.Set(OrderKey(order.ID), data)
-}
-
-func (s *Store) SaveBalance(balance *types.Balance) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	data := EncodeBalance(balance)
-	return s.Set(BalanceKey(balance.UserID, balance.Asset), data)
-}
-
-func (s *Store) SavePosition(pos *types.Position) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	data := EncodePosition(pos)
-	return s.Set(PositionKey(pos.UserID, pos.Symbol), data)
-}
-
-func (s *Store) LoadOrders(fn func(*types.Order) bool) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	prefix := []byte("o:")
+	prefix := []byte("e:")
 	return s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			data, _ := it.Item().ValueCopy(nil)
-			order, err := DecodeOrder(data)
-			if err != nil {
-				continue
-			}
-			if !fn(order) {
+			item := it.Item()
+			key := item.KeyCopy(nil)
+			value, _ := item.ValueCopy(nil)
+			if !fn(key, value) {
 				break
 			}
 		}
 		return nil
 	})
-}
-
-func (s *Store) LoadBalances(fn func(*types.Balance) bool) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	prefix := []byte("b:")
-	return s.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			data, _ := it.Item().ValueCopy(nil)
-			balance, err := DecodeBalance(data)
-			if err != nil {
-				continue
-			}
-			if !fn(balance) {
-				break
-			}
-		}
-		return nil
-	})
-}
-
-func (s *Store) LoadPositions(fn func(*types.Position) bool) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-	prefix := []byte("p:")
-	return s.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			data, _ := it.Item().ValueCopy(nil)
-			pos, err := DecodePosition(data)
-			if err != nil {
-				continue
-			}
-			if !fn(pos) {
-				break
-			}
-		}
-		return nil
-	})
-}
-
-func (s *Store) GetOrder(id types.OrderID) (*types.Order, error) {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return nil, ErrStoreClosed
-	}
-	var data []byte
-	err := s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(OrderKey(id))
-		if err != nil {
-			if err == badger.ErrKeyNotFound {
-				return ErrKeyNotFound
-			}
-			return err
-		}
-		data, err = item.ValueCopy(nil)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return DecodeOrder(data)
 }
 
 func (s *Store) Set(key, value []byte) error {
@@ -210,43 +117,6 @@ func (s *Store) Get(key []byte) ([]byte, error) {
 	return data, err
 }
 
-func (s *Store) WriteBatch(orders []*types.Order, balances []*types.Balance, positions []*types.Position) error {
-	if atomic.LoadInt32(&s.closed) == 1 {
-		return ErrStoreClosed
-	}
-
-	batch := s.db.NewWriteBatch()
-	defer batch.Cancel()
-
-	for _, order := range orders {
-		if err := batch.Set(OrderKey(order.ID), EncodeOrder(order)); err != nil {
-			return err
-		}
-	}
-
-	for _, balance := range balances {
-		if err := batch.Set(BalanceKey(balance.UserID, balance.Asset), EncodeBalance(balance)); err != nil {
-			return err
-		}
-	}
-
-	for _, position := range positions {
-		if err := batch.Set(PositionKey(position.UserID, position.Symbol), EncodePosition(position)); err != nil {
-			return err
-		}
-	}
-
-	return batch.Flush()
-}
-
-func OrderKey(id types.OrderID) []byte {
-	return fmt.Appendf(nil, "o:%016x", id)
-}
-
-func BalanceKey(userID types.UserID, asset string) []byte {
-	return fmt.Appendf(nil, "b:%016x:%s", userID, asset)
-}
-
-func PositionKey(userID types.UserID, symbol string) []byte {
-	return fmt.Appendf(nil, "p:%016x:%s", userID, symbol)
+func EventKey(seq uint64) []byte {
+	return fmt.Appendf(nil, "e:%020d", seq)
 }

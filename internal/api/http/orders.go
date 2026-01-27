@@ -137,12 +137,8 @@ func (h *OrdersHandler) Get(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
 
-	order, ok := h.query.GetOrder(types.OrderID(id))
+	order, ok := h.query.GetOrder(claims.UserID, types.OrderID(id))
 	if !ok {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
-	}
-
-	if order.UserID != claims.UserID {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
 	}
 
@@ -160,7 +156,7 @@ func (h *OrdersHandler) Cancel(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
 
-	result := h.engine.Cmd(&engine.CancelOrderCmd{OrderID: types.OrderID(id)})
+	result := h.engine.Cmd(&engine.CancelOrderCmd{UserID: claims.UserID, OrderID: types.OrderID(id)})
 	if result.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": result.Err.Error()})
 	}
@@ -194,6 +190,7 @@ func (h *OrdersHandler) Amend(c echo.Context) error {
 	}
 
 	result := h.engine.Cmd(&engine.AmendOrderCmd{
+		UserID:  claims.UserID,
 		OrderID: types.OrderID(id),
 		NewQty:  types.Quantity(fixed.NewF(qty)),
 	})

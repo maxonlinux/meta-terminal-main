@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
-	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 const (
@@ -24,9 +24,7 @@ const (
 )
 
 type Writer interface {
-	SaveOrder(order *types.Order) error
-	SaveBalance(balance *types.Balance) error
-	SavePosition(position *types.Position) error
+	Record(events.Event) error
 }
 
 type Outbox struct {
@@ -35,6 +33,7 @@ type Outbox struct {
 	worker   *worker
 	tailPath string
 	seq      uint64
+	eventSeq uint64
 }
 
 func Open(dir string, db *badger.DB) (*Outbox, error) {
@@ -146,40 +145,13 @@ type Tx struct {
 	closed bool
 }
 
-func (t *Tx) SaveOrder(order *types.Order) error {
+func (t *Tx) Record(event events.Event) error {
 	if t == nil || t.outbox == nil || t.closed {
 		return errors.New("transaction closed")
 	}
-	data := persistence.EncodeOrder(order)
-	key := persistence.OrderKey(order.ID)
-	offset, err := t.outbox.log.Append(logRecordData, t.id, key, data)
-	if err != nil {
-		return err
-	}
-	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, key: key, value: data, endOffset: offset})
-	return nil
-}
-
-func (t *Tx) SaveBalance(balance *types.Balance) error {
-	if t == nil || t.outbox == nil || t.closed {
-		return errors.New("transaction closed")
-	}
-	data := persistence.EncodeBalance(balance)
-	key := persistence.BalanceKey(balance.UserID, balance.Asset)
-	offset, err := t.outbox.log.Append(logRecordData, t.id, key, data)
-	if err != nil {
-		return err
-	}
-	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, key: key, value: data, endOffset: offset})
-	return nil
-}
-
-func (t *Tx) SavePosition(position *types.Position) error {
-	if t == nil || t.outbox == nil || t.closed {
-		return errors.New("transaction closed")
-	}
-	data := persistence.EncodePosition(position)
-	key := persistence.PositionKey(position.UserID, position.Symbol)
+	seq := atomic.AddUint64(&t.outbox.eventSeq, 1)
+	key := persistence.EventKey(seq)
+	data := append([]byte{byte(event.Type)}, event.Data...)
 	offset, err := t.outbox.log.Append(logRecordData, t.id, key, data)
 	if err != nil {
 		return err
@@ -494,7 +466,9 @@ func replayLog(db *badger.DB, log *appendLog, offset int64) (int64, error) {
 		}
 		return 0, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	info, err := file.Stat()
 	if err != nil {

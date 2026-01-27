@@ -4,7 +4,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -56,15 +55,15 @@ func (s *Service) GetInstrument(symbol string) *types.Instrument {
 	return nil
 }
 
-func (s *Service) ExecuteTrade(match *types.Match, writer outbox.Writer) {
+func (s *Service) ExecuteTrade(match *types.Match) {
 	if match.Category == constants.CATEGORY_SPOT {
-		s.executeSpotTrade(match, writer)
+		s.executeSpotTrade(match)
 		return
 	}
-	s.executeLinearTrade(match, writer)
+	s.executeLinearTrade(match)
 }
 
-func (s *Service) executeSpotTrade(match *types.Match, writer outbox.Writer) {
+func (s *Service) executeSpotTrade(match *types.Match) {
 	inst := s.GetInstrument(match.Symbol)
 	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
@@ -78,11 +77,11 @@ func (s *Service) executeSpotTrade(match *types.Match, writer outbox.Writer) {
 	amountBase := match.Quantity
 	amountQuote := types.Quantity(math.Mul(match.Price, match.Quantity))
 
-	s.applySpotLeg(match.TakerOrder.UserID, takerGets, takerPays, amountBase, amountQuote, writer)
-	s.applySpotLeg(match.MakerOrder.UserID, makerGets, makerPays, amountQuote, amountBase, writer)
+	s.applySpotLeg(match.TakerOrder.UserID, takerGets, takerPays, amountBase, amountQuote)
+	s.applySpotLeg(match.MakerOrder.UserID, makerGets, makerPays, amountQuote, amountBase)
 }
 
-func (s *Service) executeLinearTrade(match *types.Match, writer outbox.Writer) {
+func (s *Service) executeLinearTrade(match *types.Match) {
 	inst := s.GetInstrument(match.Symbol)
 	quoteAsset := inst.QuoteAsset
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))
@@ -90,22 +89,22 @@ func (s *Service) executeLinearTrade(match *types.Match, writer outbox.Writer) {
 	takerLeverage := s.positionLeverage(match.TakerOrder.UserID, match.Symbol)
 	makerLeverage := s.positionLeverage(match.MakerOrder.UserID, match.Symbol)
 
-	s.applyLinearLeg(match.TakerOrder.UserID, quoteAsset, tradeNotional, takerLeverage, writer)
-	s.applyLinearLeg(match.MakerOrder.UserID, quoteAsset, tradeNotional, makerLeverage, writer)
+	s.applyLinearLeg(match.TakerOrder.UserID, quoteAsset, tradeNotional, takerLeverage)
+	s.applyLinearLeg(match.MakerOrder.UserID, quoteAsset, tradeNotional, makerLeverage)
 
-	s.updatePosition(match.TakerOrder.UserID, match, match.TakerOrder, writer)
-	s.updatePosition(match.MakerOrder.UserID, match, match.MakerOrder, writer)
+	s.updatePosition(match.TakerOrder.UserID, match, match.TakerOrder)
+	s.updatePosition(match.MakerOrder.UserID, match, match.MakerOrder)
 }
 
-func (s *Service) applySpotLeg(userID types.UserID, getsAsset string, paysAsset string, getsQty types.Quantity, paysQty types.Quantity, writer outbox.Writer) {
-	s.adjustAvailable(userID, getsAsset, getsQty, writer)
-	s.adjustLocked(userID, paysAsset, math.Neg(paysQty), writer)
+func (s *Service) applySpotLeg(userID types.UserID, getsAsset string, paysAsset string, getsQty types.Quantity, paysQty types.Quantity) {
+	s.adjustAvailable(userID, getsAsset, getsQty)
+	s.adjustLocked(userID, paysAsset, math.Neg(paysQty))
 }
 
-func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNotional types.Quantity, leverage types.Leverage, writer outbox.Writer) {
+func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNotional types.Quantity, leverage types.Leverage) {
 	margin := types.Quantity(math.Div(tradeNotional, leverage))
-	s.adjustLocked(userID, quoteAsset, math.Neg(margin), writer)
-	s.adjustMargin(userID, quoteAsset, margin, writer)
+	s.adjustLocked(userID, quoteAsset, math.Neg(margin))
+	s.adjustMargin(userID, quoteAsset, margin)
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {

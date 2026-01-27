@@ -9,8 +9,7 @@ import (
 
 var (
 	orderBufPool   = sync.Pool{New: func() interface{} { return &bytesBuffer{data: make([]byte, 0, 128)} }}
-	balanceBufPool = sync.Pool{New: func() interface{} { return &bytesBuffer{data: make([]byte, 0, 64)} }}
-	posBufPool     = sync.Pool{New: func() interface{} { return &bytesBuffer{data: make([]byte, 0, 64)} }}
+	fundingBufPool = sync.Pool{New: func() interface{} { return &bytesBuffer{data: make([]byte, 0, 128)} }}
 )
 
 type bytesBuffer struct {
@@ -87,77 +86,45 @@ func DecodeOrder(data []byte) (*types.Order, error) {
 	return o, nil
 }
 
-func EncodeBalance(b *types.Balance) []byte {
-	buf := balanceBufPool.Get().(*bytesBuffer)
+func EncodeFunding(r *types.FundingRequest) []byte {
+	buf := fundingBufPool.Get().(*bytesBuffer)
 	buf.reset()
 
-	encFixed64(buf, uint64(b.UserID))
-	encString(buf, b.Asset)
-	encFixed(buf, b.Available)
-	encFixed(buf, b.Locked)
-	encFixed(buf, b.Margin)
+	encFixed64(buf, uint64(r.ID))
+	encFixed64(buf, uint64(r.UserID))
+	encString(buf, string(r.Type))
+	encString(buf, string(r.Status))
+	encString(buf, r.Asset)
+	encFixed(buf, r.Amount)
+	encString(buf, r.Destination)
+	encString(buf, string(r.CreatedBy))
+	encString(buf, r.Message)
+	encFixed64(buf, r.CreatedAt)
+	encFixed64(buf, r.UpdatedAt)
 
 	result := make([]byte, len(buf.data))
 	copy(result, buf.data)
-	balanceBufPool.Put(buf)
+	fundingBufPool.Put(buf)
 	return result
 }
 
-func DecodeBalance(data []byte) (*types.Balance, error) {
-	b := &types.Balance{}
+func DecodeFunding(data []byte) (*types.FundingRequest, error) {
+	r := &types.FundingRequest{}
 	off := 0
 
-	b.UserID = types.UserID(decFixed64(data, &off))
-	b.Asset = decString(data, &off)
+	r.ID = types.FundingID(decFixed64(data, &off))
+	r.UserID = types.UserID(decFixed64(data, &off))
+	r.Type = types.FundingType(decString(data, &off))
+	r.Status = types.FundingStatus(decString(data, &off))
+	r.Asset = decString(data, &off)
+	r.Amount = decFixed(data, &off)
+	r.Destination = decString(data, &off)
+	r.CreatedBy = types.FundingCreatedBy(decString(data, &off))
+	r.Message = decString(data, &off)
+	r.CreatedAt = decFixed64(data, &off)
+	r.UpdatedAt = decFixed64(data, &off)
 
-	b.Available = decFixed(data, &off)
-	b.Locked = decFixed(data, &off)
-	b.Margin = decFixed(data, &off)
-
-	return b, nil
-}
-
-func EncodePosition(p *types.Position) []byte {
-	buf := posBufPool.Get().(*bytesBuffer)
-	buf.reset()
-
-	encFixed64(buf, uint64(p.UserID))
-	encString(buf, p.Symbol)
-	encFixed(buf, p.Size)
-	encFixed(buf, p.EntryPrice)
-	encFixed(buf, p.ExitPrice)
-	enc8(buf, byte(p.Mode))
-	encFixed(buf, p.MM)
-	encFixed(buf, p.IM)
-	encFixed(buf, p.LiqPrice)
-	encFixed(buf, p.Leverage)
-
-	result := make([]byte, len(buf.data))
-	copy(result, buf.data)
-	posBufPool.Put(buf)
-	return result
-}
-
-func DecodePosition(data []byte) (*types.Position, error) {
-	p := &types.Position{}
-	off := 0
-
-	p.UserID = types.UserID(decFixed64(data, &off))
-	p.Symbol = decString(data, &off)
-
-	p.Size = decFixed(data, &off)
-	p.EntryPrice = decFixed(data, &off)
-	p.ExitPrice = decFixed(data, &off)
-
-	p.Mode = types.PositionMode(data[off])
-	off++
-
-	p.MM = decFixed(data, &off)
-	p.IM = decFixed(data, &off)
-	p.LiqPrice = decFixed(data, &off)
-	p.Leverage = decFixed(data, &off)
-
-	return p, nil
+	return r, nil
 }
 
 func encFixed64(buf *bytesBuffer, v uint64) {
@@ -200,7 +167,9 @@ func decFixed(data []byte, off *int) types.Price {
 	start := *off
 	*off += int(length)
 	var f types.Price
-	f.UnmarshalBinary(data[start:*off])
+	if err := f.UnmarshalBinary(data[start:*off]); err != nil {
+		return types.Price{}
+	}
 	return f
 }
 
