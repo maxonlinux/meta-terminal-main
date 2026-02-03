@@ -17,6 +17,9 @@ func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quanti
 	}
 	balance.Available = math.Sub(balance.Available, amount)
 	balance.Locked = math.Add(balance.Locked, amount)
+	if s.onBalance != nil {
+		s.onBalance(userID, asset, balance)
+	}
 	return nil
 }
 
@@ -28,6 +31,9 @@ func (s *Service) Release(userID types.UserID, asset string, amount types.Quanti
 func (s *Service) adjustAvailable(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Available = math.Add(balance.Available, delta)
+	if s.onBalance != nil {
+		s.onBalance(userID, asset, balance)
+	}
 }
 
 func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Quantity) {
@@ -36,11 +42,17 @@ func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Qu
 	if math.Sign(balance.Locked) < 0 {
 		balance.Locked = math.Zero
 	}
+	if s.onBalance != nil {
+		s.onBalance(userID, asset, balance)
+	}
 }
 
 func (s *Service) adjustMargin(userID types.UserID, asset string, delta types.Quantity) {
 	balance := s.balanceFor(userID, asset)
 	balance.Margin = math.Add(balance.Margin, delta)
+	if s.onBalance != nil {
+		s.onBalance(userID, asset, balance)
+	}
 }
 
 func (s *Service) balanceFor(userID types.UserID, asset string) *types.Balance {

@@ -1,11 +1,10 @@
 package events
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
+	"github.com/maxonlinux/meta-terminal-go/pkg/codec"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -29,14 +28,16 @@ type Event struct {
 }
 
 type OrderAmendedEvent struct {
-	UserID  types.UserID
-	OrderID types.OrderID
-	NewQty  types.Quantity
+	UserID    types.UserID
+	OrderID   types.OrderID
+	NewQty    types.Quantity
+	Timestamp uint64
 }
 
 type OrderCanceledEvent struct {
-	UserID  types.UserID
-	OrderID types.OrderID
+	UserID    types.UserID
+	OrderID   types.OrderID
+	Timestamp uint64
 }
 
 type TradeEvent struct {
@@ -74,127 +75,105 @@ type OrderTriggeredEvent struct {
 }
 
 func EncodeOrderPlaced(order *types.Order) Event {
-	return Event{Type: OrderPlaced, Data: persistence.EncodeOrder(order)}
+	return Event{Type: OrderPlaced, Data: codec.EncodeOrder(order)}
 }
 
 func DecodeOrderPlaced(data []byte) (*types.Order, error) {
-	return persistence.DecodeOrder(data)
+	return codec.DecodeOrder(data)
 }
 
 func EncodeOrderAmended(ev OrderAmendedEvent) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 40))
-	_ = binary.Write(buf, binary.BigEndian, ev.UserID)
-	_ = binary.Write(buf, binary.BigEndian, ev.OrderID)
 	qty, _ := ev.NewQty.MarshalBinary()
-	_ = binary.Write(buf, binary.BigEndian, uint32(len(qty)))
-	_, _ = buf.Write(qty)
-	return Event{Type: OrderAmended, Data: buf.Bytes()}
+	data := make([]byte, 0, 24+len(qty))
+	data = appendU64(data, uint64(ev.UserID))
+	data = appendU64(data, uint64(ev.OrderID))
+	data = appendU32(data, uint32(len(qty)))
+	data = append(data, qty...)
+	data = appendU64(data, ev.Timestamp)
+	return Event{Type: OrderAmended, Data: data}
 }
 
 func DecodeOrderAmended(data []byte) (OrderAmendedEvent, error) {
-	buf := bytes.NewReader(data)
-	var userID types.UserID
-	var id types.OrderID
-	if err := binary.Read(buf, binary.BigEndian, &userID); err != nil {
-		return OrderAmendedEvent{}, err
+	if len(data) < 20 {
+		return OrderAmendedEvent{}, errors.New("invalid order amended payload")
 	}
-	if err := binary.Read(buf, binary.BigEndian, &id); err != nil {
-		return OrderAmendedEvent{}, err
-	}
-	var qtyLen uint32
-	if err := binary.Read(buf, binary.BigEndian, &qtyLen); err != nil {
-		return OrderAmendedEvent{}, err
-	}
-	qtyBytes := make([]byte, qtyLen)
-	if _, err := buf.Read(qtyBytes); err != nil {
-		return OrderAmendedEvent{}, err
+	off := 0
+	userID := types.UserID(readU64(data, &off))
+	orderID := types.OrderID(readU64(data, &off))
+	qtyLen := int(readU32(data, &off))
+	if qtyLen < 0 || off+qtyLen+8 > len(data) {
+		return OrderAmendedEvent{}, errors.New("invalid order amended payload")
 	}
 	var qty types.Quantity
-	if err := qty.UnmarshalBinary(qtyBytes); err != nil {
+	if err := qty.UnmarshalBinary(data[off : off+qtyLen]); err != nil {
 		return OrderAmendedEvent{}, err
 	}
-	return OrderAmendedEvent{UserID: userID, OrderID: id, NewQty: qty}, nil
+	off += qtyLen
+	ts := readU64(data, &off)
+	return OrderAmendedEvent{UserID: userID, OrderID: orderID, NewQty: qty, Timestamp: ts}, nil
 }
 
 func EncodeOrderCanceled(ev OrderCanceledEvent) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 24))
-	_ = binary.Write(buf, binary.BigEndian, ev.UserID)
-	_ = binary.Write(buf, binary.BigEndian, ev.OrderID)
-	return Event{Type: OrderCanceled, Data: buf.Bytes()}
+	data := make([]byte, 0, 24)
+	data = appendU64(data, uint64(ev.UserID))
+	data = appendU64(data, uint64(ev.OrderID))
+	data = appendU64(data, ev.Timestamp)
+	return Event{Type: OrderCanceled, Data: data}
 }
 
 func DecodeOrderCanceled(data []byte) (OrderCanceledEvent, error) {
-	buf := bytes.NewReader(data)
-	var userID types.UserID
-	var id types.OrderID
-	if err := binary.Read(buf, binary.BigEndian, &userID); err != nil {
-		return OrderCanceledEvent{}, err
+	if len(data) < 24 {
+		return OrderCanceledEvent{}, errors.New("invalid order canceled payload")
 	}
-	if err := binary.Read(buf, binary.BigEndian, &id); err != nil {
-		return OrderCanceledEvent{}, err
-	}
-	return OrderCanceledEvent{UserID: userID, OrderID: id}, nil
+	off := 0
+	userID := types.UserID(readU64(data, &off))
+	orderID := types.OrderID(readU64(data, &off))
+	ts := readU64(data, &off)
+	return OrderCanceledEvent{UserID: userID, OrderID: orderID, Timestamp: ts}, nil
 }
 
 func EncodeTrade(ev TradeEvent) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 80))
-	_ = binary.Write(buf, binary.BigEndian, ev.TradeID)
-	_ = binary.Write(buf, binary.BigEndian, ev.MakerUserID)
-	_ = binary.Write(buf, binary.BigEndian, ev.TakerUserID)
-	_ = binary.Write(buf, binary.BigEndian, ev.MakerOrderID)
-	_ = binary.Write(buf, binary.BigEndian, ev.TakerOrderID)
-	buf.WriteByte(byte(ev.Category))
-	buf.WriteByte(byte(ev.TakerSide))
-	_ = binary.Write(buf, binary.BigEndian, ev.Timestamp)
-	writeString(buf, ev.Symbol)
 	priceBytes, _ := ev.Price.MarshalBinary()
 	qtyBytes, _ := ev.Quantity.MarshalBinary()
-	writeBytes(buf, priceBytes)
-	writeBytes(buf, qtyBytes)
-	return Event{Type: TradeExecuted, Data: buf.Bytes()}
+	data := make([]byte, 0, 64+len(ev.Symbol)+len(priceBytes)+len(qtyBytes))
+	data = appendU64(data, uint64(ev.TradeID))
+	data = appendU64(data, uint64(ev.MakerUserID))
+	data = appendU64(data, uint64(ev.TakerUserID))
+	data = appendU64(data, uint64(ev.MakerOrderID))
+	data = appendU64(data, uint64(ev.TakerOrderID))
+	data = append(data, byte(ev.Category), byte(ev.TakerSide))
+	data = appendU64(data, ev.Timestamp)
+	data = appendString(data, ev.Symbol)
+	data = appendBytes(data, priceBytes)
+	data = appendBytes(data, qtyBytes)
+	return Event{Type: TradeExecuted, Data: data}
 }
 
 func DecodeTrade(data []byte) (TradeEvent, error) {
-	buf := bytes.NewReader(data)
 	var ev TradeEvent
-	if err := binary.Read(buf, binary.BigEndian, &ev.TradeID); err != nil {
-		return ev, err
+	if len(data) < 42 {
+		return ev, errors.New("invalid trade payload")
 	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.MakerUserID); err != nil {
-		return ev, err
-	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.TakerUserID); err != nil {
-		return ev, err
-	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.MakerOrderID); err != nil {
-		return ev, err
-	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.TakerOrderID); err != nil {
-		return ev, err
-	}
-	category, err := buf.ReadByte()
-	if err != nil {
-		return ev, err
-	}
-	TakerSide, err := buf.ReadByte()
-	if err != nil {
-		return ev, err
-	}
-	ev.Category = int8(category)
-	ev.TakerSide = int8(TakerSide)
-	if err := binary.Read(buf, binary.BigEndian, &ev.Timestamp); err != nil {
-		return ev, err
-	}
-	symbol, err := readString(buf)
+	off := 0
+	ev.TradeID = types.TradeID(readU64(data, &off))
+	ev.MakerUserID = types.UserID(readU64(data, &off))
+	ev.TakerUserID = types.UserID(readU64(data, &off))
+	ev.MakerOrderID = types.OrderID(readU64(data, &off))
+	ev.TakerOrderID = types.OrderID(readU64(data, &off))
+	ev.Category = int8(data[off])
+	ev.TakerSide = int8(data[off+1])
+	off += 2
+	ev.Timestamp = readU64(data, &off)
+	symbol, err := readStringAt(data, &off)
 	if err != nil {
 		return ev, err
 	}
 	ev.Symbol = symbol
-	priceBytes, err := readBytes(buf)
+	priceBytes, err := readBytesAt(data, &off)
 	if err != nil {
 		return ev, err
 	}
-	qtyBytes, err := readBytes(buf)
+	qtyBytes, err := readBytesAt(data, &off)
 	if err != nil {
 		return ev, err
 	}
@@ -208,26 +187,27 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 }
 
 func EncodeLeverage(ev LeverageEvent) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	_ = binary.Write(buf, binary.BigEndian, ev.UserID)
-	writeString(buf, ev.Symbol)
 	lev, _ := ev.Leverage.MarshalBinary()
-	writeBytes(buf, lev)
-	return Event{Type: LeverageSet, Data: buf.Bytes()}
+	data := make([]byte, 0, 16+len(ev.Symbol)+len(lev))
+	data = appendU64(data, uint64(ev.UserID))
+	data = appendString(data, ev.Symbol)
+	data = appendBytes(data, lev)
+	return Event{Type: LeverageSet, Data: data}
 }
 
 func DecodeLeverage(data []byte) (LeverageEvent, error) {
-	buf := bytes.NewReader(data)
 	var ev LeverageEvent
-	if err := binary.Read(buf, binary.BigEndian, &ev.UserID); err != nil {
-		return ev, err
+	if len(data) < 8 {
+		return ev, errors.New("invalid leverage payload")
 	}
-	symbol, err := readString(buf)
+	off := 0
+	ev.UserID = types.UserID(readU64(data, &off))
+	symbol, err := readStringAt(data, &off)
 	if err != nil {
 		return ev, err
 	}
 	ev.Symbol = symbol
-	levBytes, err := readBytes(buf)
+	levBytes, err := readBytesAt(data, &off)
 	if err != nil {
 		return ev, err
 	}
@@ -238,79 +218,112 @@ func DecodeLeverage(data []byte) (LeverageEvent, error) {
 }
 
 func EncodeFundingCreated(req types.FundingRequest) Event {
-	data := persistence.EncodeFunding(&req)
+	data := codec.EncodeFunding(&req)
 	return Event{Type: FundingCreated, Data: data}
 }
 
 func DecodeFundingCreated(data []byte) (*types.FundingRequest, error) {
-	return persistence.DecodeFunding(data)
+	return codec.DecodeFunding(data)
 }
 
 func EncodeFundingStatus(t Type, id types.FundingID) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	_ = binary.Write(buf, binary.BigEndian, id)
-	return Event{Type: t, Data: buf.Bytes()}
+	data := make([]byte, 0, 8)
+	data = appendU64(data, uint64(id))
+	return Event{Type: t, Data: data}
 }
 
 func DecodeFundingStatus(data []byte) (FundingStatusEvent, error) {
-	buf := bytes.NewReader(data)
-	var id types.FundingID
-	if err := binary.Read(buf, binary.BigEndian, &id); err != nil {
-		return FundingStatusEvent{}, err
+	if len(data) < 8 {
+		return FundingStatusEvent{}, errors.New("invalid funding status payload")
 	}
+	off := 0
+	id := types.FundingID(readU64(data, &off))
 	return FundingStatusEvent{FundingID: id}, nil
 }
 
 func EncodeOrderTriggered(ev OrderTriggeredEvent) Event {
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	_ = binary.Write(buf, binary.BigEndian, ev.UserID)
-	_ = binary.Write(buf, binary.BigEndian, ev.OrderID)
-	_ = binary.Write(buf, binary.BigEndian, ev.Timestamp)
-	return Event{Type: OrderTriggered, Data: buf.Bytes()}
+	data := make([]byte, 0, 24)
+	data = appendU64(data, uint64(ev.UserID))
+	data = appendU64(data, uint64(ev.OrderID))
+	data = appendU64(data, ev.Timestamp)
+	return Event{Type: OrderTriggered, Data: data}
 }
 
 func DecodeOrderTriggered(data []byte) (OrderTriggeredEvent, error) {
-	buf := bytes.NewReader(data)
-	var ev OrderTriggeredEvent
-	if err := binary.Read(buf, binary.BigEndian, &ev.UserID); err != nil {
-		return ev, err
+	if len(data) < 24 {
+		return OrderTriggeredEvent{}, errors.New("invalid order triggered payload")
 	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.OrderID); err != nil {
-		return ev, err
-	}
-	if err := binary.Read(buf, binary.BigEndian, &ev.Timestamp); err != nil {
-		return ev, err
-	}
-	return ev, nil
+	off := 0
+	userID := types.UserID(readU64(data, &off))
+	orderID := types.OrderID(readU64(data, &off))
+	ts := readU64(data, &off)
+	return OrderTriggeredEvent{UserID: userID, OrderID: orderID, Timestamp: ts}, nil
 }
 
-func writeString(buf *bytes.Buffer, value string) {
-	writeBytes(buf, []byte(value))
+func appendU64(dst []byte, v uint64) []byte {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], v)
+	return append(dst, buf[:]...)
 }
 
-func writeBytes(buf *bytes.Buffer, value []byte) {
-	_ = binary.Write(buf, binary.BigEndian, uint32(len(value)))
-	_, _ = buf.Write(value)
+func appendU32(dst []byte, v uint32) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], v)
+	return append(dst, buf[:]...)
 }
 
-func readString(buf *bytes.Reader) (string, error) {
-	b, err := readBytes(buf)
-	return string(b), err
+func appendString(dst []byte, s string) []byte {
+	dst = appendU32(dst, uint32(len(s)))
+	return append(dst, s...)
 }
 
-func readBytes(buf *bytes.Reader) ([]byte, error) {
-	var size uint32
-	if err := binary.Read(buf, binary.BigEndian, &size); err != nil {
-		return nil, err
+func appendBytes(dst []byte, data []byte) []byte {
+	dst = appendU32(dst, uint32(len(data)))
+	return append(dst, data...)
+}
+
+func readU64(data []byte, off *int) uint64 {
+	v := binary.BigEndian.Uint64(data[*off : *off+8])
+	*off += 8
+	return v
+}
+
+func readU32(data []byte, off *int) uint32 {
+	v := binary.BigEndian.Uint32(data[*off : *off+4])
+	*off += 4
+	return v
+}
+
+func readStringAt(data []byte, off *int) (string, error) {
+	if *off+4 > len(data) {
+		return "", errors.New("invalid string payload")
 	}
-	if size == 0 {
+	length := int(readU32(data, off))
+	if length == 0 {
+		return "", nil
+	}
+	if *off+length > len(data) {
+		return "", errors.New("invalid string payload")
+	}
+	start := *off
+	*off += length
+	return string(data[start:*off]), nil
+}
+
+func readBytesAt(data []byte, off *int) ([]byte, error) {
+	if *off+4 > len(data) {
+		return nil, errors.New("invalid bytes payload")
+	}
+	length := int(readU32(data, off))
+	if length == 0 {
 		return nil, nil
 	}
-	data := make([]byte, size)
-	if _, err := buf.Read(data); err != nil {
-		return nil, err
+	if *off+length > len(data) {
+		return nil, errors.New("invalid bytes payload")
 	}
-	return data, nil
+	start := *off
+	*off += length
+	return data[start:*off], nil
 }
 
 func DecodeEvent(event Event) (interface{}, error) {

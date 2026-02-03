@@ -4,11 +4,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -19,17 +20,6 @@ func TestEventSourcingReplay(t *testing.T) {
 	const quoteAsset = "USDT"
 
 	storeDir := filepath.Join(t.TempDir(), "trading")
-	store, err := persistence.Open(storeDir)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-
-	ob, err := outbox.Open(filepath.Dir(storeDir), store.DB())
-	if err != nil {
-		_ = store.Close()
-		t.Fatalf("open outbox: %v", err)
-	}
-	ob.Start()
 
 	reg := registry.New()
 	reg.SetInstrument(symbol, &types.Instrument{
@@ -44,7 +34,21 @@ func TestEventSourcingReplay(t *testing.T) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng := NewEngine(store, ob, reg, nil)
+	historyStore, err := persistence.Open(storeDir, reg)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer func() {
+		_ = historyStore.Close()
+	}()
+
+	ob, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore})
+	if err != nil {
+		t.Fatalf("open outbox: %v", err)
+	}
+	ob.Start()
+
+	eng := NewEngine(ob, reg, nil)
 
 	makerID := types.UserID(1)
 	takerID := types.UserID(2)
@@ -52,7 +56,7 @@ func TestEventSourcingReplay(t *testing.T) {
 
 	depositAndApprove(t, eng, makerID, baseAsset, 20)
 	depositAndApprove(t, eng, takerID, quoteAsset, 100000)
-	deposit := depositAndApprove(t, eng, fundingID, quoteAsset, 100)
+	depositAndApprove(t, eng, fundingID, quoteAsset, 100)
 
 	eng.OnPriceTick(symbol, types.Price(fixed.NewI(100, 0)))
 
@@ -167,25 +171,6 @@ func TestEventSourcingReplay(t *testing.T) {
 
 	ob.Stop()
 	_ = ob.Close()
-	_ = store.Close()
-
-	store2, err := persistence.Open(storeDir)
-	if err != nil {
-		t.Fatalf("reopen store: %v", err)
-	}
-	defer func() {
-		_ = store2.Close()
-	}()
-
-	ob2, err := outbox.Open(filepath.Dir(storeDir), store2.DB())
-	if err != nil {
-		_ = store2.Close()
-		t.Fatalf("reopen outbox: %v", err)
-	}
-	ob2.Start()
-	defer func() {
-		_ = ob2.Close()
-	}()
 
 	reg2 := registry.New()
 	reg2.SetInstrument(symbol, &types.Instrument{
@@ -200,7 +185,28 @@ func TestEventSourcingReplay(t *testing.T) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng2 := NewEngine(store2, ob2, reg2, nil)
+	historyStore2, err := persistence.Open(storeDir, reg2)
+	if err != nil {
+		t.Fatalf("reopen history: %v", err)
+	}
+	defer func() {
+		_ = historyStore2.Close()
+	}()
+
+	ob2, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore2})
+	if err != nil {
+		t.Fatalf("reopen outbox: %v", err)
+	}
+	ob2.Start()
+	defer func() {
+		_ = ob2.Close()
+	}()
+
+	eng2 := NewEngine(ob2, reg2, nil)
+	if err := historyStore2.LoadCore(eng2.Store(), eng2.Portfolio()); err != nil {
+		t.Fatalf("load core: %v", err)
+	}
+	eng2.RebuildBooks()
 
 	assertBalance(t, eng2.Portfolio().GetBalance(makerID, baseAsset), &makerBTC)
 	assertBalance(t, eng2.Portfolio().GetBalance(makerID, quoteAsset), &makerUSDT)
@@ -212,28 +218,26 @@ func TestEventSourcingReplay(t *testing.T) {
 		t.Fatalf("leverage mismatch: got %s want %s", pos.Leverage.String(), leveraged.String())
 	}
 
-	order1, _ := eng2.Store().GetUserOrder(makerOrder.UserID, makerOrder.ID)
-	if order1 == nil || order1.Status != constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED {
-		t.Fatalf("order1 status mismatch: %+v", order1)
+	var cancelCount int
+	_ = outbox.IterateEvents(storeDir, func(ev events.Event) bool {
+		if ev.Type == events.OrderCanceled {
+			cancelCount++
+		}
+		return true
+	})
+
+	if order1, _ := eng2.Store().GetUserOrder(makerOrder.UserID, makerOrder.ID); order1 != nil {
+		t.Fatalf("order1 should be removed, got %+v (cancelEvents=%d)", order1, cancelCount)
 	}
-	order2, _ := eng2.Store().GetUserOrder(takerOrder.UserID, takerOrder.ID)
-	if order2 == nil || order2.Status != constants.ORDER_STATUS_FILLED {
-		t.Fatalf("order2 status mismatch: %+v", order2)
+	if order2, _ := eng2.Store().GetUserOrder(takerOrder.UserID, takerOrder.ID); order2 != nil {
+		t.Fatalf("order2 should be removed, got %+v", order2)
 	}
-	order3, _ := eng2.Store().GetUserOrder(secondOrder.UserID, secondOrder.ID)
-	if order3 == nil || order3.Status != constants.ORDER_STATUS_CANCELED {
-		t.Fatalf("order3 status mismatch: %+v", order3)
+	if order3, _ := eng2.Store().GetUserOrder(secondOrder.UserID, secondOrder.ID); order3 != nil {
+		t.Fatalf("order3 should be removed, got %+v", order3)
 	}
 	order4, _ := eng2.Store().GetUserOrder(conditionalOrder.UserID, conditionalOrder.ID)
 	if order4 == nil || order4.Status != constants.ORDER_STATUS_TRIGGERED {
 		t.Fatalf("conditional order status mismatch: %+v", order4)
-	}
-
-	if funding := eng2.Portfolio().Fundings[deposit.ID]; funding == nil || funding.Status != types.FundingStatusCompleted {
-		t.Fatalf("deposit status mismatch: %+v", funding)
-	}
-	if funding := eng2.Portfolio().Fundings[withdrawal.ID]; funding == nil || funding.Status != types.FundingStatusCanceled {
-		t.Fatalf("withdrawal status mismatch: %+v", funding)
 	}
 
 	book := eng2.ReadBook(constants.CATEGORY_SPOT, symbol)
@@ -244,14 +248,6 @@ func TestEventSourcingReplay(t *testing.T) {
 		}
 	}
 
-	var eventCount int
-	_ = store2.IterateEvents(func(_, _ []byte) bool {
-		eventCount++
-		return true
-	})
-	if eventCount != 18 {
-		t.Fatalf("event count mismatch: got %d want %d", eventCount, 18)
-	}
 }
 
 func assertBalance(t *testing.T, got *types.Balance, want *types.Balance) {

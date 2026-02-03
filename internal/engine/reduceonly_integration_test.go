@@ -24,12 +24,13 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng := NewEngine(nil, nil, reg, nil)
+	eng := NewEngine(nil, reg, nil)
 
 	order1 := eng.store.Build(
 		types.UserID(1),
 		"BTCUSDT",
 		constants.CATEGORY_LINEAR,
+		constants.ORDER_ORIGIN_USER,
 		constants.ORDER_SIDE_SELL,
 		constants.ORDER_TYPE_LIMIT,
 		constants.TIF_GTC,
@@ -44,6 +45,7 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		types.UserID(1),
 		"BTCUSDT",
 		constants.CATEGORY_LINEAR,
+		constants.ORDER_ORIGIN_USER,
 		constants.ORDER_SIDE_SELL,
 		constants.ORDER_TYPE_LIMIT,
 		constants.TIF_GTC,

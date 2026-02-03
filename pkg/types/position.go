@@ -18,4 +18,8 @@ type Position struct {
 	IM         Quantity     // Initial Margin
 	LiqPrice   Price        // Liquidation price
 	Leverage   Leverage     // Leverage (2, 5, 10, ... 100)
+	TakeProfit Price
+	StopLoss   Price
+	TPOrderID  OrderID
+	SLOrderID  OrderID
 }

@@ -41,6 +41,22 @@ func (s *Service) removeConditional(order *types.Order) {
 	}
 }
 
+func (s *Service) removeOrder(order *types.Order) {
+	if order == nil {
+		return
+	}
+	s.removeReduceOnly(order)
+	s.removeConditional(order)
+	userOrders := s.byUser[order.UserID]
+	if userOrders != nil {
+		delete(userOrders, order.ID)
+		if len(userOrders) == 0 {
+			delete(s.byUser, order.UserID)
+		}
+	}
+	atomic.AddInt64(&s.count, -1)
+}
+
 func (s *Service) indexOrder(order *types.Order) {
 	if order.ReduceOnly {
 		s.reduceonly.Add(order)
@@ -54,6 +70,7 @@ func newOrder(
 	userID types.UserID,
 	symbol string,
 	category int8,
+	origin int8,
 	side int8,
 	otype int8,
 	tif int8,
@@ -70,6 +87,10 @@ func newOrder(
 	o.UserID = userID
 	o.Symbol = symbol
 	o.Category = category
+	if origin != constants.ORDER_ORIGIN_SYSTEM {
+		origin = constants.ORDER_ORIGIN_USER
+	}
+	o.Origin = origin
 	o.Side = side
 	o.Type = otype
 	o.TIF = tif
@@ -121,6 +142,7 @@ func (s *Service) Build(
 	userID types.UserID,
 	symbol string,
 	category int8,
+	origin int8,
 	side int8,
 	otype int8,
 	tif int8,
@@ -136,6 +158,7 @@ func (s *Service) Build(
 		userID,
 		symbol,
 		category,
+		origin,
 		side,
 		otype,
 		tif,
@@ -162,6 +185,7 @@ func (s *Service) Create(
 	userID types.UserID,
 	symbol string,
 	category int8,
+	origin int8,
 	side int8,
 	otype int8,
 	tif int8,
@@ -177,6 +201,7 @@ func (s *Service) Create(
 		userID,
 		symbol,
 		category,
+		origin,
 		side,
 		otype,
 		tif,
@@ -265,10 +290,32 @@ func (s *Service) Cancel(userID types.UserID, id types.OrderID) error {
 	now := utils.NowNano()
 	order.UpdatedAt = now
 
-	s.removeReduceOnly(order)
-	s.removeConditional(order)
+	s.removeOrder(order)
 
 	return nil
+}
+
+func (s *Service) CancelWithDetails(userID types.UserID, id types.OrderID) (*types.Order, error) {
+	order, ok := s.GetUserOrder(userID, id)
+	if !ok {
+		return nil, errors.New("order not found")
+	}
+
+	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
+		return nil, errors.New("only active orders can be canceled")
+	}
+
+	if order.IsConditional {
+		order.Status = constants.ORDER_STATUS_DEACTIVATED
+	} else if !order.Filled.IsZero() {
+		order.Status = constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED
+	} else {
+		order.Status = constants.ORDER_STATUS_CANCELED
+	}
+
+	order.UpdatedAt = utils.NowNano()
+	s.removeOrder(order)
+	return order, nil
 }
 
 func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity) error {
@@ -288,8 +335,7 @@ func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity
 	}
 
 	order.Status = constants.ORDER_STATUS_FILLED
-
-	s.removeReduceOnly(order)
+	s.removeOrder(order)
 
 	return nil
 }

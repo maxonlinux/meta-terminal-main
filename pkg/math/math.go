@@ -33,6 +33,13 @@ func Abs(n int64) int64 {
 	return n
 }
 
+func AbsFixed(n fixed.Fixed) fixed.Fixed {
+	if n.Sign() < 0 {
+		return Zero.Sub(n)
+	}
+	return n
+}
+
 func Max(a, b fixed.Fixed) fixed.Fixed {
 	if a.Cmp(b) >= 0 {
 		return a

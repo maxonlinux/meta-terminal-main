@@ -26,6 +26,9 @@ const (
 	ORDER_STATUS_TRIGGERED                 = 6
 	ORDER_STATUS_DEACTIVATED               = 7
 
+	ORDER_ORIGIN_USER   = 0
+	ORDER_ORIGIN_SYSTEM = 1
+
 	BUCKET_AVAILABLE = 0
 	BUCKET_LOCKED    = 1
 	BUCKET_MARGIN    = 2
@@ -79,6 +82,8 @@ var (
 	ErrLeverageTooHigh = errors.New("leverage would cause immediate liquidation")
 	// ErrPriceUnavailable indicates required pricing data is missing.
 	ErrPriceUnavailable = errors.New("price unavailable")
+	// ErrNoPosition indicates there is no position to update.
+	ErrNoPosition = errors.New("no position")
 
 	// Instrument validation errors
 	ErrPriceOutOfBounds   = errors.New("price out of instrument bounds")

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/query"
 )
 
@@ -66,11 +67,19 @@ type OrderBookResponse struct {
 
 func (h *MarketHandler) OrderBook(c echo.Context) error {
 	symbol := c.QueryParam("symbol")
+	categoryParam := c.QueryParam("category")
 	if symbol == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "symbol is required"})
 	}
+	if categoryParam == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "category is required"})
+	}
+	category, err := shared.ParseCategoryParam(categoryParam)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
 
-	book := h.query.GetOrderBook(symbol)
+	book := h.query.GetOrderBook(category, symbol, 0)
 	if book == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order book not found"})
 	}
@@ -89,8 +98,8 @@ func (h *MarketHandler) OrderBook(c echo.Context) error {
 type TradeResponse struct {
 	ID        uint64 `json:"id"`
 	Symbol    string `json:"symbol"`
-	Category  int8   `json:"category"`
-	Side      int8   `json:"side"`
+	Category  string `json:"category"`
+	Side      string `json:"side"`
 	Price     string `json:"price"`
 	Quantity  string `json:"quantity"`
 	IsMaker   bool   `json:"isMaker"`
@@ -99,19 +108,27 @@ type TradeResponse struct {
 
 func (h *MarketHandler) Trades(c echo.Context) error {
 	symbol := c.QueryParam("symbol")
+	categoryParam := c.QueryParam("category")
 	if symbol == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "symbol is required"})
 	}
+	if categoryParam == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "category is required"})
+	}
+	category, err := shared.ParseCategoryParam(categoryParam)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
 
-	trades := h.query.GetPublicTrades(symbol)
+	trades := h.query.GetPublicTrades(category, symbol)
 
 	resp := make([]TradeResponse, len(trades))
 	for i, t := range trades {
 		resp[i] = TradeResponse{
 			ID:        uint64(t.ID),
 			Symbol:    t.Symbol,
-			Category:  t.Category,
-			Side:      t.Side,
+			Category:  shared.CategoryToString(t.Category),
+			Side:      shared.SideToString(t.Side),
 			Price:     t.Price.String(),
 			Quantity:  t.Quantity.String(),
 			IsMaker:   t.IsMaker,

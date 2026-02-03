@@ -4,6 +4,7 @@ type PlaceOrderRequest struct {
 	UserID         UserID
 	Symbol         string
 	Category       int8
+	Origin         int8
 	Side           int8
 	Type           int8
 	TIF            int8
@@ -22,6 +23,7 @@ type Order struct {
 	UserID   UserID
 	Symbol   string
 	Category int8 // 0=SPOT, 1=LINEAR
+	Origin   int8 // 0=USER, 1=SYSTEM
 
 	Side int8 // 0=BUY, 1=SELL
 	Type int8 // 0=LIMIT, 1=MARKET

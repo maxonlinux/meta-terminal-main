@@ -11,9 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 )
 
 const (
@@ -27,29 +25,30 @@ type Writer interface {
 	Record(events.Event) error
 }
 
+type EventSink interface {
+	Apply(events []events.Event) error
+}
+
 type Outbox struct {
-	db       *badger.DB
 	log      *appendLog
 	worker   *worker
 	tailPath string
 	seq      uint64
-	eventSeq uint64
+	sink     EventSink
 }
 
-func Open(dir string, db *badger.DB) (*Outbox, error) {
-	return OpenWithOptions(dir, db, Options{})
+func Open(dir string) (*Outbox, error) {
+	return OpenWithOptions(dir, Options{})
 }
 
 const defaultQueueSize = 1 << 18
 
 type Options struct {
 	QueueSize int
+	EventSink EventSink
 }
 
-func OpenWithOptions(dir string, db *badger.DB, opts Options) (*Outbox, error) {
-	if db == nil {
-		return nil, errors.New("outbox requires badger db")
-	}
+func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -68,26 +67,21 @@ func OpenWithOptions(dir string, db *badger.DB, opts Options) (*Outbox, error) {
 		return nil, err
 	}
 
-	newTail, err := replayLog(db, log, tail)
+	newTail, err := replayLog(log, tail, opts.EventSink, tailPath)
 	if err != nil {
 		_ = log.Close()
 		return nil, err
 	}
 
-	if err := storeTail(tailPath, newTail); err != nil {
-		_ = log.Close()
-		return nil, err
-	}
-
 	queue := newQueue(opts)
-	worker := newWorker(db, log, tailPath, newTail, queue)
+	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink)
 
 	return &Outbox{
-		db:       db,
 		log:      log,
 		worker:   worker,
 		tailPath: tailPath,
 		seq:      uint64(time.Now().UnixNano()),
+		sink:     opts.EventSink,
 	}, nil
 }
 
@@ -96,7 +90,7 @@ func (o *Outbox) Begin() *Tx {
 		return nil
 	}
 	txID := atomic.AddUint64(&o.seq, 1)
-	offset, err := o.log.Append(logRecordBegin, txID, nil, nil)
+	offset, err := o.log.Append(logRecordBegin, txID, nil)
 	if err != nil {
 		return nil
 	}
@@ -149,14 +143,12 @@ func (t *Tx) Record(event events.Event) error {
 	if t == nil || t.outbox == nil || t.closed {
 		return errors.New("transaction closed")
 	}
-	seq := atomic.AddUint64(&t.outbox.eventSeq, 1)
-	key := persistence.EventKey(seq)
 	data := append([]byte{byte(event.Type)}, event.Data...)
-	offset, err := t.outbox.log.Append(logRecordData, t.id, key, data)
+	offset, err := t.outbox.log.Append(logRecordData, t.id, data)
 	if err != nil {
 		return err
 	}
-	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, key: key, value: data, endOffset: offset})
+	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, value: data, endOffset: offset})
 	return nil
 }
 
@@ -164,7 +156,7 @@ func (t *Tx) Commit() error {
 	if t == nil || t.outbox == nil || t.closed {
 		return errors.New("transaction closed")
 	}
-	offset, err := t.outbox.log.Append(logRecordCommit, t.id, nil, nil)
+	offset, err := t.outbox.log.Append(logRecordCommit, t.id, nil)
 	if err == nil {
 		t.outbox.worker.Enqueue(record{recordType: logRecordCommit, txID: t.id, endOffset: offset})
 	}
@@ -176,7 +168,7 @@ func (t *Tx) Abort() error {
 	if t == nil || t.outbox == nil || t.closed {
 		return errors.New("transaction closed")
 	}
-	offset, err := t.outbox.log.Append(logRecordAbort, t.id, nil, nil)
+	offset, err := t.outbox.log.Append(logRecordAbort, t.id, nil)
 	if err == nil {
 		t.outbox.worker.Enqueue(record{recordType: logRecordAbort, txID: t.id, endOffset: offset})
 	}
@@ -190,7 +182,6 @@ type appendLog struct {
 	writer      *bufio.Writer
 	pending     int
 	size        int64
-	flushEvery  int
 	flushTicker *time.Ticker
 	quit        chan struct{}
 }
@@ -210,7 +201,6 @@ func openAppendLog(path string) (*appendLog, error) {
 		writer:      bufio.NewWriterSize(file, 1<<20),
 		pending:     0,
 		size:        info.Size(),
-		flushEvery:  1000,
 		flushTicker: time.NewTicker(100 * time.Millisecond),
 		quit:        make(chan struct{}),
 	}
@@ -218,7 +208,7 @@ func openAppendLog(path string) (*appendLog, error) {
 	return log, nil
 }
 
-func (l *appendLog) Append(recordType byte, txID uint64, key, value []byte) (int64, error) {
+func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (int64, error) {
 	if l == nil {
 		return 0, errors.New("log is closed")
 	}
@@ -236,22 +226,11 @@ func (l *appendLog) Append(recordType byte, txID uint64, key, value []byte) (int
 	}
 	l.size += int64(n)
 
-	n = binary.PutUvarint(buf[:], uint64(len(key)))
-	if _, err := l.writer.Write(buf[:n]); err != nil {
-		return l.size, err
-	}
-	l.size += int64(n)
-
 	n = binary.PutUvarint(buf[:], uint64(len(value)))
 	if _, err := l.writer.Write(buf[:n]); err != nil {
 		return l.size, err
 	}
 	l.size += int64(n)
-
-	if _, err := l.writer.Write(key); err != nil {
-		return l.size, err
-	}
-	l.size += int64(len(key))
 
 	if _, err := l.writer.Write(value); err != nil {
 		return l.size, err
@@ -302,7 +281,7 @@ func (l *appendLog) Close() error {
 	return l.file.Close()
 }
 
-func (l *appendLog) ResetIfFullyApplied(offset int64) (int64, error) {
+func (l *appendLog) TruncateIfFullyApplied(offset int64) (int64, error) {
 	if l == nil {
 		return offset, errors.New("log is closed")
 	}
@@ -328,13 +307,11 @@ func (l *appendLog) ResetIfFullyApplied(offset int64) (int64, error) {
 type record struct {
 	recordType byte
 	txID       uint64
-	key        []byte
 	value      []byte
 	endOffset  int64
 }
 
 type worker struct {
-	db         *badger.DB
 	log        *appendLog
 	tailPath   string
 	queue      queue
@@ -342,16 +319,17 @@ type worker struct {
 	startOnce  sync.Once
 	stopOnce   sync.Once
 	lastOffset int64
+	sink       EventSink
 }
 
-func newWorker(db *badger.DB, log *appendLog, tailPath string, offset int64, queue queue) *worker {
+func newWorker(log *appendLog, tailPath string, offset int64, queue queue, sink EventSink) *worker {
 	return &worker{
-		db:         db,
 		log:        log,
 		tailPath:   tailPath,
 		queue:      queue,
 		done:       make(chan struct{}),
 		lastOffset: offset,
+		sink:       sink,
 	}
 }
 
@@ -382,26 +360,32 @@ func (w *worker) run() {
 	lastOffset := w.lastOffset
 	pending := make(map[uint64][]record)
 
-	applyTx := func(txID uint64, offset int64) {
+	applyTx := func(txID uint64, offset int64) error {
 		records := pending[txID]
-		batch := w.db.NewWriteBatch()
-		for i := range records {
-			rec := records[i]
-			if rec.key == nil {
-				continue
-			}
-			_ = batch.Set(rec.key, rec.value)
-		}
-		_ = batch.Flush()
-		batch.Cancel()
 		delete(pending, txID)
 		lastOffset = offset
-		_ = storeTail(w.tailPath, lastOffset)
+		if w.sink != nil && len(records) > 0 {
+			eventsBatch := make([]events.Event, 0, len(records))
+			for i := range records {
+				value := records[i].value
+				if len(value) == 0 {
+					continue
+				}
+				eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+			}
+			if len(eventsBatch) > 0 {
+				if err := w.sink.Apply(eventsBatch); err != nil {
+					return err
+				}
+			}
+		}
 		if w.log != nil && len(pending) == 0 {
-			if newOffset, err := w.log.ResetIfFullyApplied(lastOffset); err == nil {
+			if newOffset, err := w.log.TruncateIfFullyApplied(lastOffset); err == nil {
 				lastOffset = newOffset
 			}
 		}
+		_ = storeTail(w.tailPath, lastOffset)
+		return nil
 	}
 
 	for {
@@ -420,7 +404,9 @@ func (w *worker) run() {
 		case logRecordData:
 			pending[rec.txID] = append(pending[rec.txID], rec)
 		case logRecordCommit:
-			applyTx(rec.txID, lastOffset)
+			if err := applyTx(rec.txID, lastOffset); err != nil {
+				return
+			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
 			_ = storeTail(w.tailPath, lastOffset)
@@ -451,11 +437,10 @@ func storeTail(path string, offset int64) error {
 type logRecord struct {
 	recordType byte
 	txID       uint64
-	key        []byte
 	value      []byte
 }
 
-func replayLog(db *badger.DB, log *appendLog, offset int64) (int64, error) {
+func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (int64, error) {
 	if log == nil {
 		return offset, nil
 	}
@@ -486,6 +471,28 @@ func replayLog(db *badger.DB, log *appendLog, offset int64) (int64, error) {
 	lastOffset := offset
 	appliedOffset := offset
 
+	applyTx := func(txID uint64) error {
+		records := pending[txID]
+		delete(pending, txID)
+		appliedOffset = lastOffset
+		if sink != nil && len(records) > 0 {
+			eventsBatch := make([]events.Event, 0, len(records))
+			for i := range records {
+				value := records[i].value
+				if len(value) == 0 {
+					continue
+				}
+				eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+			}
+			if len(eventsBatch) > 0 {
+				if err := sink.Apply(eventsBatch); err != nil {
+					return err
+				}
+			}
+		}
+		return storeTail(tailPath, appliedOffset)
+	}
+
 	for {
 		rec, size, err := readLogRecord(reader)
 		if err == io.EOF {
@@ -503,39 +510,26 @@ func replayLog(db *badger.DB, log *appendLog, offset int64) (int64, error) {
 		case logRecordData:
 			pending[rec.txID] = append(pending[rec.txID], rec)
 		case logRecordCommit:
-			records := pending[rec.txID]
-			batch := db.NewWriteBatch()
-			for i := range records {
-				r := records[i]
-				if r.key == nil {
-					continue
-				}
-				if err := batch.Set(r.key, r.value); err != nil {
-					batch.Cancel()
-					return lastOffset, err
-				}
-			}
-			if err := batch.Flush(); err != nil {
-				batch.Cancel()
+			if err := applyTx(rec.txID); err != nil {
 				return lastOffset, err
 			}
-			batch.Cancel()
-			delete(pending, rec.txID)
-			appliedOffset = lastOffset
 		case logRecordAbort:
 			delete(pending, rec.txID)
 			appliedOffset = lastOffset
-		}
-	}
-
-	if log != nil {
-		if len(pending) == 0 {
-			if offset, err := log.ResetIfFullyApplied(appliedOffset); err == nil {
-				appliedOffset = offset
+			if err := storeTail(tailPath, appliedOffset); err != nil {
+				return lastOffset, err
 			}
 		}
 	}
 
+	if len(pending) == 0 {
+		if newOffset, err := log.TruncateIfFullyApplied(appliedOffset); err == nil {
+			appliedOffset = newOffset
+		}
+	}
+	if err := storeTail(tailPath, appliedOffset); err != nil {
+		return appliedOffset, err
+	}
 	return appliedOffset, nil
 }
 
@@ -550,27 +544,18 @@ func readLogRecord(r *bufio.Reader) (logRecord, int, error) {
 		return logRecord{}, 1 + txBytes, err
 	}
 
-	keyLen, keyBytes, err := readUvarint(r)
-	if err != nil {
-		return logRecord{}, 1 + txBytes + keyBytes, err
-	}
 	valLen, valBytes, err := readUvarint(r)
 	if err != nil {
-		return logRecord{}, 1 + txBytes + keyBytes + valBytes, err
-	}
-
-	key := make([]byte, keyLen)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return logRecord{}, 1 + txBytes + keyBytes + valBytes, err
+		return logRecord{}, 1 + txBytes + valBytes, err
 	}
 
 	value := make([]byte, valLen)
 	if _, err := io.ReadFull(r, value); err != nil {
-		return logRecord{}, 1 + txBytes + keyBytes + valBytes + int(keyLen), err
+		return logRecord{}, 1 + txBytes + valBytes, err
 	}
 
-	size := 1 + txBytes + keyBytes + valBytes + int(keyLen) + int(valLen)
-	return logRecord{recordType: recordType, txID: txID, key: key, value: value}, size, nil
+	size := 1 + txBytes + valBytes + int(valLen)
+	return logRecord{recordType: recordType, txID: txID, value: value}, size, nil
 }
 
 func readUvarint(r *bufio.Reader) (uint64, int, error) {

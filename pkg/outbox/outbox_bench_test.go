@@ -7,7 +7,6 @@ import (
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -15,7 +14,6 @@ import (
 type preparedRecord struct {
 	recordType byte
 	txID       uint64
-	key        []byte
 	value      []byte
 }
 
@@ -42,7 +40,7 @@ func BenchmarkOutboxAppendPrepared(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for j := range records {
 			rec := records[j]
-			_, err := log.Append(rec.recordType, rec.txID, rec.key, rec.value)
+			_, err := log.Append(rec.recordType, rec.txID, rec.value)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -75,7 +73,6 @@ func buildPreparedRecords() []preparedRecord {
 	records = append(records, preparedRecord{
 		recordType: logRecordData,
 		txID:       txID,
-		key:        persistence.EventKey(1),
 		value:      value,
 	})
 	records = append(records, preparedRecord{recordType: logRecordCommit, txID: txID})

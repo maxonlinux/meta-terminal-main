@@ -1,6 +1,8 @@
 package replay
 
 import (
+	"fmt"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
@@ -8,7 +10,6 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -28,18 +29,11 @@ func New(reg *registry.Registry, store *oms.Service, portfolio *portfolio.Servic
 	}
 }
 
-func (r *Replayer) Replay(store *persistence.Store) error {
-	return store.IterateEvents(func(_ []byte, value []byte) bool {
-		if len(value) == 0 {
-			return true
-		}
-		ev := events.Event{Type: events.Type(value[0]), Data: value[1:]}
-		_ = r.Apply(ev)
-		return true
-	})
+func (r *Replayer) ApplyEvent(ev events.Event) error {
+	return r.applyEvent(ev)
 }
 
-func (r *Replayer) Apply(ev events.Event) error {
+func (r *Replayer) applyEvent(ev events.Event) error {
 	switch ev.Type {
 	case events.OrderPlaced:
 		order, err := events.DecodeOrderPlaced(ev.Data)
@@ -66,6 +60,7 @@ func (r *Replayer) Apply(ev events.Event) error {
 		if !ok {
 			return nil
 		}
+		order.UpdatedAt = amend.Timestamp
 		if order.IsConditional || order.Type != constants.ORDER_TYPE_LIMIT {
 			order.Quantity = amend.NewQty
 			return nil
@@ -86,6 +81,7 @@ func (r *Replayer) Apply(ev events.Event) error {
 		}
 		if order, ok := r.store.GetUserOrder(cancel.UserID, cancel.OrderID); ok {
 			if order.IsConditional {
+				order.UpdatedAt = cancel.Timestamp
 				_ = r.store.Cancel(order.UserID, order.ID)
 				return nil
 			}
@@ -93,6 +89,7 @@ func (r *Replayer) Apply(ev events.Event) error {
 			if math.Sign(remaining) > 0 {
 				r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 			}
+			order.UpdatedAt = cancel.Timestamp
 			_ = r.store.Cancel(order.UserID, order.ID)
 		}
 	case events.TradeExecuted:
@@ -103,7 +100,7 @@ func (r *Replayer) Apply(ev events.Event) error {
 		maker, _ := r.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
 		taker, _ := r.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
 		if maker == nil || taker == nil {
-			return nil
+			return fmt.Errorf("missing orders for trade %d", trade.TradeID)
 		}
 		match := types.Match{
 			ID:         trade.TradeID,
@@ -159,6 +156,12 @@ func (r *Replayer) Apply(ev events.Event) error {
 		if order, ok := r.store.GetUserOrder(evt.UserID, evt.OrderID); ok {
 			order.Status = constants.ORDER_STATUS_TRIGGERED
 			order.UpdatedAt = evt.Timestamp
+			order.IsConditional = false
+			order.TriggerPrice = types.Price{}
+			remaining := math.Sub(order.Quantity, order.Filled)
+			if math.Sign(remaining) > 0 {
+				_ = r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+			}
 		}
 	}
 	return nil

@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
-	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -23,19 +22,6 @@ func getTrade() *types.Trade {
 func putTrade(t *types.Trade) {
 	*t = types.Trade{}
 	tradePool.Put(t)
-}
-
-func (e *Engine) getBook(category int8, symbol string) (*orderbook.OrderBook, error) {
-	bookSet, ok := e.books[category]
-	if !ok {
-		return nil, constants.ErrInvalidCategory
-	}
-	if book, ok := bookSet[symbol]; ok {
-		return book, nil
-	}
-	book := orderbook.New()
-	bookSet[symbol] = book
-	return book, nil
 }
 
 func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer outbox.Writer) {
@@ -65,6 +51,13 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 	publicTrade.Timestamp = match.Timestamp
 	e.tradeFeed.Add(match.Category, match.Symbol, *publicTrade)
 	putTrade(publicTrade)
+
+	if e.publisher != nil {
+		e.publisher.OnPublicTrades(match.Category, match.Symbol, []types.Trade{*publicTrade})
+		e.publisher.OnOrderUpdated(match.MakerOrder)
+		e.publisher.OnOrderUpdated(match.TakerOrder)
+		e.publisher.OnOrderbookUpdated(match.Category, match.Symbol)
+	}
 
 	if writer != nil {
 		_ = writer.Record(events.EncodeTrade(events.TradeEvent{

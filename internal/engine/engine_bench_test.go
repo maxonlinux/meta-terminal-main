@@ -1,28 +1,18 @@
 package engine
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
-	"github.com/maxonlinux/meta-terminal-go/pkg/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
 
 func BenchmarkEnginePipeline(b *testing.B) {
 	root := b.TempDir()
-	store, err := persistence.Open(filepath.Join(root, "trading"))
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.Cleanup(func() {
-		_ = store.Close()
-	})
-
-	ob, err := outbox.OpenWithOptions(root, store.DB(), outbox.Options{QueueSize: 1 << 16})
+	ob, err := outbox.OpenWithOptions(root, outbox.Options{QueueSize: 1 << 16})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -44,7 +34,7 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng := NewEngine(store, ob, reg, nil)
+	eng := NewEngine(ob, reg, nil)
 
 	price := types.Price(fixed.NewI(1, 0))
 	qty := types.Quantity(fixed.NewI(1, 0))
@@ -57,6 +47,7 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		types.UserID(2),
 		"BTCUSDT",
 		constants.CATEGORY_SPOT,
+		constants.ORDER_ORIGIN_USER,
 		constants.ORDER_SIDE_SELL,
 		constants.ORDER_TYPE_LIMIT,
 		constants.TIF_GTC,
@@ -83,6 +74,7 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		UserID:   1,
 		Symbol:   "BTCUSDT",
 		Category: constants.CATEGORY_SPOT,
+		Origin:   constants.ORDER_ORIGIN_USER,
 		Side:     constants.ORDER_SIDE_BUY,
 		Type:     constants.ORDER_TYPE_LIMIT,
 		TIF:      constants.TIF_IOC,

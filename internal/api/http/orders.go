@@ -5,9 +5,11 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/query"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -23,16 +25,16 @@ func NewOrdersHandler(eng *engine.Engine, q *query.Service) *OrdersHandler {
 
 type OrderRequest struct {
 	Symbol         string  `json:"symbol"`
-	Category       int8    `json:"category"`
-	Side           int8    `json:"side"`
-	OrderType      int8    `json:"type"`
-	TimeInForce    int8    `json:"timeInForce"`
+	Category       string  `json:"category"`
+	Side           string  `json:"side"`
+	OrderType      string  `json:"type"`
+	TimeInForce    string  `json:"timeInForce"`
 	Quantity       string  `json:"qty"`
 	Price          *string `json:"price"`
-	TriggerPrice   *string `json:"triggerPrice"`
 	ReduceOnly     *bool   `json:"reduceOnly"`
+	TriggerPrice   *string `json:"triggerPrice"`
 	CloseOnTrigger *bool   `json:"closeOnTrigger"`
-	StopOrderType  *int8   `json:"stopOrderType"`
+	StopOrderType  *string `json:"stopOrderType"`
 }
 
 func (h *OrdersHandler) Create(c echo.Context) error {
@@ -60,6 +62,36 @@ func (h *OrdersHandler) Create(c echo.Context) error {
 		price = types.Price(fixed.NewF(p))
 	}
 
+	category, err := shared.ParseCategoryParam(req.Category)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if req.Side == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "side is required"})
+	}
+	side, err := shared.ParseSide(req.Side)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if req.OrderType == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "type is required"})
+	}
+	orderType, err := shared.ParseOrderType(req.OrderType)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if req.TimeInForce == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "timeInForce is required"})
+	}
+	tif, err := shared.ParseTif(req.TimeInForce)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	if orderType == constants.ORDER_TYPE_LIMIT && req.Price == nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "price is required for limit orders"})
+	}
+
 	triggerPrice := types.Price(fixed.NewI(0, 0))
 	if req.TriggerPrice != nil {
 		tp, err := strconv.ParseFloat(*req.TriggerPrice, 64)
@@ -71,17 +103,22 @@ func (h *OrdersHandler) Create(c echo.Context) error {
 
 	stopOrderType := int8(0)
 	if req.StopOrderType != nil {
-		stopOrderType = *req.StopOrderType
+		parsed, err := shared.ParseStopOrderType(*req.StopOrderType)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		stopOrderType = parsed
 	}
 
 	result := h.engine.Cmd(&engine.PlaceOrderCmd{
 		Req: &types.PlaceOrderRequest{
 			UserID:         claims.UserID,
 			Symbol:         req.Symbol,
-			Category:       req.Category,
-			Side:           req.Side,
-			Type:           req.OrderType,
-			TIF:            req.TimeInForce,
+			Category:       category,
+			Origin:         constants.ORDER_ORIGIN_USER,
+			Side:           side,
+			Type:           orderType,
+			TIF:            tif,
 			Quantity:       types.Quantity(fixed.NewF(qty)),
 			Price:          price,
 			TriggerPrice:   triggerPrice,
@@ -95,7 +132,7 @@ func (h *OrdersHandler) Create(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": result.Err.Error()})
 	}
 
-	return c.JSON(http.StatusCreated, orderToMap(result.Order))
+	return c.JSON(http.StatusCreated, shared.OrderResponseFromOrder(result.Order))
 }
 
 func (h *OrdersHandler) List(c echo.Context) error {
@@ -107,20 +144,20 @@ func (h *OrdersHandler) List(c echo.Context) error {
 	symbol := c.QueryParam("symbol")
 	category := c.QueryParam("category")
 
-	var cat int8
+	var cat *int8
 	if category != "" {
-		v, err := strconv.ParseInt(category, 10, 8)
+		parsed, err := shared.ParseCategoryParam(category)
 		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid category"})
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
-		cat = int8(v)
+		cat = &parsed
 	}
 
-	orders := h.query.GetOrders(claims.UserID, symbol, cat)
+	orders := h.query.GetOrders(claims.UserID, symbol, cat, "", 0, 0)
 
-	resp := make([]map[string]interface{}, len(orders))
+	resp := make([]shared.OrderResponse, len(orders))
 	for i, o := range orders {
-		resp[i] = orderToMap(o)
+		resp[i] = shared.OrderResponseFromOrder(o)
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{"orders": resp})
@@ -142,7 +179,7 @@ func (h *OrdersHandler) Get(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
 	}
 
-	return c.JSON(http.StatusOK, orderToMap(order))
+	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(order))
 }
 
 func (h *OrdersHandler) Cancel(c echo.Context) error {
@@ -161,7 +198,7 @@ func (h *OrdersHandler) Cancel(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": result.Err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, orderToMap(result.Order))
+	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(result.Order))
 }
 
 type AmendRequest struct {
@@ -199,38 +236,7 @@ func (h *OrdersHandler) Amend(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": result.Err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, orderToMap(result.Order))
-}
-
-func orderToMap(o *types.Order) map[string]interface{} {
-	if o == nil {
-		return nil
-	}
-	m := map[string]interface{}{
-		"id":             uint64(o.ID),
-		"userId":         uint64(o.UserID),
-		"symbol":         o.Symbol,
-		"category":       o.Category,
-		"side":           o.Side,
-		"type":           o.Type,
-		"timeInForce":    o.TIF,
-		"status":         o.Status,
-		"qty":            o.Quantity.String(),
-		"filled":         o.Filled.String(),
-		"price":          o.Price.String(),
-		"reduceOnly":     o.ReduceOnly,
-		"closeOnTrigger": o.CloseOnTrigger,
-		"isConditional":  o.IsConditional,
-		"createdAt":      o.CreatedAt,
-		"updatedAt":      o.UpdatedAt,
-	}
-	if o.TriggerPrice.Sign() > 0 {
-		m["triggerPrice"] = o.TriggerPrice.String()
-	}
-	if o.StopOrderType != 0 {
-		m["stopOrderType"] = o.StopOrderType
-	}
-	return m
+	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(result.Order))
 }
 
 func getUser(c echo.Context) *users.Claims {

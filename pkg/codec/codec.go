@@ -1,4 +1,4 @@
-package persistence
+package codec
 
 import (
 	"encoding/binary"
@@ -26,6 +26,7 @@ func EncodeOrder(o *types.Order) []byte {
 
 	encFixed64(buf, uint64(o.ID))
 	encFixed64(buf, uint64(o.UserID))
+	enc8(buf, byte(o.Origin))
 
 	encString(buf, o.Symbol)
 	enc8(buf, byte(o.Category))
@@ -59,6 +60,8 @@ func DecodeOrder(data []byte) (*types.Order, error) {
 
 	o.ID = types.OrderID(decFixed64(data, &off))
 	o.UserID = types.UserID(decFixed64(data, &off))
+	o.Origin = int8(data[off])
+	off++
 
 	o.Symbol = decString(data, &off)
 

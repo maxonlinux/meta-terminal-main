@@ -78,3 +78,54 @@ func (h *PositionsHandler) SetLeverage(c echo.Context) error {
 
 	return c.NoContent(http.StatusOK)
 }
+
+type UpdateTpSlRequest struct {
+	TP *string `json:"tp"`
+	SL *string `json:"sl"`
+}
+
+func (h *PositionsHandler) UpdateTpSl(c echo.Context) error {
+	claims := getUser(c)
+	if claims == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+
+	symbol := c.QueryParam("symbol")
+	if symbol == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "symbol is required"})
+	}
+
+	var req UpdateTpSlRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	var tp types.Price
+	var sl types.Price
+	if req.TP != nil && *req.TP != "" {
+		v, err := strconv.ParseFloat(*req.TP, 64)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tp"})
+		}
+		tp = types.Price(fixed.NewF(v))
+	}
+	if req.SL != nil && *req.SL != "" {
+		v, err := strconv.ParseFloat(*req.SL, 64)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid sl"})
+		}
+		sl = types.Price(fixed.NewF(v))
+	}
+
+	result := h.engine.Cmd(&engine.UpdateTpSlCmd{
+		UserID:     claims.UserID,
+		Symbol:     symbol,
+		TakeProfit: tp,
+		StopLoss:   sl,
+	})
+	if result.Err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": result.Err.Error()})
+	}
+
+	return c.NoContent(http.StatusOK)
+}
