@@ -23,7 +23,10 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
+
 	cfg := config.Load()
+	log.Printf("gateway config data_dir=%s", cfg.DataDir)
 
 	reg := registry.New()
 
@@ -72,6 +75,7 @@ func main() {
 	}()
 
 	<-ctx.Done()
+	log.Printf("shutdown signal received")
 	eng.Shutdown()
 }
 
@@ -100,5 +104,6 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 
 	router.Register(e)
 
+	log.Printf("http server listening on :8080")
 	return e.Start(":8080")
 }

@@ -21,7 +21,7 @@ var (
 func Load() Config {
 	once.Do(func() {
 		cfg = Config{
-			DataDir:        envString("DATA_DIR", "/data"),
+			DataDir:        envString("DATA_DIR", "data"),
 			AssetsURL:      envString("ASSETS_URL", "http://localhost:3333/proxy/core/assets"),
 			MultiplexerURL: envString("MULTIPLEXER_URL", "http://localhost:3333/proxy/multiplexer/prices"),
 			SyncInterval:   envDuration("SYNC_INTERVAL", time.Minute),

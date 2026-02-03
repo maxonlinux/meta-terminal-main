@@ -47,7 +47,7 @@ func initDB(db *sql.DB) error {
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
 			created_at INTEGER NOT NULL
-		)
+		);
 
 		CREATE TABLE IF NOT EXISTS user_profiles (
 			user_id INTEGER PRIMARY KEY,
@@ -56,7 +56,7 @@ func initDB(db *sql.DB) error {
 			name TEXT,
 			surname TEXT,
 			is_active INTEGER NOT NULL
-		)
+		);
 
 		CREATE TABLE IF NOT EXISTS user_settings (
 			user_id INTEGER PRIMARY KEY,
@@ -65,7 +65,7 @@ func initDB(db *sql.DB) error {
 			access_to_transaction_data INTEGER NOT NULL,
 			access_to_geolocation INTEGER NOT NULL,
 			preferences TEXT NOT NULL
-		)
+		);
 
 		CREATE TABLE IF NOT EXISTS user_addresses (
 			user_id INTEGER PRIMARY KEY,
@@ -73,7 +73,7 @@ func initDB(db *sql.DB) error {
 			city TEXT,
 			address TEXT,
 			zip TEXT
-		)
+		);
 	`)
 	return err
 }

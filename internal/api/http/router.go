@@ -54,6 +54,7 @@ func (r *Router) SetWsHandler(handler *ws.WsHandler) {
 func (r *Router) Register(e *echo.Echo) {
 	e.Use(echomw.Recover())
 	e.Use(echomw.RequestID())
+	e.Use(echomw.Logger())
 	e.Use(r.CORSMiddleware())
 
 	e.GET("/health", r.Health)
