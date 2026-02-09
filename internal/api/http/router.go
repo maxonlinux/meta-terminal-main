@@ -68,7 +68,8 @@ func (r *Router) SetWsHandler(handler *ws.WsHandler) {
 func (r *Router) Register(e *echo.Echo) {
 	e.Use(echomw.Recover())
 	e.Use(echomw.RequestID())
-	e.Use(echomw.Logger())
+	// Use RequestLogger to avoid deprecated Logger middleware.
+	e.Use(echomw.RequestLogger())
 	e.Use(r.CORSMiddleware())
 
 	e.GET("/health", r.Health)

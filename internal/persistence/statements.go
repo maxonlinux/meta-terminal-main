@@ -1,10 +1,6 @@
 package persistence
 
-import (
-	"database/sql"
-
-	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
-)
+import "database/sql"
 
 type statements struct {
 	upsertOrder            *sql.Stmt
@@ -215,13 +211,4 @@ func closeStatements(stmts *statements) {
 	closeStmt(stmts.updateFundingStatus)
 	closeStmt(stmts.selectFundingUser)
 	closeStmt(stmts.insertRPNL)
-}
-
-func orderIsOpenFilter() []any {
-	return []any{
-		constants.ORDER_STATUS_NEW,
-		constants.ORDER_STATUS_PARTIALLY_FILLED,
-		constants.ORDER_STATUS_UNTRIGGERED,
-		constants.ORDER_STATUS_TRIGGERED,
-	}
 }
