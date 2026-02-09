@@ -41,6 +41,7 @@ type UserStore interface {
 	CreateUser(username, passwordHash, email, phone string) (types.UserID, error)
 	GetUserByUsername(username string) (*User, error)
 	GetUserByID(userID types.UserID) (*User, error)
+	ListProfiles(limit, offset int, query string) ([]UserProfile, error)
 	UserExists(username string) bool
 	GetProfile(userID types.UserID) (*UserProfile, error)
 	UpdateProfile(userID types.UserID, name *string, surname *string) error

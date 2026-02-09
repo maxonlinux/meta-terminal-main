@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
@@ -165,6 +166,52 @@ func (s *SQLiteStore) GetProfile(userID types.UserID) (*UserProfile, error) {
 	}
 	profile.IsActive = isActive == 1
 	return &profile, nil
+}
+
+func (s *SQLiteStore) ListProfiles(limit, offset int, search string) ([]UserProfile, error) {
+	query := `select u.id, u.username, p.email, p.phone, p.name, p.surname, p.is_active
+		from users u join user_profiles p on u.id = p.user_id`
+	args := []interface{}{}
+	if search != "" {
+		query += " where (lower(u.username) like ? or lower(p.email) like ? or lower(p.phone) like ? or lower(coalesce(p.name, '')) like ? or lower(coalesce(p.surname, '')) like ? or cast(u.id as text) like ?)"
+		pattern := "%" + strings.ToLower(search) + "%"
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern)
+	}
+	query += " order by u.id desc"
+	if limit > 0 {
+		query += " limit ?"
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		query += " offset ?"
+		args = append(args, offset)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	res := make([]UserProfile, 0)
+	for rows.Next() {
+		var profile UserProfile
+		var isActive int
+		var name sql.NullString
+		var surname sql.NullString
+		if err := rows.Scan(&profile.UserID, &profile.Username, &profile.Email, &profile.Phone, &name, &surname, &isActive); err != nil {
+			return nil, err
+		}
+		if name.Valid {
+			profile.Name = &name.String
+		}
+		if surname.Valid {
+			profile.Surname = &surname.String
+		}
+		profile.IsActive = isActive == 1
+		res = append(res, profile)
+	}
+	return res, nil
 }
 
 func (s *SQLiteStore) UpdateProfile(userID types.UserID, name *string, surname *string) error {

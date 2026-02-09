@@ -28,6 +28,7 @@ type Instrument struct {
 	Symbol     string
 	BaseAsset  string
 	QuoteAsset string
+	AssetType  string
 	PricePrec  int8
 	QtyPrec    int8
 	MinQty     Quantity

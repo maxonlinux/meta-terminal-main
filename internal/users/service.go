@@ -74,6 +74,10 @@ func (s *Service) GetProfile(userID types.UserID) (*UserProfile, error) {
 	return s.store.GetProfile(userID)
 }
 
+func (s *Service) ListProfiles(limit, offset int, query string) ([]UserProfile, error) {
+	return s.store.ListProfiles(limit, offset, query)
+}
+
 func (s *Service) UpdateProfile(userID types.UserID, name *string, surname *string) error {
 	return s.store.UpdateProfile(userID, name, surname)
 }

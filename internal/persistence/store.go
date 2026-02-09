@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
@@ -32,28 +33,14 @@ type Store struct {
 	positions map[positionKey]struct{}
 }
 
+// DB returns the underlying database handle for feature repositories.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 type positionKey struct {
 	userID types.UserID
 	symbol string
-}
-
-type statements struct {
-	upsertOrder            *sql.Stmt
-	upsertOpenOrder        *sql.Stmt
-	updateOrderQty         *sql.Stmt
-	updateOpenOrderQty     *sql.Stmt
-	cancelOrder            *sql.Stmt
-	deleteOpenOrder        *sql.Stmt
-	markOrderTriggered     *sql.Stmt
-	markOpenOrderTriggered *sql.Stmt
-	insertFill             *sql.Stmt
-	updateOrderFilled      *sql.Stmt
-	updateOpenOrderFilled  *sql.Stmt
-	upsertBalance          *sql.Stmt
-	upsertPosition         *sql.Stmt
-	upsertFunding          *sql.Stmt
-	updateFundingStatus    *sql.Stmt
-	selectFundingUser      *sql.Stmt
 }
 
 type OrderRecord struct {
@@ -105,6 +92,20 @@ type FundingRecord struct {
 	Message     string
 	CreatedAt   uint64
 	UpdatedAt   uint64
+}
+
+type RPNLRecord struct {
+	// RPNLRecord stores a realized PnL entry in history.
+	ID        int64
+	UserID    types.UserID
+	OrderID   types.OrderID
+	Symbol    string
+	Category  int8
+	Side      int8
+	Price     string
+	Quantity  string
+	Realized  string
+	CreatedAt uint64
 }
 
 func Open(dir string, reg *registry.Registry) (*Store, error) {
@@ -263,7 +264,7 @@ func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, li
 		return nil, nil
 	}
 
-	query := `select fills.id, fills.user_id, fills.order_id, fills.counterparty_order_id, fills.symbol, fills.category, fills.side, fills.role, fills.price, fills.qty, fills.ts, orders.type from fills left join orders on fills.order_id = orders.id and fills.user_id = orders.user_id where fills.user_id = ?`
+	query := `select id, user_id, order_id, counterparty_order_id, symbol, category, side, role, price, qty, ts from fills where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
 		query += " and symbol = ?"
@@ -306,13 +307,66 @@ func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, li
 			&rec.Price,
 			&rec.Qty,
 			&rec.Timestamp,
-			&rec.OrderType,
 		); err != nil {
 			return nil, err
 		}
+		// Fills table does not store order type; default to LIMIT until backfilled.
+		rec.OrderType = constants.ORDER_TYPE_LIMIT
 		result = append(result, rec)
 	}
 	return result, nil
+}
+
+func (s *Store) ListRPNL(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]RPNLRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	query := `select id, user_id, order_id, symbol, category, side, price, qty, realized, created_at from rpnl_events where user_id = ?`
+	args := []any{userID}
+	if symbol != "" {
+		query += " and symbol = ?"
+		args = append(args, symbol)
+	}
+	if category != nil {
+		query += " and category = ?"
+		args = append(args, *category)
+	}
+	query += " order by created_at desc"
+	if limit > 0 {
+		query += " limit ?"
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		query += " offset ?"
+		args = append(args, offset)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	res := make([]RPNLRecord, 0)
+	for rows.Next() {
+		var rec RPNLRecord
+		if err := rows.Scan(
+			&rec.ID,
+			&rec.UserID,
+			&rec.OrderID,
+			&rec.Symbol,
+			&rec.Category,
+			&rec.Side,
+			&rec.Price,
+			&rec.Quantity,
+			&rec.Realized,
+			&rec.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		res = append(res, rec)
+	}
+	return res, nil
 }
 
 func (s *Store) ListFundings(userID types.UserID, limit int, offset int) ([]FundingRecord, error) {
@@ -347,127 +401,54 @@ func (s *Store) ListFundings(userID types.UserID, limit int, offset int) ([]Fund
 	return res, nil
 }
 
-func initSchema(db *sql.DB) error {
-	_, err := db.Exec(`
-    create table if not exists orders (
-      id integer primary key,
-      user_id integer not null,
-      symbol text not null,
-      category integer not null,
-      origin integer not null,
-      side integer not null,
-      type integer not null,
-      tif integer not null,
-      status integer not null,
-      price text not null,
-      qty text not null,
-      filled text not null,
-      trigger_price text not null,
-      reduce_only integer not null,
-      close_on_trigger integer not null,
-      stop_order_type integer not null,
-      is_conditional integer not null,
-      created_at integer not null,
-      updated_at integer not null
-    );
-
-    create index if not exists orders_user_idx on orders (user_id, updated_at);
-    create index if not exists orders_symbol_idx on orders (symbol, category, updated_at);
-
-    create table if not exists open_orders (
-      id integer primary key,
-      user_id integer not null,
-      symbol text not null,
-      category integer not null,
-      origin integer not null,
-      side integer not null,
-      type integer not null,
-      tif integer not null,
-      status integer not null,
-      price text not null,
-      qty text not null,
-      filled text not null,
-      trigger_price text not null,
-      reduce_only integer not null,
-      close_on_trigger integer not null,
-      stop_order_type integer not null,
-      is_conditional integer not null,
-      created_at integer not null,
-      updated_at integer not null
-    );
-
-    create index if not exists open_orders_user_idx on open_orders (user_id, updated_at);
-    create index if not exists open_orders_symbol_idx on open_orders (symbol, category, updated_at);
-
-    create table if not exists fills (
-      id integer not null,
-      user_id integer not null,
-      order_id integer not null,
-      counterparty_order_id integer not null,
-      symbol text not null,
-      category integer not null,
-      side integer not null,
-      role text not null,
-      price text not null,
-      qty text not null,
-      ts integer not null,
-      primary key (id, user_id, role)
-    );
-
-    create index if not exists fills_user_idx on fills (user_id, ts);
-    create index if not exists fills_symbol_idx on fills (symbol, category, ts);
-
-    create table if not exists balances (
-      user_id integer not null,
-      asset text not null,
-      available text not null,
-      locked text not null,
-      margin text not null,
-      primary key (user_id, asset)
-    );
-
-    create index if not exists balances_user_idx on balances (user_id);
-
-    create table if not exists positions (
-      user_id integer not null,
-      symbol text not null,
-      size text not null,
-      entry_price text not null,
-      exit_price text not null,
-      mode integer not null,
-      mm text not null,
-      im text not null,
-      liq_price text not null,
-      leverage text not null,
-      take_profit text not null,
-      stop_loss text not null,
-      tp_order_id integer not null,
-      sl_order_id integer not null,
-      primary key (user_id, symbol)
-    );
-
-    create index if not exists positions_user_idx on positions (user_id);
-
-    create table if not exists fundings (
-      id integer primary key,
-      user_id integer not null,
-      type text not null,
-      status text not null,
-      asset text not null,
-      amount text not null,
-      destination text not null,
-      created_by text not null,
-      message text not null,
-      created_at integer not null,
-      updated_at integer not null
-    );
-
-    create index if not exists fundings_user_idx on fundings (user_id, updated_at);
-  `)
-	if err != nil {
-		return fmt.Errorf("init history schema: %w", err)
+func (s *Store) ListFundingsAll(limit int, offset int, search string) ([]FundingRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
 	}
-	return nil
+	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings`
+	args := []interface{}{}
+	if search != "" {
+		query += " where (lower(destination) like ? or lower(message) like ? or cast(id as text) like ? or cast(user_id as text) like ?)"
+		pattern := "%" + strings.ToLower(search) + "%"
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	query += " order by updated_at desc"
+	if limit > 0 {
+		query += " limit ?"
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		query += " offset ?"
+		args = append(args, offset)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	res := make([]FundingRecord, 0)
+	for rows.Next() {
+		var r FundingRecord
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Type, &r.Status, &r.Asset, &r.Amount, &r.Destination, &r.CreatedBy, &r.Message, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	return res, nil
+}
+
+func (s *Store) CountPendingFundings() (int, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	row := s.db.QueryRow("select count(1) from fundings where status = ?", string(types.FundingStatusPending))
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) Apply(eventsBatch []events.Event) error {
@@ -596,6 +577,13 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err == nil {
 				err = markOpenOrderTriggered(tx, s.stmts, evt.UserID, evt.OrderID, evt.Timestamp)
 			}
+			addBalance(evt.UserID)
+		case events.RPNLRecorded:
+			evt, decErr := events.DecodeRPNL(event.Data)
+			if decErr != nil {
+				return decErr
+			}
+			err = insertRPNL(tx, s.stmts, evt)
 			addBalance(evt.UserID)
 		}
 		if err != nil {
@@ -867,6 +855,26 @@ func markOrderTriggered(tx *sql.Tx, stmts *statements, userID types.UserID, orde
 	return err
 }
 
+func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
+	// Persists realized PnL into history store.
+	stmt := stmts.insertRPNL
+	if stmt == nil {
+		return fmt.Errorf("missing insert rpnl statement")
+	}
+	_, err := stmt.Exec(
+		uint64(ev.UserID),
+		uint64(ev.OrderID),
+		ev.Symbol,
+		ev.Category,
+		ev.Side,
+		ev.Price.String(),
+		ev.Quantity.String(),
+		ev.Realized.String(),
+		ev.Timestamp,
+	)
+	return err
+}
+
 func upsertBalance(tx *sql.Tx, stmts *statements, bal *types.Balance) error {
 	if bal == nil {
 		return nil
@@ -1097,216 +1105,6 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
-}
-
-func prepareStatements(db *sql.DB) (*statements, error) {
-	stmts := &statements{}
-	var err error
-	stmts.upsertOrder, err = db.Prepare(`
-    insert into orders (id, user_id, symbol, category, origin, side, type, tif, status,
-      price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      user_id=excluded.user_id,
-      symbol=excluded.symbol,
-      category=excluded.category,
-      origin=excluded.origin,
-      side=excluded.side,
-      type=excluded.type,
-      tif=excluded.tif,
-      status=excluded.status,
-      price=excluded.price,
-      qty=excluded.qty,
-      filled=excluded.filled,
-      trigger_price=excluded.trigger_price,
-      reduce_only=excluded.reduce_only,
-      close_on_trigger=excluded.close_on_trigger,
-      stop_order_type=excluded.stop_order_type,
-      is_conditional=excluded.is_conditional,
-      created_at=excluded.created_at,
-      updated_at=excluded.updated_at
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-
-	stmts.upsertOpenOrder, err = db.Prepare(`
-    insert into open_orders (id, user_id, symbol, category, origin, side, type, tif, status,
-      price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      user_id=excluded.user_id,
-      symbol=excluded.symbol,
-      category=excluded.category,
-      origin=excluded.origin,
-      side=excluded.side,
-      type=excluded.type,
-      tif=excluded.tif,
-      status=excluded.status,
-      price=excluded.price,
-      qty=excluded.qty,
-      filled=excluded.filled,
-      trigger_price=excluded.trigger_price,
-      reduce_only=excluded.reduce_only,
-      close_on_trigger=excluded.close_on_trigger,
-      stop_order_type=excluded.stop_order_type,
-      is_conditional=excluded.is_conditional,
-      created_at=excluded.created_at,
-      updated_at=excluded.updated_at
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-
-	stmts.updateOrderQty, err = db.Prepare(`update orders set qty = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.updateOpenOrderQty, err = db.Prepare(`update open_orders set qty = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.cancelOrder, err = db.Prepare(`
-    update orders
-    set status = case
-      when is_conditional = 1 then ?
-      else ?
-    end,
-    updated_at = ?
-    where id = ? and user_id = ?
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.deleteOpenOrder, err = db.Prepare(`delete from open_orders where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.markOrderTriggered, err = db.Prepare(`update orders set status = ?, is_conditional = 0, trigger_price = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.markOpenOrderTriggered, err = db.Prepare(`update open_orders set status = ?, is_conditional = 0, trigger_price = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.insertFill, err = db.Prepare(`
-    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, side, role, price, qty, ts)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.updateOrderFilled, err = db.Prepare(`update orders set filled = ?, status = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.updateOpenOrderFilled, err = db.Prepare(`update open_orders set filled = ?, status = ?, updated_at = ? where id = ? and user_id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.upsertBalance, err = db.Prepare(`
-    insert into balances (user_id, asset, available, locked, margin)
-    values (?, ?, ?, ?, ?)
-    on conflict(user_id, asset) do update set
-      available=excluded.available,
-      locked=excluded.locked,
-      margin=excluded.margin
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.upsertPosition, err = db.Prepare(`
-    insert into positions (user_id, symbol, size, entry_price, exit_price, mode, mm, im, liq_price, leverage, take_profit, stop_loss, tp_order_id, sl_order_id)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(user_id, symbol) do update set
-      size=excluded.size,
-      entry_price=excluded.entry_price,
-      exit_price=excluded.exit_price,
-      mode=excluded.mode,
-      mm=excluded.mm,
-      im=excluded.im,
-      liq_price=excluded.liq_price,
-      leverage=excluded.leverage,
-      take_profit=excluded.take_profit,
-      stop_loss=excluded.stop_loss,
-      tp_order_id=excluded.tp_order_id,
-      sl_order_id=excluded.sl_order_id
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.upsertFunding, err = db.Prepare(`
-    insert into fundings (id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      user_id=excluded.user_id,
-      type=excluded.type,
-      status=excluded.status,
-      asset=excluded.asset,
-      amount=excluded.amount,
-      destination=excluded.destination,
-      created_by=excluded.created_by,
-      message=excluded.message,
-      created_at=excluded.created_at,
-      updated_at=excluded.updated_at
-  `)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.updateFundingStatus, err = db.Prepare(`update fundings set status = ? where id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-	stmts.selectFundingUser, err = db.Prepare(`select user_id from fundings where id = ?`)
-	if err != nil {
-		closeStatements(stmts)
-		return nil, err
-	}
-
-	return stmts, nil
-}
-
-func closeStatements(stmts *statements) {
-	if stmts == nil {
-		return
-	}
-	closeStmt := func(stmt *sql.Stmt) {
-		if stmt != nil {
-			_ = stmt.Close()
-		}
-	}
-	closeStmt(stmts.upsertOrder)
-	closeStmt(stmts.upsertOpenOrder)
-	closeStmt(stmts.updateOrderQty)
-	closeStmt(stmts.updateOpenOrderQty)
-	closeStmt(stmts.cancelOrder)
-	closeStmt(stmts.deleteOpenOrder)
-	closeStmt(stmts.markOrderTriggered)
-	closeStmt(stmts.markOpenOrderTriggered)
-	closeStmt(stmts.insertFill)
-	closeStmt(stmts.updateOrderFilled)
-	closeStmt(stmts.updateOpenOrderFilled)
-	closeStmt(stmts.upsertBalance)
-	closeStmt(stmts.upsertPosition)
-	closeStmt(stmts.upsertFunding)
-	closeStmt(stmts.updateFundingStatus)
-	closeStmt(stmts.selectFundingUser)
 }
 
 func oppositeSide(side int8) int8 {

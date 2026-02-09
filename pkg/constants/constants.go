@@ -84,6 +84,10 @@ var (
 	ErrPriceUnavailable = errors.New("price unavailable")
 	// ErrNoPosition indicates there is no position to update.
 	ErrNoPosition = errors.New("no position")
+	// Plan restriction errors.
+	ErrPlanLinearNotAllowed = errors.New("plan does not allow linear trading")
+	ErrPlanLeverageTooHigh  = errors.New("plan leverage limit exceeded")
+	ErrPlanAssetNotAllowed  = errors.New("plan does not allow this asset type")
 
 	// Instrument validation errors
 	ErrPriceOutOfBounds   = errors.New("price out of instrument bounds")

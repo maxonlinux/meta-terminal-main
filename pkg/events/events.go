@@ -20,6 +20,7 @@ const (
 	FundingApproved Type = 7
 	FundingRejected Type = 8
 	OrderTriggered  Type = 9
+	RPNLRecorded    Type = 10
 )
 
 type Event struct {
@@ -71,6 +72,18 @@ type FundingStatusEvent struct {
 type OrderTriggeredEvent struct {
 	UserID    types.UserID
 	OrderID   types.OrderID
+	Timestamp uint64
+}
+
+type RPNLEvent struct {
+	UserID    types.UserID
+	OrderID   types.OrderID
+	Symbol    string
+	Category  int8
+	Side      int8
+	Price     types.Price
+	Quantity  types.Quantity
+	Realized  types.Quantity
 	Timestamp uint64
 }
 
@@ -247,6 +260,84 @@ func EncodeOrderTriggered(ev OrderTriggeredEvent) Event {
 	data = appendU64(data, uint64(ev.OrderID))
 	data = appendU64(data, ev.Timestamp)
 	return Event{Type: OrderTriggered, Data: data}
+}
+
+func EncodeRPNL(ev RPNLEvent) Event {
+	// Encodes realized PnL events for persistence history.
+	priceBytes, _ := ev.Price.MarshalBinary()
+	qtyBytes, _ := ev.Quantity.MarshalBinary()
+	rpnlBytes, _ := ev.Realized.MarshalBinary()
+	data := make([]byte, 0, 64+len(ev.Symbol)+len(priceBytes)+len(qtyBytes)+len(rpnlBytes))
+	data = appendU64(data, uint64(ev.UserID))
+	data = appendU64(data, uint64(ev.OrderID))
+	data = appendU64(data, ev.Timestamp)
+	data = appendU32(data, uint32(ev.Category))
+	data = appendU32(data, uint32(ev.Side))
+	data = appendU32(data, uint32(len(ev.Symbol)))
+	data = append(data, []byte(ev.Symbol)...)
+	data = appendU32(data, uint32(len(priceBytes)))
+	data = append(data, priceBytes...)
+	data = appendU32(data, uint32(len(qtyBytes)))
+	data = append(data, qtyBytes...)
+	data = appendU32(data, uint32(len(rpnlBytes)))
+	data = append(data, rpnlBytes...)
+	return Event{Type: RPNLRecorded, Data: data}
+}
+
+func DecodeRPNL(data []byte) (RPNLEvent, error) {
+	// Decodes realized PnL events from the outbox stream.
+	if len(data) < 32 {
+		return RPNLEvent{}, errors.New("invalid rpnl payload")
+	}
+	off := 0
+	userID := types.UserID(readU64(data, &off))
+	orderID := types.OrderID(readU64(data, &off))
+	ts := readU64(data, &off)
+	category := int8(readU32(data, &off))
+	side := int8(readU32(data, &off))
+	nameLen := int(readU32(data, &off))
+	if nameLen < 0 || off+nameLen > len(data) {
+		return RPNLEvent{}, errors.New("invalid rpnl payload")
+	}
+	symbol := string(data[off : off+nameLen])
+	off += nameLen
+	priceLen := int(readU32(data, &off))
+	if priceLen < 0 || off+priceLen > len(data) {
+		return RPNLEvent{}, errors.New("invalid rpnl payload")
+	}
+	var price types.Price
+	if err := price.UnmarshalBinary(data[off : off+priceLen]); err != nil {
+		return RPNLEvent{}, err
+	}
+	off += priceLen
+	qtyLen := int(readU32(data, &off))
+	if qtyLen < 0 || off+qtyLen > len(data) {
+		return RPNLEvent{}, errors.New("invalid rpnl payload")
+	}
+	var qty types.Quantity
+	if err := qty.UnmarshalBinary(data[off : off+qtyLen]); err != nil {
+		return RPNLEvent{}, err
+	}
+	off += qtyLen
+	rpnlLen := int(readU32(data, &off))
+	if rpnlLen < 0 || off+rpnlLen > len(data) {
+		return RPNLEvent{}, errors.New("invalid rpnl payload")
+	}
+	var rpnl types.Quantity
+	if err := rpnl.UnmarshalBinary(data[off : off+rpnlLen]); err != nil {
+		return RPNLEvent{}, err
+	}
+	return RPNLEvent{
+		UserID:    userID,
+		OrderID:   orderID,
+		Symbol:    symbol,
+		Category:  category,
+		Side:      side,
+		Price:     price,
+		Quantity:  qty,
+		Realized:  rpnl,
+		Timestamp: ts,
+	}, nil
 }
 
 func DecodeOrderTriggered(data []byte) (OrderTriggeredEvent, error) {

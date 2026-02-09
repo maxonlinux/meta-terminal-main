@@ -10,22 +10,23 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
+	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
-	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type WsHandler struct {
 	hub        *wsHub
-	query      *query.Service
-	jwtService *users.JWTService
+	jwtService *auth.JWTService
+	// cookieName selects the JWT cookie for websocket auth.
+	cookieName string
 }
 
-func NewWsHandler(queryService *query.Service, jwtService *users.JWTService) *WsHandler {
-	hub := newWsHub(queryService)
-	return &WsHandler{hub: hub, query: queryService, jwtService: jwtService}
+func NewWsHandler(readBook func(category int8, symbol string) *orderbook.OrderBook, jwtService *auth.JWTService, cookieName string) *WsHandler {
+	hub := newWsHub(readBook)
+	return &WsHandler{hub: hub, jwtService: jwtService, cookieName: cookieName}
 }
 
 func (h *WsHandler) Publisher() engine.EventPublisher {
@@ -44,7 +45,7 @@ func (h *WsHandler) Market(c echo.Context) error {
 }
 
 func (h *WsHandler) Events(c echo.Context) error {
-	claims, err := getClaims(c, h.jwtService)
+	claims, err := getClaims(c, h.jwtService, h.cookieName)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
@@ -63,8 +64,8 @@ func (h *WsHandler) Events(c echo.Context) error {
 	return nil
 }
 
-func getClaims(c echo.Context, jwtService *users.JWTService) (*users.Claims, error) {
-	cookie, err := c.Request().Cookie(users.CookieName)
+func getClaims(c echo.Context, jwtService *auth.JWTService, cookieName string) (*auth.Claims, error) {
+	cookie, err := c.Request().Cookie(cookieName)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ type wsHub struct {
 	topicSubs map[string]map[*wsConn]*topicSub
 	seq       map[string]uint64
 	bookCache map[string]map[int]bookSnapshot
-	query     *query.Service
+	readBook  func(category int8, symbol string) *orderbook.OrderBook
 }
 
 type topicSub struct {
@@ -106,13 +107,13 @@ func newWsConn(conn *websocket.Conn) *wsConn {
 	return &wsConn{conn: conn}
 }
 
-func newWsHub(queryService *query.Service) *wsHub {
+func newWsHub(readBook func(category int8, symbol string) *orderbook.OrderBook) *wsHub {
 	return &wsHub{
 		userSubs:  make(map[types.UserID]map[*wsConn]struct{}),
 		topicSubs: make(map[string]map[*wsConn]*topicSub),
 		seq:       make(map[string]uint64),
 		bookCache: make(map[string]map[int]bookSnapshot),
-		query:     queryService,
+		readBook:  readBook,
 	}
 }
 
@@ -177,7 +178,7 @@ func (h *wsHub) loadBookSnapshot(topic string, depth int) (bookSnapshot, bool) {
 	return snap, ok
 }
 
-func buildBookSnapshot(snap *query.OrderBookSnapshot) bookSnapshot {
+func buildBookSnapshot(snap orderbook.Snapshot) bookSnapshot {
 	bids := make(map[string]string, len(snap.Bids))
 	for _, lvl := range snap.Bids {
 		bids[lvl.Price.String()] = lvl.Total.String()
@@ -322,10 +323,14 @@ func (h *wsHub) sendOrderbookSnapshot(conn *wsConn, topic string, depth int) {
 	if !ok {
 		return
 	}
-	snap := h.query.GetOrderBook(category, symbol, depth)
-	if snap == nil {
+	book := h.readBook(category, symbol)
+	if book == nil {
 		return
 	}
+	if depth <= 0 {
+		depth = 50
+	}
+	snap := book.Snapshot(depth)
 	seq := h.nextSeq(topic)
 	cache := buildBookSnapshot(snap)
 
@@ -377,10 +382,14 @@ func (h *wsHub) publishOrderbook(topic string) {
 	}
 
 	for depth, conns := range byDepth {
-		snap := h.query.GetOrderBook(category, symbol, depth)
-		if snap == nil {
+		book := h.readBook(category, symbol)
+		if book == nil {
 			continue
 		}
+		if depth <= 0 {
+			depth = 50
+		}
+		snap := book.Snapshot(depth)
 		nextSnapshot := buildBookSnapshot(snap)
 		prevSnapshot, ok := h.loadBookSnapshot(topic, depth)
 		if !ok {

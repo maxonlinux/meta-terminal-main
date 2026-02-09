@@ -8,14 +8,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	apihandlers "github.com/maxonlinux/meta-terminal-go/internal/api/http"
 	wsapi "github.com/maxonlinux/meta-terminal-go/internal/api/ws"
+	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
+	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
+	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
@@ -24,9 +27,18 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
+	if envMap, err := godotenv.Read(); err != nil {
+		log.Printf("env file not loaded: %v", err)
+	} else {
+		for key, value := range envMap {
+			if os.Getenv(key) == "" {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}
 
 	cfg := config.Load()
-	log.Printf("gateway config data_dir=%s", cfg.DataDir)
+	log.Printf("gateway config data_dir=%s port=%s", cfg.DataDir, cfg.Port)
 
 	reg := registry.New()
 
@@ -60,7 +72,14 @@ func main() {
 		_ = ob.Close()
 	}()
 
+	planRepo, err := plan.NewRepository(persistenceStore.DB())
+	if err != nil {
+		log.Fatalf("plan repo: %v", err)
+	}
+	planService := plan.NewService(planRepo, reg)
+
 	eng := engine.NewEngine(ob, reg, nil)
+	eng.SetPlanPolicy(planService)
 	if err := persistenceStore.LoadCore(eng.Store(), eng.Portfolio()); err != nil {
 		log.Fatalf("load core: %v", err)
 	}
@@ -68,8 +87,13 @@ func main() {
 
 	ob.Start()
 
+	kycRepo, err := kyc.NewRepository(persistenceStore.DB())
+	if err != nil {
+		log.Fatalf("kyc repo: %v", err)
+	}
+
 	go func() {
-		if err := runServer(eng, cfg, persistenceStore); err != nil {
+		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, kycRepo); err != nil {
 			log.Printf("gateway error: %v", err)
 		}
 	}()
@@ -79,7 +103,7 @@ func main() {
 	eng.Shutdown()
 }
 
-func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store) error {
+func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository) error {
 	userStore, err := users.NewSQLiteStore(cfg.DataDir)
 	if err != nil {
 		return err
@@ -88,14 +112,16 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 		_ = userStore.Close()
 	}()
 
-	jwtService := users.NewJWTService()
+	jwtService, err := auth.NewJWTService(cfg)
+	if err != nil {
+		log.Fatalf("jwt service: %v", err)
+	}
 	authService := users.NewService(userStore)
 	otpService := otp.NewService()
 	impService := impersonation.NewService(authService)
 
-	queryService := query.New(eng.Registry(), eng.Portfolio(), eng.Store(), eng.TradeFeed(), eng.ReadBook)
-	router := apihandlers.NewRouter(eng, queryService, persistenceStore, userStore, jwtService, authService, otpService, impService)
-	wsHandler := wsapi.NewWsHandler(queryService, jwtService)
+	router := apihandlers.NewRouter(eng, persistenceStore, userStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, cfg)
+	wsHandler := wsapi.NewWsHandler(eng.ReadBook, jwtService, cfg.JwtCookieName)
 	eng.SetPublisher(wsHandler.Publisher())
 	router.SetWsHandler(wsHandler)
 
@@ -104,6 +130,7 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 
 	router.Register(e)
 
-	log.Printf("http server listening on :8080")
-	return e.Start(":8080")
+	addr := ":" + cfg.Port
+	log.Printf("http server listening on %s", addr)
+	return e.Start(addr)
 }

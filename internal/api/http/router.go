@@ -6,12 +6,15 @@ import (
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/ws"
+	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
+	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
+	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 )
 
 type Router struct {
@@ -24,26 +27,37 @@ type Router struct {
 	MarketHandler    *MarketHandler
 	ProfileHandler   *ProfileHandler
 	HistoryHandler   *HistoryHandler
+	AdminHandler     *AdminHandler
+	AdminAuthHandler *AdminAuthHandler
+	KYCHandler       *KYCHandler
 	WsHandler        *ws.WsHandler
-	jwtService       *users.JWTService
+	jwtService       *auth.JWTService
 	otpService       *otp.Service
 	userService      *users.Service
+	otpDisabled      bool
+	// jwtCookieName is used to fetch session cookies in middleware.
+	jwtCookieName string
 }
 
-func NewRouter(eng *engine.Engine, queryService *query.Service, persistenceStore *persistence.Store, userStore users.UserStore, jwtService *users.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service) *Router {
+func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, userStore users.UserStore, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, cfg config.Config) *Router {
 	return &Router{
-		AuthHandler:      NewAuthHandler(authService, jwtService, otpService, impService),
+		AuthHandler:      NewAuthHandler(authService, jwtService, otpService, impService, cfg),
 		OtpHandler:       NewOTPHandler(otpService, authService),
-		UserHandler:      NewUserHandler(authService, queryService, eng, persistenceStore),
-		OrdersHandler:    NewOrdersHandler(eng, queryService),
-		PositionsHandler: NewPositionsHandler(eng, queryService),
-		BalancesHandler:  NewBalancesHandler(queryService),
-		MarketHandler:    NewMarketHandler(queryService),
+		UserHandler:      NewUserHandler(authService, eng, persistenceStore, planService),
+		OrdersHandler:    NewOrdersHandler(eng),
+		PositionsHandler: NewPositionsHandler(eng),
+		BalancesHandler:  NewBalancesHandler(eng),
+		MarketHandler:    NewMarketHandler(eng),
 		ProfileHandler:   NewProfileHandler(authService),
 		HistoryHandler:   NewHistoryHandler(persistenceStore),
+		AdminHandler:     NewAdminHandler(planService, planRepo, authService, persistenceStore, kycRepo, eng, impService),
+		AdminAuthHandler: &AdminAuthHandler{},
+		KYCHandler:       NewKYCHandler(kycRepo, authService),
 		jwtService:       jwtService,
 		otpService:       otpService,
 		userService:      authService,
+		otpDisabled:      cfg.OtpDisabled,
+		jwtCookieName:    cfg.JwtCookieName,
 	}
 }
 
@@ -85,29 +99,27 @@ func (r *Router) Register(e *echo.Echo) {
 	otpRequired := authenticated.Group("")
 	otpRequired.Use(r.OTPMiddleware())
 
-	ordersGroup := authenticated.Group("/orders")
+	ordersGroup := authenticated.Group("/user/orders")
 	ordersGroup.POST("", r.OrdersHandler.Create)
 	ordersGroup.GET("", r.OrdersHandler.List)
 	ordersGroup.GET("/:id", r.OrdersHandler.Get)
 	ordersGroup.DELETE("/:id", r.OrdersHandler.Cancel)
 	ordersGroup.PUT("/:id/amend", r.OrdersHandler.Amend)
 
-	positionsGroup := authenticated.Group("/positions")
+	positionsGroup := authenticated.Group("/user/positions")
 	positionsGroup.GET("", r.PositionsHandler.List)
 	positionsGroup.PUT("/leverage", r.PositionsHandler.SetLeverage)
 	positionsGroup.PATCH("", r.PositionsHandler.UpdateTpSl)
 
-	balancesGroup := authenticated.Group("/balances")
+	balancesGroup := authenticated.Group("/user/balances")
 	balancesGroup.GET("", r.BalancesHandler.List)
 
-	profileGroup := authenticated.Group("/profile")
+	profileGroup := authenticated.Group("/user/profile")
 	profileGroup.GET("", r.ProfileHandler.Get)
+	profileGroup.PATCH("", r.UserHandler.UpdateProfile)
 
 	userGroup := authenticated.Group("/user")
-	userGroup.GET("", r.UserHandler.Profile)
-	userGroup.PATCH("", r.UserHandler.UpdateProfile)
 	userGroup.GET("/plan", r.UserHandler.Plan)
-	userGroup.GET("/balances", r.UserHandler.Balances)
 	userGroup.GET("/balance", r.UserHandler.Balance)
 
 	settingsGroup := authenticated.Group("/user/settings")
@@ -119,6 +131,10 @@ func (r *Router) Register(e *echo.Echo) {
 	settingsOtpGroup.PATCH("/address", r.UserHandler.UpdateAddress)
 	settingsOtpGroup.PUT("/password", r.UserHandler.UpdatePassword)
 
+	kycGroup := authenticated.Group("/user/kyc")
+	kycGroup.GET("", r.KYCHandler.GetUserKYC)
+	kycGroup.POST("", r.KYCHandler.SubmitKYC)
+
 	fundingGroup := authenticated.Group("/user/funding")
 	fundingGroup.GET("", r.UserHandler.FundingList)
 
@@ -126,9 +142,10 @@ func (r *Router) Register(e *echo.Echo) {
 	fundingOtpGroup.POST("/deposit", r.UserHandler.FundingDeposit)
 	fundingOtpGroup.POST("/withdraw", r.UserHandler.FundingWithdraw)
 
-	historyGroup := authenticated.Group("/history")
+	historyGroup := authenticated.Group("/user/history")
 	historyGroup.GET("/orders", r.HistoryHandler.Orders)
 	historyGroup.GET("/fills", r.HistoryHandler.Fills)
+	historyGroup.GET("/pnl", r.HistoryHandler.PnL)
 
 	marketGroup := api.Group("/market")
 	marketGroup.GET("/book", r.MarketHandler.OrderBook)
@@ -136,6 +153,35 @@ func (r *Router) Register(e *echo.Echo) {
 
 	instrumentsGroup := api.Group("/instruments")
 	instrumentsGroup.GET("", r.MarketHandler.Instruments)
+
+	// Backoffice routes and auth endpoints are isolated from user auth.
+	adminGroup := api.Group("/admin")
+
+	// Backoffice auth endpoints are public to allow initial setup/login.
+	adminAuthGroup := adminGroup.Group("/auth")
+	adminAuthGroup.GET("/status", r.AdminAuthHandler.Status)
+	adminAuthGroup.POST("/setup", r.AdminAuthHandler.Setup)
+	adminAuthGroup.POST("/login", r.AdminAuthHandler.Login)
+	adminAuthGroup.POST("/logout", r.AdminAuthHandler.Logout)
+
+	adminGroup.Use(r.AdminMiddleware())
+	adminGroup.GET("/pending-count", r.AdminHandler.PendingCount)
+	adminGroup.GET("/kyc", r.KYCHandler.ListRequests)
+	adminGroup.GET("/kyc/:id", r.KYCHandler.GetRequest)
+	adminGroup.GET("/kyc/:id/files/:fileId", r.KYCHandler.GetFile)
+	adminGroup.PATCH("/kyc/:id", r.KYCHandler.UpdateRequest)
+	adminGroup.GET("/users", r.AdminHandler.Users)
+	adminGroup.GET("/users/:id", r.AdminHandler.User)
+	adminGroup.GET("/users/:id/address", r.AdminHandler.UserAddress)
+	adminGroup.GET("/users/:id/transactions", r.AdminHandler.UserTransactions)
+	adminGroup.GET("/users/:id/impersonate", r.AdminHandler.Impersonate)
+	adminGroup.GET("/funding", r.AdminHandler.Funding)
+	adminGroup.PATCH("/funding/:id/approve", r.AdminHandler.ApproveFunding)
+	adminGroup.PATCH("/funding/:id/cancel", r.AdminHandler.CancelFunding)
+	adminGroup.GET("/existing-plans", r.AdminHandler.ExistingPlans)
+	adminGroup.GET("/users/:id/plan", r.AdminHandler.GetUserPlan)
+	adminGroup.PATCH("/users/:id/plan", r.AdminHandler.SetUserPlan)
+	adminGroup.PATCH("/users/:id/reset-plan", r.AdminHandler.ResetUserPlan)
 }
 
 func (r *Router) Health(c echo.Context) error {
@@ -145,7 +191,7 @@ func (r *Router) Health(c echo.Context) error {
 func (r *Router) AuthMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			cookie, err := c.Request().Cookie(users.CookieName)
+			cookie, err := c.Request().Cookie(r.jwtCookieName)
 			if err != nil {
 				return c.JSON(http.StatusUnauthorized, map[string]interface{}{
 					"success": false,
@@ -156,7 +202,7 @@ func (r *Router) AuthMiddleware() echo.MiddlewareFunc {
 			claims, err := r.jwtService.ValidateToken(cookie.Value)
 			if err != nil {
 				msg := "invalid token"
-				if err == users.ErrExpiredToken {
+				if err == auth.ErrExpiredToken {
 					msg = "token expired"
 				}
 				return c.JSON(http.StatusUnauthorized, map[string]interface{}{
@@ -174,6 +220,10 @@ func (r *Router) AuthMiddleware() echo.MiddlewareFunc {
 func (r *Router) OTPMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// Allow OTP enforcement to be disabled in dev/test environments.
+			if r.otpDisabled {
+				return next(c)
+			}
 			claims := getUser(c)
 			if claims == nil {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -188,6 +238,10 @@ func (r *Router) OTPMiddleware() echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+func (r *Router) AdminMiddleware() echo.MiddlewareFunc {
+	return r.AdminAuthHandler.Middleware()
 }
 
 func (r *Router) CORSMiddleware() echo.MiddlewareFunc {

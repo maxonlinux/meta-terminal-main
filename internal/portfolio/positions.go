@@ -5,6 +5,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 	"github.com/robaho/fixed"
 )
 
@@ -92,6 +93,24 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if math.Sign(rpnl) != 0 {
 		quote := registry.GetQuoteAsset(match.Symbol)
 		s.adjustAvailable(userID, quote, rpnl)
+		if s.onRealizedPnL != nil {
+			// Emit realized PnL for history when a position is reduced.
+			timestamp := match.Timestamp
+			if timestamp == 0 {
+				timestamp = utils.NowNano()
+			}
+			s.onRealizedPnL(types.RealizedPnL{
+				UserID:    userID,
+				OrderID:   order.ID,
+				Symbol:    match.Symbol,
+				Category:  match.Category,
+				Side:      order.Side,
+				Price:     match.Price,
+				Quantity:  closedQty,
+				Realized:  rpnl,
+				Timestamp: timestamp,
+			})
+		}
 	}
 	if s.onReduce != nil {
 		s.onReduce(userID, match.Symbol, pos.Size)

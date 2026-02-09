@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ func NewLoader(cfg config.Config, reg *Registry) *Loader {
 	return &Loader{
 		cfg:    cfg,
 		reg:    reg,
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Timeout: cfg.RegistryTimeout},
 	}
 }
 
@@ -42,34 +43,39 @@ func (l *Loader) Start(ctx context.Context) {
 }
 
 func (l *Loader) sync(ctx context.Context) {
-	symbols, err := l.fetchSymbols(ctx)
+	assets, err := l.fetchSymbols(ctx)
 	if err != nil {
 		fmt.Printf("registry loader: failed to fetch symbols: %v\n", err)
 		return
 	}
 
-	for _, symbol := range symbols {
-		price, err := l.fetchPrice(ctx, symbol)
+	for _, asset := range assets {
+		price, err := l.fetchPrice(ctx, asset.Symbol)
 		if err != nil {
-			fmt.Printf("registry loader: skipping %s: %v\n", symbol, err)
+			fmt.Printf("registry loader: skipping %s: %v\n", asset.Symbol, err)
 			continue
 		}
 		if price <= 0 {
-			fmt.Printf("registry loader: skipping %s: invalid price %d\n", symbol, price)
+			fmt.Printf("registry loader: skipping %s: invalid price %.8f\n", asset.Symbol, price)
 			continue
 		}
 
-		if l.reg.GetInstrument(symbol) != nil {
+		if l.reg.GetInstrument(asset.Symbol) != nil {
 			continue
 		}
 
-		inst := FromSymbol(symbol, price)
-		l.reg.SetInstrument(symbol, inst)
-		fmt.Printf("registry loader: loaded %s (price=%d)\n", symbol, price)
+		inst := FromSymbol(asset.Symbol, price, asset.Type)
+		l.reg.SetInstrument(asset.Symbol, inst)
+		fmt.Printf("registry loader: loaded %s (price=%.8f)\n", asset.Symbol, price)
 	}
 }
 
-func (l *Loader) fetchSymbols(ctx context.Context) ([]string, error) {
+type assetInfo struct {
+	Symbol string `json:"symbol"`
+	Type   string `json:"type"`
+}
+
+func (l *Loader) fetchSymbols(ctx context.Context) ([]assetInfo, error) {
 	url := strings.TrimRight(l.cfg.AssetsURL, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -93,21 +99,14 @@ func (l *Loader) fetchSymbols(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	var assets []struct {
-		Symbol string `json:"symbol"`
-	}
+	var assets []assetInfo
 	if err := json.Unmarshal(body, &assets); err != nil {
 		return nil, err
 	}
-
-	symbols := make([]string, 0, len(assets))
-	for _, a := range assets {
-		symbols = append(symbols, a.Symbol)
-	}
-	return symbols, nil
+	return assets, nil
 }
 
-func (l *Loader) fetchPrice(ctx context.Context, symbol string) (int64, error) {
+func (l *Loader) fetchPrice(ctx context.Context, symbol string) (float64, error) {
 	url := fmt.Sprintf("%s?symbol=%s", strings.TrimRight(l.cfg.MultiplexerURL, "/"), symbol)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -138,8 +137,8 @@ func (l *Loader) fetchPrice(ctx context.Context, symbol string) (int64, error) {
 		return 0, fmt.Errorf("empty price")
 	}
 
-	var price int64
-	if _, err := fmt.Sscanf(string(body), "%d", &price); err != nil {
+	price, err := strconv.ParseFloat(strings.TrimSpace(string(body)), 64)
+	if err != nil {
 		return 0, err
 	}
 	return price, nil

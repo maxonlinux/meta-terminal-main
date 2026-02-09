@@ -8,7 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
+	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -16,13 +16,13 @@ import (
 
 type UserHandler struct {
 	users *users.Service
-	query *query.Service
 	eng   *engine.Engine
 	store *persistence.Store
+	plan  *plan.Service
 }
 
-func NewUserHandler(users *users.Service, queryService *query.Service, eng *engine.Engine, persistenceStore *persistence.Store) *UserHandler {
-	return &UserHandler{users: users, query: queryService, eng: eng, store: persistenceStore}
+func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service) *UserHandler {
+	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService}
 }
 
 func (h *UserHandler) Profile(c echo.Context) error {
@@ -211,12 +211,33 @@ func (h *UserHandler) Plan(c echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
+	if h.plan == nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"current":     nil,
+			"next":        nil,
+			"remaining":   0,
+			"netDeposits": 0,
+		})
+	}
+	progress, err := h.plan.GetUserPlanProgress(claims.UserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load plan"})
+	}
+	current := planNameOrNil(progress.Current)
+	next := planNameOrNil(progress.Next)
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"current":     nil,
-		"next":        nil,
-		"remaining":   0,
-		"netDeposits": 0,
+		"current":     current,
+		"next":        next,
+		"remaining":   progress.Remaining,
+		"netDeposits": progress.NetDeposits,
 	})
+}
+
+func planNameOrNil(name plan.Name) interface{} {
+	if name == "" {
+		return nil
+	}
+	return string(name)
 }
 
 func (h *UserHandler) Balances(c echo.Context) error {
@@ -224,7 +245,7 @@ func (h *UserHandler) Balances(c echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
-	balances := h.query.GetBalances(claims.UserID)
+	balances := h.eng.Portfolio().GetBalances(claims.UserID)
 	resp := make([]map[string]interface{}, 0, len(balances))
 	for _, b := range balances {
 		resp = append(resp, map[string]interface{}{
@@ -245,7 +266,7 @@ func (h *UserHandler) Balance(c echo.Context) error {
 	if currency == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency is required"})
 	}
-	balance := h.query.GetBalance(claims.UserID, currency)
+	balance := h.eng.Portfolio().GetBalance(claims.UserID, currency)
 	if balance == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "balance not found"})
 	}

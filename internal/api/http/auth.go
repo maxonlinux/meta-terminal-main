@@ -4,25 +4,57 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 )
 
 type AuthHandler struct {
-	authService *users.Service
-	jwtService  *users.JWTService
-	otpService  *otp.Service
-	impService  *impersonation.Service
+	authService     *users.Service
+	jwtService      *auth.JWTService
+	otpService      *otp.Service
+	impService      *impersonation.Service
+	jwtCookieName   string
+	jwtCookiePath   string
+	jwtCookieMaxAge int
 }
 
-func NewAuthHandler(authService *users.Service, jwtService *users.JWTService, otpService *otp.Service, impService *impersonation.Service) *AuthHandler {
+func NewAuthHandler(authService *users.Service, jwtService *auth.JWTService, otpService *otp.Service, impService *impersonation.Service, cfg config.Config) *AuthHandler {
 	return &AuthHandler{
-		authService: authService,
-		jwtService:  jwtService,
-		otpService:  otpService,
-		impService:  impService,
+		authService:     authService,
+		jwtService:      jwtService,
+		otpService:      otpService,
+		impService:      impService,
+		jwtCookieName:   cfg.JwtCookieName,
+		jwtCookiePath:   cfg.JwtCookiePath,
+		jwtCookieMaxAge: cfg.JwtCookieMaxAge,
 	}
+}
+
+// setAuthCookie writes the JWT session cookie to the response.
+func (h *AuthHandler) setAuthCookie(c echo.Context, token string) {
+	c.SetCookie(&http.Cookie{
+		Name:     h.jwtCookieName,
+		Value:    token,
+		Path:     h.jwtCookiePath,
+		MaxAge:   h.jwtCookieMaxAge,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// clearAuthCookie expires the JWT session cookie.
+func (h *AuthHandler) clearAuthCookie(c echo.Context) {
+	c.SetCookie(&http.Cookie{
+		Name:     h.jwtCookieName,
+		Value:    "",
+		Path:     h.jwtCookiePath,
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
 }
 
 type RegisterRequest struct {
@@ -76,15 +108,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
 	}
 
-	c.SetCookie(&http.Cookie{
-		Name:     users.CookieName,
-		Value:    token,
-		Path:     users.CookiePath,
-		MaxAge:   users.CookieMaxAge,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setAuthCookie(c, token)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{"token": token})
 }
@@ -115,15 +139,7 @@ func (h *AuthHandler) Recovery(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
 	}
-	c.SetCookie(&http.Cookie{
-		Name:     users.CookieName,
-		Value:    token,
-		Path:     users.CookiePath,
-		MaxAge:   users.CookieMaxAge,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setAuthCookie(c, token)
 	return c.JSON(http.StatusOK, map[string]interface{}{"message": "USER_LOGIN_SUCCESS"})
 }
 
@@ -164,26 +180,12 @@ func (h *AuthHandler) Impersonate(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
 	}
-	c.SetCookie(&http.Cookie{
-		Name:     users.CookieName,
-		Value:    token,
-		Path:     users.CookiePath,
-		MaxAge:   users.CookieMaxAge,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setAuthCookie(c, token)
 	return c.JSON(http.StatusOK, map[string]interface{}{"token": token})
 }
 
 func (h *AuthHandler) Logout(c echo.Context) error {
-	c.SetCookie(&http.Cookie{
-		Name:     users.CookieName,
-		Value:    "",
-		Path:     users.CookiePath,
-		MaxAge:   -1,
-		HttpOnly: true,
-	})
+	h.clearAuthCookie(c)
 
 	return c.NoContent(http.StatusNoContent)
 }

@@ -5,15 +5,17 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
+	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type MarketHandler struct {
-	query *query.Service
+	engine *engine.Engine
 }
 
-func NewMarketHandler(q *query.Service) *MarketHandler {
-	return &MarketHandler{query: q}
+func NewMarketHandler(eng *engine.Engine) *MarketHandler {
+	return &MarketHandler{engine: eng}
 }
 
 type InstrumentResponse struct {
@@ -32,7 +34,17 @@ type InstrumentResponse struct {
 
 func (h *MarketHandler) Instruments(c echo.Context) error {
 	symbol := c.QueryParam("symbol")
-	instruments := h.query.GetInstruments(symbol)
+	var instruments []*types.Instrument
+	if symbol != "" {
+		inst := h.engine.Registry().GetInstrument(symbol)
+		if inst != nil {
+			instruments = []*types.Instrument{inst}
+		} else {
+			instruments = []*types.Instrument{}
+		}
+	} else {
+		instruments = h.engine.Registry().GetInstruments()
+	}
 
 	resp := make([]InstrumentResponse, len(instruments))
 	for i, inst := range instruments {
@@ -79,16 +91,17 @@ func (h *MarketHandler) OrderBook(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	book := h.query.GetOrderBook(category, symbol, 0)
+	book := h.engine.ReadBook(category, symbol)
 	if book == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order book not found"})
 	}
 
-	resp := OrderBookResponse{Symbol: book.Symbol}
-	for _, bid := range book.Bids {
+	snap := snapshotBook(book, 0)
+	resp := OrderBookResponse{Symbol: symbol}
+	for _, bid := range snap.Bids {
 		resp.Bids = append(resp.Bids, BookLevel{Price: bid.Price.String(), Total: bid.Total.String()})
 	}
-	for _, ask := range book.Asks {
+	for _, ask := range snap.Asks {
 		resp.Asks = append(resp.Asks, BookLevel{Price: ask.Price.String(), Total: ask.Total.String()})
 	}
 
@@ -120,7 +133,7 @@ func (h *MarketHandler) Trades(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	trades := h.query.GetPublicTrades(category, symbol)
+	trades := h.engine.TradeFeed().Recent(category, symbol)
 
 	resp := make([]TradeResponse, len(trades))
 	for i, t := range trades {
@@ -137,4 +150,11 @@ func (h *MarketHandler) Trades(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{"trades": resp})
+}
+
+func snapshotBook(book *orderbook.OrderBook, depth int) orderbook.Snapshot {
+	if depth <= 0 {
+		depth = 50
+	}
+	return book.Snapshot(depth)
 }

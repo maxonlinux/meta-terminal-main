@@ -45,5 +45,9 @@ func GetQuoteAsset(symbol string) string {
 
 func GetBaseAsset(symbol string) string {
 	quote := GetQuoteAsset(symbol)
-	return symbol[:len(symbol)-len(quote)]
+	baseLen := len(symbol) - len(quote)
+	if baseLen <= 0 {
+		return symbol
+	}
+	return symbol[:baseLen]
 }

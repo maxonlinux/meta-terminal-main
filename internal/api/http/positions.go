@@ -6,18 +6,16 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
 
 type PositionsHandler struct {
 	engine *engine.Engine
-	query  *query.Service
 }
 
-func NewPositionsHandler(eng *engine.Engine, q *query.Service) *PositionsHandler {
-	return &PositionsHandler{engine: eng, query: q}
+func NewPositionsHandler(eng *engine.Engine) *PositionsHandler {
+	return &PositionsHandler{engine: eng}
 }
 
 func (h *PositionsHandler) List(c echo.Context) error {
@@ -26,7 +24,7 @@ func (h *PositionsHandler) List(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	positions := h.query.GetPositions(claims.UserID)
+	positions := h.engine.Portfolio().GetPositions(claims.UserID)
 
 	resp := make([]map[string]interface{}, len(positions))
 	for i, p := range positions {
@@ -35,6 +33,9 @@ func (h *PositionsHandler) List(c echo.Context) error {
 			"size":       p.Size.String(),
 			"entryPrice": p.EntryPrice.String(),
 			"leverage":   p.Leverage.String(),
+			"takeProfit": p.TakeProfit.String(),
+			"stopLoss":   p.StopLoss.String(),
+			"liqPrice":   p.LiqPrice.String(),
 		}
 	}
 

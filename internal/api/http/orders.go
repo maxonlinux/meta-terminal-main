@@ -6,9 +6,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
+	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
-	"github.com/maxonlinux/meta-terminal-go/internal/query"
-	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -16,11 +15,10 @@ import (
 
 type OrdersHandler struct {
 	engine *engine.Engine
-	query  *query.Service
 }
 
-func NewOrdersHandler(eng *engine.Engine, q *query.Service) *OrdersHandler {
-	return &OrdersHandler{engine: eng, query: q}
+func NewOrdersHandler(eng *engine.Engine) *OrdersHandler {
+	return &OrdersHandler{engine: eng}
 }
 
 type OrderRequest struct {
@@ -153,7 +151,7 @@ func (h *OrdersHandler) List(c echo.Context) error {
 		cat = &parsed
 	}
 
-	orders := h.query.GetOrders(claims.UserID, symbol, cat, "", 0, 0)
+	orders := h.listOrders(claims.UserID, symbol, cat)
 
 	resp := make([]shared.OrderResponse, len(orders))
 	for i, o := range orders {
@@ -174,8 +172,8 @@ func (h *OrdersHandler) Get(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
 
-	order, ok := h.query.GetOrder(claims.UserID, types.OrderID(id))
-	if !ok {
+	order := h.getOrder(claims.UserID, types.OrderID(id))
+	if order == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
 	}
 
@@ -239,11 +237,37 @@ func (h *OrdersHandler) Amend(c echo.Context) error {
 	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(result.Order))
 }
 
-func getUser(c echo.Context) *users.Claims {
+func getUser(c echo.Context) *auth.Claims {
 	if v := c.Get("user"); v != nil {
-		if claims, ok := v.(*users.Claims); ok {
+		if claims, ok := v.(*auth.Claims); ok {
 			return claims
 		}
 	}
 	return nil
+}
+
+func (h *OrdersHandler) listOrders(userID types.UserID, symbol string, category *int8) []*types.Order {
+	orders := h.engine.Store().GetUserOrders(userID)
+	result := make([]*types.Order, 0, len(orders))
+	for _, o := range orders {
+		if o.Origin == constants.ORDER_ORIGIN_SYSTEM {
+			continue
+		}
+		if symbol != "" && o.Symbol != symbol {
+			continue
+		}
+		if category != nil && o.Category != *category {
+			continue
+		}
+		result = append(result, o)
+	}
+	return result
+}
+
+func (h *OrdersHandler) getOrder(userID types.UserID, id types.OrderID) *types.Order {
+	order, ok := h.engine.Store().GetUserOrder(userID, id)
+	if !ok || order.Origin == constants.ORDER_ORIGIN_SYSTEM {
+		return nil
+	}
+	return order
 }

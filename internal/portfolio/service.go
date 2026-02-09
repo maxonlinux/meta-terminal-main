@@ -9,14 +9,16 @@ import (
 
 type OnPositionReduce func(userID types.UserID, symbol string, size types.Quantity)
 type OnBalanceUpdate func(userID types.UserID, asset string, balance *types.Balance)
+type OnRealizedPnL func(event types.RealizedPnL)
 
 type Service struct {
-	Balances  map[types.UserID]map[string]*types.Balance
-	Positions map[types.UserID]map[string]*types.Position
-	Fundings  map[types.FundingID]*types.FundingRequest
-	onReduce  OnPositionReduce
-	onBalance OnBalanceUpdate
-	registry  *registry.Registry
+	Balances      map[types.UserID]map[string]*types.Balance
+	Positions     map[types.UserID]map[string]*types.Position
+	Fundings      map[types.FundingID]*types.FundingRequest
+	onReduce      OnPositionReduce
+	onBalance     OnBalanceUpdate
+	onRealizedPnL OnRealizedPnL
+	registry      *registry.Registry
 }
 
 func New(onReduce OnPositionReduce, reg *registry.Registry) *Service {
@@ -32,6 +34,11 @@ func New(onReduce OnPositionReduce, reg *registry.Registry) *Service {
 
 func (s *Service) SetBalanceUpdate(fn OnBalanceUpdate) {
 	s.onBalance = fn
+}
+
+func (s *Service) OnRealizedPnL(fn OnRealizedPnL) {
+	// Registers a callback for realized PnL events on position reductions.
+	s.onRealizedPnL = fn
 }
 
 func (s *Service) LoadBalance(balance *types.Balance) {

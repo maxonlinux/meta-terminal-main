@@ -5,15 +5,16 @@ import (
 	"github.com/robaho/fixed"
 )
 
-func FromSymbol(symbol string, lastPrice int64) *types.Instrument {
+func FromSymbol(symbol string, lastPrice float64, assetType string) *types.Instrument {
 	base := GetBaseAsset(symbol)
 	quote := GetQuoteAsset(symbol)
-	band := GetPriceBand(float64(lastPrice))
+	band := GetPriceBand(lastPrice)
 
 	return &types.Instrument{
 		Symbol:     symbol,
 		BaseAsset:  base,
 		QuoteAsset: quote,
+		AssetType:  assetType,
 		PricePrec:  band.PricePrecision,
 		QtyPrec:    band.QuantityPrecision,
 		MinQty:     types.Quantity(fixed.NewF(band.MinQty)),

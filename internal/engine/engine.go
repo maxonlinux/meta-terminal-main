@@ -24,6 +24,11 @@ type OrderCallback interface {
 	OnChildOrderCreated(order *types.Order)
 }
 
+type PlanPolicy interface {
+	CheckOrder(userID types.UserID, category int8, symbol string) error
+	CheckLeverage(userID types.UserID, symbol string, leverage types.Leverage) error
+}
+
 type Command interface {
 	Apply(*Engine, outbox.Writer) CommandResult
 }
@@ -52,6 +57,7 @@ type Engine struct {
 	registry   *registry.Registry
 	callback   OrderCallback
 	publisher  EventPublisher
+	planPolicy PlanPolicy
 	locksMu    sync.Mutex
 	locks      map[bookLockKey]*sync.Mutex // symbol & category -> mutex
 }
@@ -76,12 +82,38 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) *Eng
 	e.clearing = clearingService
 	e.portfolio = portfolioService
 	portfolioService.SetBalanceUpdate(e.onBalanceUpdated)
+	portfolioService.OnRealizedPnL(func(event types.RealizedPnL) {
+		// Persist realized PnL as an outbox event for history.
+		if e.outbox == nil {
+			return
+		}
+		tx := e.outbox.Begin()
+		if tx == nil {
+			return
+		}
+		_ = tx.Record(events.EncodeRPNL(events.RPNLEvent{
+			UserID:    event.UserID,
+			OrderID:   event.OrderID,
+			Symbol:    event.Symbol,
+			Category:  event.Category,
+			Side:      event.Side,
+			Price:     event.Price,
+			Quantity:  event.Quantity,
+			Realized:  event.Realized,
+			Timestamp: event.Timestamp,
+		}))
+		_ = tx.Commit()
+	})
 
 	for _, cat := range []int8{constants.CATEGORY_SPOT, constants.CATEGORY_LINEAR} {
 		e.books[cat] = make(map[string]*orderbook.OrderBook)
 	}
 
 	return e
+}
+
+func (e *Engine) SetPlanPolicy(policy PlanPolicy) {
+	e.planPolicy = policy
 }
 
 func (e *Engine) SetPublisher(publisher EventPublisher) {
@@ -317,6 +349,12 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		return CommandResult{Err: constants.ErrInstrumentNotFound}
 	}
 
+	if e.planPolicy != nil && req.Origin == constants.ORDER_ORIGIN_USER {
+		if err := e.planPolicy.CheckOrder(req.UserID, req.Category, req.Symbol); err != nil {
+			return CommandResult{Err: err}
+		}
+	}
+
 	if !req.TriggerPrice.IsZero() && req.Type == constants.ORDER_TYPE_LIMIT {
 		if req.Category == constants.CATEGORY_SPOT {
 			return CommandResult{Err: constants.ErrConditionalSpot}
@@ -529,6 +567,11 @@ func (c *SetLeverageCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	price := e.lastPrices[c.Symbol]
 	if price.Sign() <= 0 {
 		return CommandResult{Err: constants.ErrPriceUnavailable}
+	}
+	if e.planPolicy != nil {
+		if err := e.planPolicy.CheckLeverage(c.UserID, c.Symbol, c.Leverage); err != nil {
+			return CommandResult{Err: err}
+		}
 	}
 	if err := e.checkLeverage(c.UserID, c.Symbol, c.Leverage, price); err != nil {
 		return CommandResult{Err: err}
