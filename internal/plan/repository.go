@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
+	"github.com/robaho/fixed"
 )
 
 // Repository stores user plan data.
@@ -91,25 +93,57 @@ func (r *Repository) ResetManualPlan(userID types.UserID) error {
 }
 
 // NetDeposits calculates net deposits for a user.
-func (r *Repository) NetDeposits(userID types.UserID) (float64, error) {
-	row := r.db.QueryRow(
-		`select
-          coalesce(sum(case when type = ? and status = ? then cast(amount as real) else 0 end), 0),
-          coalesce(sum(case when type = ? and status = ? then cast(amount as real) else 0 end), 0)
-        from fundings
-        where user_id = ?`,
-		string(types.FundingTypeDeposit),
-		string(types.FundingStatusCompleted),
-		string(types.FundingTypeWithdrawal),
-		string(types.FundingStatusCompleted),
+
+func (r *Repository) NetDeposits(userID types.UserID) (types.Quantity, error) {
+	// Sum deposits/withdrawals in fixed-point to avoid float rounding.
+	rows, err := r.db.Query(
+		`select type, amount from fundings where user_id = ? and status = ?`,
 		uint64(userID),
+		string(types.FundingStatusCompleted),
 	)
-	var deposits float64
-	var withdrawals float64
-	if err := row.Scan(&deposits, &withdrawals); err != nil {
-		return 0, err
+	if err != nil {
+		return types.Quantity{}, err
 	}
-	return deposits - withdrawals, nil
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	deposits := types.Quantity(math.Zero)
+	withdrawals := types.Quantity(math.Zero)
+	for rows.Next() {
+		var fundingType string
+		var amountRaw string
+		if err := rows.Scan(&fundingType, &amountRaw); err != nil {
+			return types.Quantity{}, err
+		}
+		amount, err := parseFundingAmount(amountRaw)
+		if err != nil {
+			return types.Quantity{}, err
+		}
+		if fundingType == string(types.FundingTypeDeposit) {
+			deposits = types.Quantity(math.Add(deposits, amount))
+			continue
+		}
+		if fundingType == string(types.FundingTypeWithdrawal) {
+			withdrawals = types.Quantity(math.Add(withdrawals, amount))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return types.Quantity{}, err
+	}
+	return types.Quantity(math.Sub(deposits, withdrawals)), nil
+}
+
+func parseFundingAmount(value string) (types.Quantity, error) {
+	// Parse stored decimal strings into fixed-point quantities.
+	if value == "" {
+		return types.Quantity(math.Zero), nil
+	}
+	parsed, err := fixed.Parse(value)
+	if err != nil {
+		return types.Quantity{}, err
+	}
+	return types.Quantity(parsed), nil
 }
 
 // ensureSchema creates user plan tables and indexes.

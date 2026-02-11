@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -1093,11 +1092,12 @@ func parseFixed(value string) types.Quantity {
 	if value == "" {
 		return types.Quantity{}
 	}
-	parsed, err := strconv.ParseFloat(value, 64)
+	// Parse fixed-point values directly from strings to avoid float rounding.
+	parsed, err := fixed.Parse(value)
 	if err != nil {
 		return types.Quantity{}
 	}
-	return types.Quantity(fixed.NewF(parsed))
+	return types.Quantity(parsed)
 }
 
 func boolToInt(v bool) int {

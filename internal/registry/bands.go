@@ -1,27 +1,74 @@
 package registry
 
+import (
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
+)
+
 type PriceBand struct {
-	MinPrice          float64
+	MinPrice          types.Price
 	PricePrecision    int8
 	QuantityPrecision int8
-	TickSize          float64
-	StepSize          float64
-	MinQty            float64
-	MinNotional       float64
+	TickSize          types.Price
+	StepSize          types.Quantity
+	MinQty            types.Quantity
+	MinNotional       types.Quantity
 }
 
 var PriceBands = []PriceBand{
-	{1000.0, 2, 6, 0.01, 0.000001, 0.000001, 5},
-	{100.0, 3, 6, 0.001, 0.000001, 0.000001, 5},
-	{1.0, 4, 6, 0.0001, 0.000001, 0.000001, 5},
-	{0.01, 5, 0, 0.00001, 1, 1, 5},
-	{0.0, 8, 0, 0.00000001, 1, 1, 0.1},
+	{
+		MinPrice:          types.Price(fixed.MustParse("1000")),
+		PricePrecision:    2,
+		QuantityPrecision: 6,
+		TickSize:          types.Price(fixed.MustParse("0.01")),
+		StepSize:          types.Quantity(fixed.MustParse("0.000001")),
+		MinQty:            types.Quantity(fixed.MustParse("0.000001")),
+		MinNotional:       types.Quantity(fixed.MustParse("5")),
+	},
+	{
+		MinPrice:          types.Price(fixed.MustParse("100")),
+		PricePrecision:    3,
+		QuantityPrecision: 6,
+		TickSize:          types.Price(fixed.MustParse("0.001")),
+		StepSize:          types.Quantity(fixed.MustParse("0.000001")),
+		MinQty:            types.Quantity(fixed.MustParse("0.000001")),
+		MinNotional:       types.Quantity(fixed.MustParse("5")),
+	},
+	{
+		MinPrice:          types.Price(fixed.MustParse("1")),
+		PricePrecision:    4,
+		QuantityPrecision: 6,
+		TickSize:          types.Price(fixed.MustParse("0.0001")),
+		StepSize:          types.Quantity(fixed.MustParse("0.000001")),
+		MinQty:            types.Quantity(fixed.MustParse("0.000001")),
+		MinNotional:       types.Quantity(fixed.MustParse("5")),
+	},
+	{
+		MinPrice:          types.Price(fixed.MustParse("0.01")),
+		PricePrecision:    5,
+		QuantityPrecision: 0,
+		TickSize:          types.Price(fixed.MustParse("0.00001")),
+		StepSize:          types.Quantity(fixed.MustParse("1")),
+		MinQty:            types.Quantity(fixed.MustParse("1")),
+		MinNotional:       types.Quantity(fixed.MustParse("5")),
+	},
+	{
+		MinPrice:          types.Price(fixed.MustParse("0")),
+		PricePrecision:    8,
+		QuantityPrecision: 0,
+		TickSize:          types.Price(fixed.MustParse("0.00000001")),
+		StepSize:          types.Quantity(fixed.MustParse("1")),
+		MinQty:            types.Quantity(fixed.MustParse("1")),
+		MinNotional:       types.Quantity(fixed.MustParse("0.1")),
+	},
 }
 
-func GetPriceBand(price float64) *PriceBand {
-	for _, band := range PriceBands {
-		if price >= band.MinPrice {
-			return &band
+func GetPriceBand(price types.Price) *PriceBand {
+	// Return a pointer to the slice element to avoid range-copy pointer bugs.
+	for i := range PriceBands {
+		if math.Cmp(price, PriceBands[i].MinPrice) >= 0 {
+			return &PriceBands[i]
 		}
 	}
 	return &PriceBands[len(PriceBands)-1]

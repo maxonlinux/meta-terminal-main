@@ -7,7 +7,8 @@ import (
 	"github.com/robaho/fixed"
 )
 
-func FromSymbol(symbol string, lastPrice float64, assetType string) *types.Instrument {
+func FromSymbol(symbol string, lastPrice types.Price, assetType string) *types.Instrument {
+	// Select price band using fixed-point price to avoid float rounding.
 	base, quote := splitSymbol(symbol)
 	band := GetPriceBand(lastPrice)
 
@@ -18,12 +19,12 @@ func FromSymbol(symbol string, lastPrice float64, assetType string) *types.Instr
 		AssetType:  assetType,
 		PricePrec:  band.PricePrecision,
 		QtyPrec:    band.QuantityPrecision,
-		MinQty:     types.Quantity(fixed.NewF(band.MinQty)),
-		MaxQty:     types.Quantity(fixed.NewF(999999999)),
-		MinPrice:   types.Price(fixed.NewF(0)),
-		MaxPrice:   types.Price(fixed.NewF(999999999)),
-		TickSize:   types.Price(fixed.NewF(band.TickSize)),
-		LotSize:    types.Quantity(fixed.NewF(band.StepSize)),
+		MinQty:     band.MinQty,
+		MaxQty:     types.Quantity(fixed.NewI(999999999, 0)),
+		MinPrice:   types.Price(fixed.NewI(0, 0)),
+		MaxPrice:   types.Price(fixed.NewI(999999999, 0)),
+		TickSize:   band.TickSize,
+		LotSize:    band.StepSize,
 	}
 }
 

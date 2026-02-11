@@ -46,18 +46,18 @@ func (h *OrdersHandler) Create(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 
-	qty, err := strconv.ParseFloat(req.Quantity, 64)
+	qty, err := fixed.Parse(req.Quantity)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid quantity"})
 	}
 
 	price := types.Price(fixed.NewI(0, 0))
 	if req.Price != nil {
-		p, err := strconv.ParseFloat(*req.Price, 64)
+		p, err := fixed.Parse(*req.Price)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid price"})
 		}
-		price = types.Price(fixed.NewF(p))
+		price = types.Price(p)
 	}
 
 	category, err := shared.ParseCategoryParam(req.Category)
@@ -92,11 +92,11 @@ func (h *OrdersHandler) Create(c *echo.Context) error {
 
 	triggerPrice := types.Price(fixed.NewI(0, 0))
 	if req.TriggerPrice != nil {
-		tp, err := strconv.ParseFloat(*req.TriggerPrice, 64)
+		tp, err := fixed.Parse(*req.TriggerPrice)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid trigger price"})
 		}
-		triggerPrice = types.Price(fixed.NewF(tp))
+		triggerPrice = types.Price(tp)
 	}
 
 	stopOrderType := int8(0)
@@ -117,7 +117,7 @@ func (h *OrdersHandler) Create(c *echo.Context) error {
 			Side:           side,
 			Type:           orderType,
 			TIF:            tif,
-			Quantity:       types.Quantity(fixed.NewF(qty)),
+			Quantity:       types.Quantity(qty),
 			Price:          price,
 			TriggerPrice:   triggerPrice,
 			ReduceOnly:     req.ReduceOnly != nil && *req.ReduceOnly,
@@ -219,7 +219,7 @@ func (h *OrdersHandler) Amend(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 
-	qty, err := strconv.ParseFloat(req.Quantity, 64)
+	qty, err := fixed.Parse(req.Quantity)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid quantity"})
 	}
@@ -227,7 +227,7 @@ func (h *OrdersHandler) Amend(c *echo.Context) error {
 	result := h.engine.Cmd(&engine.AmendOrderCmd{
 		UserID:  claims.UserID,
 		OrderID: types.OrderID(id),
-		NewQty:  types.Quantity(fixed.NewF(qty)),
+		NewQty:  types.Quantity(qty),
 	})
 
 	if result.Err != nil {

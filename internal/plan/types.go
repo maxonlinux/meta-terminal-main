@@ -1,5 +1,7 @@
 package plan
 
+import "github.com/maxonlinux/meta-terminal-go/pkg/types"
+
 type Name string
 
 const (
@@ -13,16 +15,18 @@ const (
 	PlanProfessional Name = "PROFESSIONAL"
 )
 
+// Progress stores fixed-point amounts to avoid rounding errors.
 type Progress struct {
-	Current     Name    `json:"current"`
-	Next        Name    `json:"next"`
-	Remaining   float64 `json:"remaining"`
-	NetDeposits float64 `json:"netDeposits"`
+	Current     Name           `json:"current"`
+	Next        Name           `json:"next"`
+	Remaining   types.Quantity `json:"remaining"`
+	NetDeposits types.Quantity `json:"netDeposits"`
 }
 
+// Rule uses fixed-point thresholds and leverage limits for accuracy.
 type Rule struct {
 	Name        Name
-	Threshold   float64
-	MaxLeverage float64
+	Threshold   types.Quantity
+	MaxLeverage types.Leverage
 	AssetTypes  map[string]struct{}
 }

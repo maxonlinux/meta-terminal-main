@@ -1,10 +1,9 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -38,11 +37,12 @@ func (s *Service) GetUserPlanProgress(userID types.UserID) (Progress, error) {
 	}
 
 	current, next := s.calculatePlan(netDeposits)
-	remaining := 0.0
+	// Keep remaining in fixed-point to avoid float rounding.
+	remaining := types.Quantity(math.Zero)
 	if next != nil {
-		remaining = next.Threshold - netDeposits
-		if remaining < 0 {
-			remaining = 0
+		remaining = types.Quantity(math.Sub(next.Threshold, netDeposits))
+		if math.Sign(remaining) < 0 {
+			remaining = types.Quantity(math.Zero)
 		}
 	}
 
@@ -74,7 +74,7 @@ func (s *Service) CheckOrder(userID types.UserID, category int8, symbol string) 
 	if rule == nil {
 		return nil
 	}
-	if category == constants.CATEGORY_LINEAR && rule.MaxLeverage <= 0 {
+	if category == constants.CATEGORY_LINEAR && math.Sign(rule.MaxLeverage) <= 0 {
 		return constants.ErrPlanLinearNotAllowed
 	}
 	if !s.assetTypeAllowed(rule, symbol) {
@@ -91,14 +91,15 @@ func (s *Service) CheckLeverage(userID types.UserID, symbol string, leverage typ
 	if rule == nil {
 		return nil
 	}
-	if rule.MaxLeverage <= 0 {
+	if math.Sign(rule.MaxLeverage) <= 0 {
 		return constants.ErrPlanLinearNotAllowed
 	}
 	if !s.assetTypeAllowed(rule, symbol) {
 		return constants.ErrPlanAssetNotAllowed
 	}
-	limit := fixed.NewF(rule.MaxLeverage)
-	if leverage.Cmp(limit) > 0 {
+	// Compare leverage using fixed-point values.
+	limit := rule.MaxLeverage
+	if math.Cmp(leverage, limit) > 0 {
 		return constants.ErrPlanLeverageTooHigh
 	}
 	return nil
@@ -139,20 +140,18 @@ func (s *Service) assetTypeAllowed(rule *Rule, symbol string) bool {
 	return ok
 }
 
-func (s *Service) calculatePlan(netDeposits float64) (*Rule, *Rule) {
+func (s *Service) calculatePlan(netDeposits types.Quantity) (*Rule, *Rule) {
+	// Single pass keeps the current and next rules without extra scans.
 	var current *Rule
-	for i := range s.plans {
-		plan := &s.plans[i]
-		if netDeposits >= plan.Threshold {
-			current = plan
-		}
-	}
 	var next *Rule
 	for i := range s.plans {
 		plan := &s.plans[i]
-		if netDeposits < plan.Threshold {
+		if math.Cmp(netDeposits, plan.Threshold) >= 0 {
+			current = plan
+			continue
+		}
+		if next == nil {
 			next = plan
-			break
 		}
 	}
 	return current, next
@@ -174,12 +173,13 @@ func nameOrEmpty(rule *Rule) Name {
 	return rule.Name
 }
 
+// defaultRules defines fixed-point thresholds and leverage limits.
 func defaultRules() []Rule {
 	return []Rule{
 		{
 			Name:        PlanLowBase,
-			Threshold:   10,
-			MaxLeverage: 0,
+			Threshold:   types.Quantity(fixed.NewI(10, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(0, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -187,8 +187,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanBase,
-			Threshold:   500,
-			MaxLeverage: 0,
+			Threshold:   types.Quantity(fixed.NewI(500, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(0, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -196,8 +196,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanStandard,
-			Threshold:   1000,
-			MaxLeverage: 5,
+			Threshold:   types.Quantity(fixed.NewI(1000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(5, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -205,8 +205,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanSilver,
-			Threshold:   5000,
-			MaxLeverage: 10,
+			Threshold:   types.Quantity(fixed.NewI(5000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(10, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -214,8 +214,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanGold,
-			Threshold:   10000,
-			MaxLeverage: 15,
+			Threshold:   types.Quantity(fixed.NewI(10000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(15, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -226,8 +226,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanPlatinum,
-			Threshold:   25000,
-			MaxLeverage: 20,
+			Threshold:   types.Quantity(fixed.NewI(25000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(20, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -238,8 +238,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanAdvanced,
-			Threshold:   50000,
-			MaxLeverage: 25,
+			Threshold:   types.Quantity(fixed.NewI(50000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(25, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -250,8 +250,8 @@ func defaultRules() []Rule {
 		},
 		{
 			Name:        PlanProfessional,
-			Threshold:   100000,
-			MaxLeverage: 30,
+			Threshold:   types.Quantity(fixed.NewI(100000, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(30, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -270,8 +270,4 @@ func assetSet(values ...string) map[string]struct{} {
 		set[v] = struct{}{}
 	}
 	return set
-}
-
-func (s *Service) Debug() string {
-	return fmt.Sprintf("plans=%d", len(s.plans))
 }

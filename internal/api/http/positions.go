@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -62,7 +61,7 @@ func (h *PositionsHandler) SetLeverage(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 
-	lev, err := strconv.ParseFloat(req.Leverage, 64)
+	lev, err := fixed.Parse(req.Leverage)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid leverage"})
 	}
@@ -70,7 +69,7 @@ func (h *PositionsHandler) SetLeverage(c *echo.Context) error {
 	result := h.engine.Cmd(&engine.SetLeverageCmd{
 		UserID:   claims.UserID,
 		Symbol:   symbol,
-		Leverage: types.Leverage(fixed.NewF(lev)),
+		Leverage: types.Leverage(lev),
 	})
 
 	if result.Err != nil {
@@ -104,18 +103,18 @@ func (h *PositionsHandler) UpdateTpSl(c *echo.Context) error {
 	var tp types.Price
 	var sl types.Price
 	if req.TP != nil && *req.TP != "" {
-		v, err := strconv.ParseFloat(*req.TP, 64)
+		v, err := fixed.Parse(*req.TP)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tp"})
 		}
-		tp = types.Price(fixed.NewF(v))
+		tp = types.Price(v)
 	}
 	if req.SL != nil && *req.SL != "" {
-		v, err := strconv.ParseFloat(*req.SL, 64)
+		v, err := fixed.Parse(*req.SL)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid sl"})
 		}
-		sl = types.Price(fixed.NewF(v))
+		sl = types.Price(v)
 	}
 
 	result := h.engine.Cmd(&engine.UpdateTpSlCmd{

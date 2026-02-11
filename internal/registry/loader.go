@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
 )
 
 type Loader struct {
@@ -45,18 +48,20 @@ func (l *Loader) Start(ctx context.Context) {
 func (l *Loader) sync(ctx context.Context) {
 	assets, err := l.fetchSymbols(ctx)
 	if err != nil {
-		fmt.Printf("registry loader: failed to fetch symbols: %v\n", err)
+		// Use the standard logger for consistent output formatting.
+		log.Printf("registry loader: failed to fetch symbols: %v", err)
 		return
 	}
 
 	for _, asset := range assets {
 		price, err := l.fetchPrice(ctx, asset.Symbol)
 		if err != nil {
-			fmt.Printf("registry loader: skipping %s: %v\n", asset.Symbol, err)
+			log.Printf("registry loader: skipping %s: %v", asset.Symbol, err)
 			continue
 		}
-		if price <= 0 {
-			fmt.Printf("registry loader: skipping %s: invalid price %.8f\n", asset.Symbol, price)
+		if math.Sign(price) <= 0 {
+			// Reject non-positive prices before registering instruments.
+			log.Printf("registry loader: skipping %s: invalid price %s", asset.Symbol, price.String())
 			continue
 		}
 
@@ -66,7 +71,7 @@ func (l *Loader) sync(ctx context.Context) {
 
 		inst := FromSymbol(asset.Symbol, price, asset.Type)
 		l.reg.SetInstrument(asset.Symbol, inst)
-		fmt.Printf("registry loader: loaded %s (price=%.8f)\n", asset.Symbol, price)
+		log.Printf("registry loader: loaded %s (price=%s)", asset.Symbol, price.String())
 	}
 }
 
@@ -106,40 +111,40 @@ func (l *Loader) fetchSymbols(ctx context.Context) ([]assetInfo, error) {
 	return assets, nil
 }
 
-func (l *Loader) fetchPrice(ctx context.Context, symbol string) (float64, error) {
+func (l *Loader) fetchPrice(ctx context.Context, symbol string) (types.Price, error) {
 	url := fmt.Sprintf("%s?symbol=%s", strings.TrimRight(l.cfg.MultiplexerURL, "/"), symbol)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, err
+		return types.Price{}, err
 	}
 
 	resp, err := l.client.Do(req)
 	if err != nil {
-		return 0, err
+		return types.Price{}, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent {
-		return 0, fmt.Errorf("not found")
+		return types.Price{}, fmt.Errorf("not found")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("status %d", resp.StatusCode)
+		return types.Price{}, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, err
+		return types.Price{}, err
 	}
 
 	if len(body) == 0 || string(body) == "null" {
-		return 0, fmt.Errorf("empty price")
+		return types.Price{}, fmt.Errorf("empty price")
 	}
-
-	price, err := strconv.ParseFloat(strings.TrimSpace(string(body)), 64)
+	// Parse prices as fixed-point to avoid float rounding.
+	price, err := fixed.Parse(strings.TrimSpace(string(body)))
 	if err != nil {
-		return 0, err
+		return types.Price{}, err
 	}
-	return price, nil
+	return types.Price(price), nil
 }

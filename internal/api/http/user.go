@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -212,11 +211,12 @@ func (h *UserHandler) Plan(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 	if h.plan == nil {
+		// Return amount-like values as strings for fixed-point consistency.
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"current":     nil,
 			"next":        nil,
-			"remaining":   0,
-			"netDeposits": 0,
+			"remaining":   "0",
+			"netDeposits": "0",
 		})
 	}
 	progress, err := h.plan.GetUserPlanProgress(claims.UserID)
@@ -225,11 +225,12 @@ func (h *UserHandler) Plan(c *echo.Context) error {
 	}
 	current := planNameOrNil(progress.Current)
 	next := planNameOrNil(progress.Next)
+	// Serialize fixed-point values as strings to preserve precision.
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"current":     current,
 		"next":        next,
-		"remaining":   progress.Remaining,
-		"netDeposits": progress.NetDeposits,
+		"remaining":   progress.Remaining.String(),
+		"netDeposits": progress.NetDeposits.String(),
 	})
 }
 
@@ -328,11 +329,11 @@ func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	amount, err := strconv.ParseFloat(req.Amount, 64)
+	amount, err := fixed.Parse(req.Amount)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 	}
-	res := h.eng.Cmd(&engine.CreateDepositCmd{UserID: claims.UserID, Asset: req.Asset, Amount: types.Quantity(fixed.NewF(amount)), Destination: req.Destination, CreatedBy: types.FundingCreatedByUser})
+	res := h.eng.Cmd(&engine.CreateDepositCmd{UserID: claims.UserID, Asset: req.Asset, Amount: types.Quantity(amount), Destination: req.Destination, CreatedBy: types.FundingCreatedByUser})
 	if res.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
 	}
@@ -348,11 +349,11 @@ func (h *UserHandler) FundingWithdraw(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	amount, err := strconv.ParseFloat(req.Amount, 64)
+	amount, err := fixed.Parse(req.Amount)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 	}
-	res := h.eng.Cmd(&engine.CreateWithdrawalCmd{UserID: claims.UserID, Asset: req.Asset, Amount: types.Quantity(fixed.NewF(amount)), Destination: req.Destination, CreatedBy: types.FundingCreatedByUser})
+	res := h.eng.Cmd(&engine.CreateWithdrawalCmd{UserID: claims.UserID, Asset: req.Asset, Amount: types.Quantity(amount), Destination: req.Destination, CreatedBy: types.FundingCreatedByUser})
 	if res.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
 	}

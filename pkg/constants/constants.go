@@ -34,7 +34,7 @@ const (
 	BUCKET_MARGIN    = 2
 
 	DEFAULT_LEVERAGE = 2
-	MM_RATIO         = 0.1
+	MM_RATIO         = "0.1"
 
 	STOP_ORDER_TYPE_NORMAL      = 0
 	STOP_ORDER_TYPE_STOP        = 1

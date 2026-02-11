@@ -71,7 +71,8 @@ func LiquidationPrice(entryPrice types.Price, leverage types.Leverage, size type
 	}
 
 	invLeverage := math.Div(one, leverage)
-	maintenance := fixed.NewF(constants.MM_RATIO)
+	// Parse maintenance margin ratio as fixed-point for accuracy.
+	maintenance := fixed.MustParse(constants.MM_RATIO)
 	ratio := math.Sub(invLeverage, maintenance)
 	if math.Sign(size) > 0 {
 		return types.Price(math.Mul(entryPrice, math.Sub(one, ratio)))
