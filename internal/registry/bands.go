@@ -26,28 +26,3 @@ func GetPriceBand(price float64) *PriceBand {
 	}
 	return &PriceBands[len(PriceBands)-1]
 }
-
-func GetQuoteAsset(symbol string) string {
-	if len(symbol) >= 4 {
-		quote := symbol[len(symbol)-4:]
-		if quote == "USDT" || quote == "USDC" || quote == "BUSD" {
-			return quote
-		}
-	}
-	if len(symbol) >= 3 {
-		quote := symbol[len(symbol)-3:]
-		if quote == "USD" {
-			return quote
-		}
-	}
-	return "USD"
-}
-
-func GetBaseAsset(symbol string) string {
-	quote := GetQuoteAsset(symbol)
-	baseLen := len(symbol) - len(quote)
-	if baseLen <= 0 {
-		return symbol
-	}
-	return symbol[:baseLen]
-}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -31,7 +31,7 @@ type AdminClaims struct {
 	jwt.RegisteredClaims
 }
 
-func (h *AdminAuthHandler) Status(c echo.Context) error {
+func (h *AdminAuthHandler) Status(c *echo.Context) error {
 	// Returns whether the admin password has been initialized.
 	initialized, err := isAdminPasswordInitialized()
 	if err != nil {
@@ -40,7 +40,7 @@ func (h *AdminAuthHandler) Status(c echo.Context) error {
 	return c.JSON(http.StatusOK, AdminAuthStatusResponse{Initialized: initialized})
 }
 
-func (h *AdminAuthHandler) Setup(c echo.Context) error {
+func (h *AdminAuthHandler) Setup(c *echo.Context) error {
 	// Creates the admin password if it does not exist yet.
 	var req AdminSetupRequest
 	if err := c.Bind(&req); err != nil {
@@ -66,7 +66,7 @@ func (h *AdminAuthHandler) Setup(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (h *AdminAuthHandler) Login(c echo.Context) error {
+func (h *AdminAuthHandler) Login(c *echo.Context) error {
 	// Validates the password and issues an admin session cookie.
 	var req AdminLoginRequest
 	if err := c.Bind(&req); err != nil {
@@ -95,7 +95,7 @@ func (h *AdminAuthHandler) Login(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{"success": true})
 }
 
-func (h *AdminAuthHandler) Logout(c echo.Context) error {
+func (h *AdminAuthHandler) Logout(c *echo.Context) error {
 	// Clears the admin session cookie.
 	c.SetCookie(&http.Cookie{
 		Name:     adminCookieName(),
@@ -115,7 +115,7 @@ func (h *AdminAuthHandler) Middleware() echo.MiddlewareFunc {
 
 func (h *AdminAuthHandler) requireAdminCookie() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			cookie, err := c.Request().Cookie(adminCookieName())
 			if err != nil {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "not authenticated"})

@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
@@ -32,7 +32,7 @@ type InstrumentResponse struct {
 	LotSize    string `json:"lotSize"`
 }
 
-func (h *MarketHandler) Instruments(c echo.Context) error {
+func (h *MarketHandler) Instruments(c *echo.Context) error {
 	symbol := c.QueryParam("symbol")
 	var instruments []*types.Instrument
 	if symbol != "" {
@@ -77,7 +77,7 @@ type OrderBookResponse struct {
 	Asks   []BookLevel `json:"asks"`
 }
 
-func (h *MarketHandler) OrderBook(c echo.Context) error {
+func (h *MarketHandler) OrderBook(c *echo.Context) error {
 	symbol := c.QueryParam("symbol")
 	categoryParam := c.QueryParam("category")
 	if symbol == "" {
@@ -119,7 +119,7 @@ type TradeResponse struct {
 	Timestamp uint64 `json:"timestamp"`
 }
 
-func (h *MarketHandler) Trades(c echo.Context) error {
+func (h *MarketHandler) Trades(c *echo.Context) error {
 	symbol := c.QueryParam("symbol")
 	categoryParam := c.QueryParam("category")
 	if symbol == "" {

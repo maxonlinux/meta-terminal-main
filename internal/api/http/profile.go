@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 )
 
@@ -15,7 +15,7 @@ func NewProfileHandler(service *users.Service) *ProfileHandler {
 	return &ProfileHandler{service: service}
 }
 
-func (h *ProfileHandler) Get(c echo.Context) error {
+func (h *ProfileHandler) Get(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})

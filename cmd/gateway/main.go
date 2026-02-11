@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	apihandlers "github.com/maxonlinux/meta-terminal-go/internal/api/http"
 	wsapi "github.com/maxonlinux/meta-terminal-go/internal/api/ws"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
@@ -126,7 +126,6 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 	router.SetWsHandler(wsHandler)
 
 	e := echo.New()
-	e.HideBanner = true
 
 	router.Register(e)
 

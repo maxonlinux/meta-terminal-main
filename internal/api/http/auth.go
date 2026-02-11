@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
@@ -34,7 +34,7 @@ func NewAuthHandler(authService *users.Service, jwtService *auth.JWTService, otp
 }
 
 // setAuthCookie writes the JWT session cookie to the response.
-func (h *AuthHandler) setAuthCookie(c echo.Context, token string) {
+func (h *AuthHandler) setAuthCookie(c *echo.Context, token string) {
 	c.SetCookie(&http.Cookie{
 		Name:     h.jwtCookieName,
 		Value:    token,
@@ -47,7 +47,7 @@ func (h *AuthHandler) setAuthCookie(c echo.Context, token string) {
 }
 
 // clearAuthCookie expires the JWT session cookie.
-func (h *AuthHandler) clearAuthCookie(c echo.Context) {
+func (h *AuthHandler) clearAuthCookie(c *echo.Context) {
 	c.SetCookie(&http.Cookie{
 		Name:     h.jwtCookieName,
 		Value:    "",
@@ -64,7 +64,7 @@ type RegisterRequest struct {
 	Phone    string `json:"phone"`
 }
 
-func (h *AuthHandler) Register(c echo.Context) error {
+func (h *AuthHandler) Register(c *echo.Context) error {
 	var req RegisterRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -83,7 +83,7 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-func (h *AuthHandler) Login(c echo.Context) error {
+func (h *AuthHandler) Login(c *echo.Context) error {
 	var req LoginRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -123,7 +123,7 @@ type ActivateRequest struct {
 	OTP      string `json:"otp"`
 }
 
-func (h *AuthHandler) Recovery(c echo.Context) error {
+func (h *AuthHandler) Recovery(c *echo.Context) error {
 	var req RecoveryRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -143,7 +143,7 @@ func (h *AuthHandler) Recovery(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"message": "USER_LOGIN_SUCCESS"})
 }
 
-func (h *AuthHandler) Activate(c echo.Context) error {
+func (h *AuthHandler) Activate(c *echo.Context) error {
 	var req ActivateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -163,7 +163,7 @@ func (h *AuthHandler) Activate(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "USER_ACTIVATE_SUCCESS"})
 }
 
-func (h *AuthHandler) Impersonate(c echo.Context) error {
+func (h *AuthHandler) Impersonate(c *echo.Context) error {
 	code := c.Param("code")
 	if code == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code is required"})
@@ -184,7 +184,7 @@ func (h *AuthHandler) Impersonate(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"token": token})
 }
 
-func (h *AuthHandler) Logout(c echo.Context) error {
+func (h *AuthHandler) Logout(c *echo.Context) error {
 	h.clearAuthCookie(c)
 
 	return c.NoContent(http.StatusNoContent)

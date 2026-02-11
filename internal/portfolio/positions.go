@@ -1,7 +1,6 @@
 package portfolio
 
 import (
-	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -37,7 +36,15 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 		return nil
 	}
 
-	quote := registry.GetQuoteAsset(symbol)
+	// Resolve quote asset from registry to apply margin changes correctly.
+	if s.registry == nil {
+		return constants.ErrInstrumentNotFound
+	}
+	inst := s.registry.GetInstrument(symbol)
+	if inst == nil {
+		return constants.ErrInstrumentNotFound
+	}
+	quote := inst.QuoteAsset
 	notional := types.Quantity(math.Mul(pos.EntryPrice, absPositionSize(pos.Size)))
 	oldMargin := types.Quantity(math.Div(notional, oldLeverage))
 	newMargin := types.Quantity(math.Div(notional, newLeverage))
@@ -91,7 +98,15 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	closedQty := absPositionSize(signedTrade)
 	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, pos.Size)
 	if math.Sign(rpnl) != 0 {
-		quote := registry.GetQuoteAsset(match.Symbol)
+		// Use registry quote asset for realized PnL balance adjustment.
+		if s.registry == nil {
+			return
+		}
+		inst := s.registry.GetInstrument(match.Symbol)
+		if inst == nil {
+			return
+		}
+		quote := inst.QuoteAsset
 		s.adjustAvailable(userID, quote, rpnl)
 		if s.onRealizedPnL != nil {
 			// Emit realized PnL for history when a position is reduced.

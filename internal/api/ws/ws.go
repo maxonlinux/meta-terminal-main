@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -33,7 +33,7 @@ func (h *WsHandler) Publisher() engine.EventPublisher {
 	return h.hub
 }
 
-func (h *WsHandler) Market(c echo.Context) error {
+func (h *WsHandler) Market(c *echo.Context) error {
 	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func (h *WsHandler) Market(c echo.Context) error {
 	return nil
 }
 
-func (h *WsHandler) Events(c echo.Context) error {
+func (h *WsHandler) Events(c *echo.Context) error {
 	claims, err := getClaims(c, h.jwtService, h.cookieName)
 	if err != nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -64,7 +64,7 @@ func (h *WsHandler) Events(c echo.Context) error {
 	return nil
 }
 
-func getClaims(c echo.Context, jwtService *auth.JWTService, cookieName string) (*auth.Claims, error) {
+func getClaims(c *echo.Context, jwtService *auth.JWTService, cookieName string) (*auth.Claims, error) {
 	cookie, err := c.Request().Cookie(cookieName)
 	if err != nil {
 		return nil, err

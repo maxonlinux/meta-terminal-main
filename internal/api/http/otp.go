@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 )
@@ -26,7 +26,7 @@ type OTPValidateRequest struct {
 	OTP      string `json:"otp"`
 }
 
-func (h *OTPHandler) Generate(c echo.Context) error {
+func (h *OTPHandler) Generate(c *echo.Context) error {
 	var req OTPRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -42,7 +42,7 @@ func (h *OTPHandler) Generate(c echo.Context) error {
 	return c.JSON(http.StatusCreated, map[string]string{"message": "OTP_SENT"})
 }
 
-func (h *OTPHandler) Validate(c echo.Context) error {
+func (h *OTPHandler) Validate(c *echo.Context) error {
 	var req OTPValidateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -61,7 +61,7 @@ func (h *OTPHandler) Validate(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "OTP_VALID"})
 }
 
-func (h *OTPHandler) Check(c echo.Context) error {
+func (h *OTPHandler) Check(c *echo.Context) error {
 	var req OTPRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})

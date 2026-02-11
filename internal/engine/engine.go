@@ -81,7 +81,7 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) *Eng
 
 	e.clearing = clearingService
 	e.portfolio = portfolioService
-	portfolioService.SetBalanceUpdate(e.onBalanceUpdated)
+	portfolioService.OnBalanceUpdate(e.onBalanceUpdated)
 	portfolioService.OnRealizedPnL(func(event types.RealizedPnL) {
 		// Persist realized PnL as an outbox event for history.
 		if e.outbox == nil {

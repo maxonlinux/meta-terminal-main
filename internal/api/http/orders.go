@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -35,7 +35,7 @@ type OrderRequest struct {
 	StopOrderType  *string `json:"stopOrderType"`
 }
 
-func (h *OrdersHandler) Create(c echo.Context) error {
+func (h *OrdersHandler) Create(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -133,7 +133,7 @@ func (h *OrdersHandler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, shared.OrderResponseFromOrder(result.Order))
 }
 
-func (h *OrdersHandler) List(c echo.Context) error {
+func (h *OrdersHandler) List(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -161,7 +161,7 @@ func (h *OrdersHandler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"orders": resp})
 }
 
-func (h *OrdersHandler) Get(c echo.Context) error {
+func (h *OrdersHandler) Get(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -180,7 +180,7 @@ func (h *OrdersHandler) Get(c echo.Context) error {
 	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(order))
 }
 
-func (h *OrdersHandler) Cancel(c echo.Context) error {
+func (h *OrdersHandler) Cancel(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -203,7 +203,7 @@ type AmendRequest struct {
 	Quantity string `json:"qty"`
 }
 
-func (h *OrdersHandler) Amend(c echo.Context) error {
+func (h *OrdersHandler) Amend(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -237,7 +237,7 @@ func (h *OrdersHandler) Amend(c echo.Context) error {
 	return c.JSON(http.StatusOK, shared.OrderResponseFromOrder(result.Order))
 }
 
-func getUser(c echo.Context) *auth.Claims {
+func getUser(c *echo.Context) *auth.Claims {
 	if v := c.Get("user"); v != nil {
 		if claims, ok := v.(*auth.Claims); ok {
 			return claims

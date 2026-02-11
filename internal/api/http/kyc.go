@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
@@ -63,7 +63,7 @@ type KYCUpdateRequest struct {
 	RejectReason *string `json:"rejectReason"`
 }
 
-func (h *KYCHandler) GetUserKYC(c echo.Context) error {
+func (h *KYCHandler) GetUserKYC(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -78,7 +78,7 @@ func (h *KYCHandler) GetUserKYC(c echo.Context) error {
 	return c.JSON(http.StatusOK, toKYCResponse(rec, files))
 }
 
-func (h *KYCHandler) SubmitKYC(c echo.Context) error {
+func (h *KYCHandler) SubmitKYC(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -174,7 +174,7 @@ func (h *KYCHandler) SubmitKYC(c echo.Context) error {
 	return c.JSON(http.StatusOK, toKYCResponse(&rec, files))
 }
 
-func (h *KYCHandler) ListRequests(c echo.Context) error {
+func (h *KYCHandler) ListRequests(c *echo.Context) error {
 	status := strings.ToUpper(strings.TrimSpace(c.QueryParam("status")))
 	if status != "" && status != kycStatusPending && status != kycStatusApproved && status != kycStatusRejected {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid status"})
@@ -211,7 +211,7 @@ func (h *KYCHandler) ListRequests(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (h *KYCHandler) GetRequest(c echo.Context) error {
+func (h *KYCHandler) GetRequest(c *echo.Context) error {
 	kycID, err := parseKYCIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})
@@ -226,7 +226,7 @@ func (h *KYCHandler) GetRequest(c echo.Context) error {
 	return c.JSON(http.StatusOK, toKYCResponse(rec, files))
 }
 
-func (h *KYCHandler) GetFile(c echo.Context) error {
+func (h *KYCHandler) GetFile(c *echo.Context) error {
 	kycID, err := parseKYCIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})
@@ -250,7 +250,7 @@ func (h *KYCHandler) GetFile(c echo.Context) error {
 	return c.JSON(http.StatusNotFound, map[string]string{"error": "file not found"})
 }
 
-func (h *KYCHandler) UpdateRequest(c echo.Context) error {
+func (h *KYCHandler) UpdateRequest(c *echo.Context) error {
 	kycID, err := parseKYCIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
@@ -25,7 +25,7 @@ func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *
 	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService}
 }
 
-func (h *UserHandler) Profile(c echo.Context) error {
+func (h *UserHandler) Profile(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -50,7 +50,7 @@ type UpdateProfileRequest struct {
 	Surname *string `json:"surname"`
 }
 
-func (h *UserHandler) UpdateProfile(c echo.Context) error {
+func (h *UserHandler) UpdateProfile(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -65,7 +65,7 @@ func (h *UserHandler) UpdateProfile(c echo.Context) error {
 	return h.Profile(c)
 }
 
-func (h *UserHandler) Settings(c echo.Context) error {
+func (h *UserHandler) Settings(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -93,7 +93,7 @@ type UpdateSettingsRequest struct {
 	Preferences             json.RawMessage `json:"preferences"`
 }
 
-func (h *UserHandler) UpdateSettings(c echo.Context) error {
+func (h *UserHandler) UpdateSettings(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -127,7 +127,7 @@ func (h *UserHandler) UpdateSettings(c echo.Context) error {
 	return h.Settings(c)
 }
 
-func (h *UserHandler) Address(c echo.Context) error {
+func (h *UserHandler) Address(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -153,7 +153,7 @@ type UpdateAddressRequest struct {
 	Zip     *string `json:"zip"`
 }
 
-func (h *UserHandler) UpdateAddress(c echo.Context) error {
+func (h *UserHandler) UpdateAddress(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -180,7 +180,7 @@ type UpdatePasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
-func (h *UserHandler) UpdatePassword(c echo.Context) error {
+func (h *UserHandler) UpdatePassword(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -206,7 +206,7 @@ func (h *UserHandler) UpdatePassword(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "PASSWORD_UPDATED"})
 }
 
-func (h *UserHandler) Plan(c echo.Context) error {
+func (h *UserHandler) Plan(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -240,7 +240,7 @@ func planNameOrNil(name plan.Name) interface{} {
 	return string(name)
 }
 
-func (h *UserHandler) Balances(c echo.Context) error {
+func (h *UserHandler) Balances(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -257,7 +257,7 @@ func (h *UserHandler) Balances(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (h *UserHandler) Balance(c echo.Context) error {
+func (h *UserHandler) Balance(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -283,7 +283,7 @@ type FundingRequestBody struct {
 	Destination string `json:"destination"`
 }
 
-func (h *UserHandler) FundingList(c echo.Context) error {
+func (h *UserHandler) FundingList(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -319,7 +319,7 @@ func (h *UserHandler) FundingList(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (h *UserHandler) FundingDeposit(c echo.Context) error {
+func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -339,7 +339,7 @@ func (h *UserHandler) FundingDeposit(c echo.Context) error {
 	return c.JSON(http.StatusCreated, map[string]string{"message": "FUNDING_CREATED"})
 }
 
-func (h *UserHandler) FundingWithdraw(c echo.Context) error {
+func (h *UserHandler) FundingWithdraw(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})

@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	echomw "github.com/labstack/echo/v5/middleware"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/ws"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -185,13 +185,13 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.PATCH("/users/:id/reset-plan", r.AdminHandler.ResetUserPlan)
 }
 
-func (r *Router) Health(c echo.Context) error {
+func (r *Router) Health(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (r *Router) AuthMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			cookie, err := c.Request().Cookie(r.jwtCookieName)
 			if err != nil {
 				return c.JSON(http.StatusUnauthorized, map[string]interface{}{
@@ -220,7 +220,7 @@ func (r *Router) AuthMiddleware() echo.MiddlewareFunc {
 
 func (r *Router) OTPMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Allow OTP enforcement to be disabled in dev/test environments.
 			if r.otpDisabled {
 				return next(c)
@@ -247,7 +247,7 @@ func (r *Router) AdminMiddleware() echo.MiddlewareFunc {
 
 func (r *Router) CORSMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")

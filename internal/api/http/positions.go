@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -18,7 +18,7 @@ func NewPositionsHandler(eng *engine.Engine) *PositionsHandler {
 	return &PositionsHandler{engine: eng}
 }
 
-func (h *PositionsHandler) List(c echo.Context) error {
+func (h *PositionsHandler) List(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -46,7 +46,7 @@ type SetLeverageRequest struct {
 	Leverage string `json:"leverage"`
 }
 
-func (h *PositionsHandler) SetLeverage(c echo.Context) error {
+func (h *PositionsHandler) SetLeverage(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -85,7 +85,7 @@ type UpdateTpSlRequest struct {
 	SL *string `json:"sl"`
 }
 
-func (h *PositionsHandler) UpdateTpSl(c echo.Context) error {
+func (h *PositionsHandler) UpdateTpSl(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})

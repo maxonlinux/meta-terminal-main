@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -17,7 +17,7 @@ func NewHistoryHandler(store *persistence.Store) *HistoryHandler {
 	return &HistoryHandler{store: store}
 }
 
-func (h *HistoryHandler) Orders(c echo.Context) error {
+func (h *HistoryHandler) Orders(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -59,7 +59,7 @@ func (h *HistoryHandler) Orders(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{"orders": resp})
 }
 
-func (h *HistoryHandler) Fills(c echo.Context) error {
+func (h *HistoryHandler) Fills(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
@@ -111,7 +111,7 @@ type PnLResponse struct {
 	CreatedAt uint64 `json:"createdAt"`
 }
 
-func (h *HistoryHandler) PnL(c echo.Context) error {
+func (h *HistoryHandler) PnL(c *echo.Context) error {
 	// Returns realized PnL history for the authenticated user.
 	claims := getUser(c)
 	if claims == nil {

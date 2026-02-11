@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
@@ -107,7 +107,7 @@ type AdminImpersonateResponse struct {
 	Code string `json:"code"`
 }
 
-func (h *AdminHandler) ExistingPlans(c echo.Context) error {
+func (h *AdminHandler) ExistingPlans(c *echo.Context) error {
 	if h.plan == nil {
 		return c.JSON(http.StatusOK, []string{})
 	}
@@ -124,7 +124,7 @@ func (h *AdminHandler) ExistingPlans(c echo.Context) error {
 	return c.JSON(http.StatusOK, plans)
 }
 
-func (h *AdminHandler) Users(c echo.Context) error {
+func (h *AdminHandler) Users(c *echo.Context) error {
 	if h.users == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
 	}
@@ -163,7 +163,7 @@ func (h *AdminHandler) Users(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-func (h *AdminHandler) User(c echo.Context) error {
+func (h *AdminHandler) User(c *echo.Context) error {
 	if h.users == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
 	}
@@ -203,7 +203,7 @@ func (h *AdminHandler) User(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
-func (h *AdminHandler) UserAddress(c echo.Context) error {
+func (h *AdminHandler) UserAddress(c *echo.Context) error {
 	if h.users == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
 	}
@@ -227,7 +227,7 @@ func (h *AdminHandler) UserAddress(c echo.Context) error {
 	})
 }
 
-func (h *AdminHandler) UserTransactions(c echo.Context) error {
+func (h *AdminHandler) UserTransactions(c *echo.Context) error {
 	if h.store == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
 	}
@@ -258,7 +258,7 @@ func (h *AdminHandler) UserTransactions(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-func (h *AdminHandler) Funding(c echo.Context) error {
+func (h *AdminHandler) Funding(c *echo.Context) error {
 	if h.store == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
 	}
@@ -296,7 +296,7 @@ func (h *AdminHandler) Funding(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-func (h *AdminHandler) ApproveFunding(c echo.Context) error {
+func (h *AdminHandler) ApproveFunding(c *echo.Context) error {
 	if h.engine == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "engine unavailable"})
 	}
@@ -311,7 +311,7 @@ func (h *AdminHandler) ApproveFunding(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (h *AdminHandler) CancelFunding(c echo.Context) error {
+func (h *AdminHandler) CancelFunding(c *echo.Context) error {
 	if h.engine == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "engine unavailable"})
 	}
@@ -326,7 +326,7 @@ func (h *AdminHandler) CancelFunding(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (h *AdminHandler) PendingCount(c echo.Context) error {
+func (h *AdminHandler) PendingCount(c *echo.Context) error {
 	if h.store == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
 	}
@@ -350,7 +350,7 @@ func (h *AdminHandler) PendingCount(c echo.Context) error {
 	})
 }
 
-func (h *AdminHandler) Impersonate(c echo.Context) error {
+func (h *AdminHandler) Impersonate(c *echo.Context) error {
 	if h.impersonate == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "impersonation unavailable"})
 	}
@@ -365,7 +365,7 @@ func (h *AdminHandler) Impersonate(c echo.Context) error {
 	return c.JSON(http.StatusOK, AdminImpersonateResponse{Code: code})
 }
 
-func (h *AdminHandler) GetUserPlan(c echo.Context) error {
+func (h *AdminHandler) GetUserPlan(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -389,7 +389,7 @@ type PlanUpdateRequest struct {
 	Plan string `json:"plan"`
 }
 
-func (h *AdminHandler) SetUserPlan(c echo.Context) error {
+func (h *AdminHandler) SetUserPlan(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -411,7 +411,7 @@ func (h *AdminHandler) SetUserPlan(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (h *AdminHandler) ResetUserPlan(c echo.Context) error {
+func (h *AdminHandler) ResetUserPlan(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -447,7 +447,7 @@ func parseFundingIDParam(value string) (types.FundingID, error) {
 	return types.FundingID(parsed), nil
 }
 
-func parsePagination(c echo.Context) (int, int) {
+func parsePagination(c *echo.Context) (int, int) {
 	limit := 200
 	if raw := c.QueryParam("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {

@@ -32,7 +32,8 @@ func New(onReduce OnPositionReduce, reg *registry.Registry) *Service {
 	return s
 }
 
-func (s *Service) SetBalanceUpdate(fn OnBalanceUpdate) {
+func (s *Service) OnBalanceUpdate(fn OnBalanceUpdate) {
+	// Registers a callback for balance updates on portfolio changes.
 	s.onBalance = fn
 }
 
@@ -61,13 +62,6 @@ func (s *Service) LoadPosition(pos *types.Position) {
 	s.Positions[pos.UserID][pos.Symbol] = pos
 }
 
-func (s *Service) GetInstrument(symbol string) *types.Instrument {
-	if s.registry != nil {
-		return s.registry.GetInstrument(symbol)
-	}
-	return nil
-}
-
 func (s *Service) ExecuteTrade(match *types.Match) {
 	if match.Category == constants.CATEGORY_SPOT {
 		s.executeSpotTrade(match)
@@ -77,7 +71,14 @@ func (s *Service) ExecuteTrade(match *types.Match) {
 }
 
 func (s *Service) executeSpotTrade(match *types.Match) {
-	inst := s.GetInstrument(match.Symbol)
+	// Resolve instrument via registry to apply asset transfers correctly.
+	if s.registry == nil {
+		return
+	}
+	inst := s.registry.GetInstrument(match.Symbol)
+	if inst == nil {
+		return
+	}
 	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
 	takerGets, takerPays := baseAsset, quoteAsset
@@ -95,7 +96,14 @@ func (s *Service) executeSpotTrade(match *types.Match) {
 }
 
 func (s *Service) executeLinearTrade(match *types.Match) {
-	inst := s.GetInstrument(match.Symbol)
+	// Resolve instrument via registry to apply margin changes correctly.
+	if s.registry == nil {
+		return
+	}
+	inst := s.registry.GetInstrument(match.Symbol)
+	if inst == nil {
+		return
+	}
 	quoteAsset := inst.QuoteAsset
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))
 
