@@ -26,8 +26,9 @@ func TestReduceOnlyIndex_Add(t *testing.T) {
 	// Check exposure via internal access
 	shardIdx := ShardIndex("BTCUSDT")
 	shard := r.shards[shardIdx]
-	if shard.exposure[types.UserID(1)].Cmp(types.Quantity(fixed.NewI(10, 0))) != 0 {
-		t.Errorf("expected exposure 10, got %d", shard.exposure[types.UserID(1)])
+	key := roKey{userID: types.UserID(1), symbol: "BTCUSDT", side: constants.ORDER_SIDE_BUY}
+	if shard.exposure[key].Cmp(types.Quantity(fixed.NewI(10, 0))) != 0 {
+		t.Errorf("expected exposure 10, got %s", shard.exposure[key].String())
 	}
 }
 
@@ -49,7 +50,8 @@ func TestReduceOnlyIndex_AddNonReduceOnly(t *testing.T) {
 	// Non-reduce-only should not add exposure
 	shardIdx := ShardIndex("BTCUSDT")
 	shard := r.shards[shardIdx]
-	if shard.exposure[types.UserID(1)].Sign() != 0 {
+	key := roKey{userID: types.UserID(1), symbol: "BTCUSDT", side: constants.ORDER_SIDE_BUY}
+	if shard.exposure[key].Sign() != 0 {
 		t.Error("non-reduce-only order should not add exposure")
 	}
 }
@@ -72,8 +74,9 @@ func TestReduceOnlyIndex_Remove(t *testing.T) {
 
 	shardIdx := ShardIndex("BTCUSDT")
 	shard := r.shards[shardIdx]
-	if shard.exposure[types.UserID(1)].Cmp(types.Quantity(fixed.NewI(0, 0))) != 0 {
-		t.Errorf("expected exposure 0, got %d", shard.exposure[types.UserID(1)])
+	key := roKey{userID: types.UserID(1), symbol: "BTCUSDT", side: constants.ORDER_SIDE_BUY}
+	if shard.exposure[key].Cmp(types.Quantity(fixed.NewI(0, 0))) != 0 {
+		t.Errorf("expected exposure 0, got %s", shard.exposure[key].String())
 	}
 }
 
@@ -107,10 +110,10 @@ func TestReduceOnlyIndex_OnPositionReduce(t *testing.T) {
 
 	service := NewService()
 	service.reduceonly = r
-	service.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5, 0)))
+	service.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5, 0)), types.Price(fixed.NewI(50500, 0)))
 
-	if order1.Status != constants.ORDER_STATUS_CANCELED {
-		t.Errorf("order1 should be fully canceled, got status %d", order1.Status)
+	if order2.Status != constants.ORDER_STATUS_CANCELED {
+		t.Errorf("order2 should be fully canceled, got status %d", order2.Status)
 	}
 }
 
@@ -118,7 +121,7 @@ func TestReduceOnlyIndex_OnPositionReduce_MissingSymbol(t *testing.T) {
 	r := NewReduceOnlyIndex()
 
 	// Ensure missing shard maps do not panic for short positions.
-	r.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(-5, 0)))
+	r.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(-5, 0)), types.Price(fixed.NewI(50500, 0)))
 }
 
 func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
@@ -139,9 +142,9 @@ func TestReduceOnlyIndex_ShardDistribution(t *testing.T) {
 		r.Add(order)
 	}
 
-	// Verify exposure is stored in correct shards by checking each shard's heaps
+	// Verify exposure is stored in correct shards by checking each shard's books
 	shardCounts := make(map[uint8]int)
-	for shardIdx, symbolMap := range r.heaps {
+	for shardIdx, symbolMap := range r.books {
 		count := 0
 		for range symbolMap {
 			count++
@@ -230,7 +233,7 @@ func BenchmarkReduceOnlyIndex_OnPositionReduce(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		service.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5000, 0)))
+		service.OnPositionReduce(types.UserID(1), "BTCUSDT", types.Quantity(fixed.NewI(5000, 0)), types.Price(fixed.NewI(50500, 0)))
 	}
 }
 
@@ -261,7 +264,7 @@ func BenchmarkReduceOnlyIndex_OnPositionReduce1000Symbols(b *testing.B) {
 		// Reduce position for each symbol
 		for j := 0; j < 1000; j++ {
 			symbol := string(rune('A'+j%26)) + string(rune('0'+j/26))
-			service.OnPositionReduce(types.UserID(1), symbol, types.Quantity(fixed.NewI(5, 0)))
+			service.OnPositionReduce(types.UserID(1), symbol, types.Quantity(fixed.NewI(5, 0)), types.Price(fixed.NewI(50500, 0)))
 		}
 	}
 }

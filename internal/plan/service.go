@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"fmt"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
@@ -14,12 +16,18 @@ type Service struct {
 	plans    []Rule
 }
 
-func NewService(repo *Repository, reg *registry.Registry) *Service {
+func NewService(repo *Repository, reg *registry.Registry) (*Service, error) {
+	if repo == nil {
+		return nil, fmt.Errorf("plan repository is required")
+	}
+	if reg == nil {
+		return nil, fmt.Errorf("registry is required")
+	}
 	return &Service{
 		repo:     repo,
 		registry: reg,
 		plans:    defaultRules(),
-	}
+	}, nil
 }
 
 func (s *Service) GetUserPlanProgress(userID types.UserID) (Progress, error) {
@@ -47,7 +55,10 @@ func (s *Service) GetUserPlanProgress(userID types.UserID) (Progress, error) {
 	}
 
 	if current != nil {
-		_ = s.repo.UpsertUserPlan(userID, string(current.Name), false)
+		// Persist auto-selected plan to keep server-side state consistent.
+		if err := s.repo.UpsertUserPlan(userID, string(current.Name), false); err != nil {
+			return Progress{}, err
+		}
 	}
 
 	return Progress{
@@ -127,9 +138,6 @@ func (s *Service) userRule(userID types.UserID) (*Rule, error) {
 
 func (s *Service) assetTypeAllowed(rule *Rule, symbol string) bool {
 	if rule == nil || len(rule.AssetTypes) == 0 {
-		return true
-	}
-	if s.registry == nil {
 		return true
 	}
 	inst := s.registry.GetInstrument(symbol)

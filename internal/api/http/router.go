@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v5"
 	echomw "github.com/labstack/echo/v5/middleware"
@@ -39,7 +41,10 @@ type Router struct {
 	jwtCookieName string
 }
 
-func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, userStore users.UserStore, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, cfg config.Config) *Router {
+func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, wsHandler *ws.WsHandler, cfg config.Config) (*Router, error) {
+	if err := validateRouterDeps(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, wsHandler); err != nil {
+		return nil, err
+	}
 	return &Router{
 		AuthHandler:      NewAuthHandler(authService, jwtService, otpService, impService, cfg),
 		OtpHandler:       NewOTPHandler(otpService, authService),
@@ -53,16 +58,51 @@ func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, userStor
 		AdminHandler:     NewAdminHandler(planService, planRepo, authService, persistenceStore, kycRepo, eng, impService),
 		AdminAuthHandler: &AdminAuthHandler{},
 		KYCHandler:       NewKYCHandler(kycRepo, authService),
+		WsHandler:        wsHandler,
 		jwtService:       jwtService,
 		otpService:       otpService,
 		userService:      authService,
 		otpDisabled:      cfg.OtpDisabled,
 		jwtCookieName:    cfg.JwtCookieName,
-	}
+	}, nil
 }
 
-func (r *Router) SetWsHandler(handler *ws.WsHandler) {
-	r.WsHandler = handler
+func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, wsHandler *ws.WsHandler) error {
+	missing := make([]string, 0, 8)
+	if eng == nil {
+		missing = append(missing, "engine")
+	}
+	if persistenceStore == nil {
+		missing = append(missing, "persistence store")
+	}
+	if jwtService == nil {
+		missing = append(missing, "jwt service")
+	}
+	if authService == nil {
+		missing = append(missing, "user service")
+	}
+	if otpService == nil {
+		missing = append(missing, "otp service")
+	}
+	if impService == nil {
+		missing = append(missing, "impersonation service")
+	}
+	if planService == nil {
+		missing = append(missing, "plan service")
+	}
+	if planRepo == nil {
+		missing = append(missing, "plan repository")
+	}
+	if kycRepo == nil {
+		missing = append(missing, "kyc repository")
+	}
+	if wsHandler == nil {
+		missing = append(missing, "ws handler")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("router dependencies missing: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func (r *Router) Register(e *echo.Echo) {
@@ -74,11 +114,9 @@ func (r *Router) Register(e *echo.Echo) {
 
 	e.GET("/health", r.Health)
 
-	if r.WsHandler != nil {
-		wsGroup := e.Group("/ws")
-		wsGroup.GET("/market", r.WsHandler.Market)
-		wsGroup.GET("/events", r.WsHandler.Events)
-	}
+	wsGroup := e.Group("/ws")
+	wsGroup.GET("/market", r.WsHandler.Market)
+	wsGroup.GET("/events", r.WsHandler.Events)
 
 	api := e.Group("/api/v1")
 

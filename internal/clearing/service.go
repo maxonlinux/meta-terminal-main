@@ -1,6 +1,8 @@
 package clearing
 
 import (
+	"fmt"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
@@ -22,8 +24,14 @@ type Service struct {
 	registry  *registry.Registry
 }
 
-func New(portfolio Portfolio, reg *registry.Registry) *Service {
-	return &Service{portfolio: portfolio, registry: reg}
+func New(portfolio Portfolio, reg *registry.Registry) (*Service, error) {
+	if portfolio == nil {
+		return nil, fmt.Errorf("portfolio is required")
+	}
+	if reg == nil {
+		return nil, fmt.Errorf("registry is required")
+	}
+	return &Service{portfolio: portfolio, registry: reg}, nil
 }
 
 func (s *Service) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
@@ -50,7 +58,10 @@ func (s *Service) leverageFor(userID types.UserID, symbol string) types.Leverage
 
 func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Quantity, price types.Price, leverage types.Leverage, reg *registry.Registry) (types.Quantity, string) {
 	if category == constants.CATEGORY_SPOT {
-		inst := registry.GetInstrument(reg, symbol)
+		inst := reg.GetInstrument(symbol)
+		if inst == nil {
+			panic("instrument not found: " + symbol)
+		}
 		if side == constants.ORDER_SIDE_BUY {
 			return types.Quantity(math.Mul(qty, price)), inst.QuoteAsset
 		}
@@ -61,8 +72,12 @@ func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Q
 	if math.Sign(effective) <= 0 {
 		effective = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 	}
+	inst := reg.GetInstrument(symbol)
+	if inst == nil {
+		panic("instrument not found: " + symbol)
+	}
 	reserve := math.MulDiv(qty, price, effective)
-	return types.Quantity(reserve), registry.GetInstrument(reg, symbol).QuoteAsset
+	return types.Quantity(reserve), inst.QuoteAsset
 }
 
 func LiquidationPrice(entryPrice types.Price, leverage types.Leverage, size types.Quantity) types.Price {

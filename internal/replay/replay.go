@@ -49,7 +49,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		}
 		remaining := math.Sub(order.Quantity, order.Filled)
 		if math.Sign(remaining) > 0 {
-			_ = r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+			if err := r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
+				return err
+			}
 		}
 	case events.OrderAmended:
 		amend, err := events.DecodeOrderAmended(ev.Data)
@@ -70,7 +72,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		newRemaining := math.Sub(order.Quantity, order.Filled)
 		delta := math.Sub(newRemaining, oldRemaining)
 		if math.Sign(delta) > 0 {
-			_ = r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, delta, order.Price)
+			if err := r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, delta, order.Price); err != nil {
+				return err
+			}
 		} else if math.Sign(delta) < 0 {
 			r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price)
 		}
@@ -82,7 +86,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		if order, ok := r.store.GetUserOrder(cancel.UserID, cancel.OrderID); ok {
 			if order.IsConditional {
 				order.UpdatedAt = cancel.Timestamp
-				_ = r.store.Cancel(order.UserID, order.ID)
+				if err := r.store.Cancel(order.UserID, order.ID); err != nil {
+					return err
+				}
 				return nil
 			}
 			remaining := math.Sub(order.Quantity, order.Filled)
@@ -90,7 +96,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 				r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
 			}
 			order.UpdatedAt = cancel.Timestamp
-			_ = r.store.Cancel(order.UserID, order.ID)
+			if err := r.store.Cancel(order.UserID, order.ID); err != nil {
+				return err
+			}
 		}
 	case events.TradeExecuted:
 		trade, err := events.DecodeTrade(ev.Data)
@@ -113,10 +121,14 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 			Timestamp:  trade.Timestamp,
 		}
 		if maker.Type == constants.ORDER_TYPE_MARKET && maker.Price.Sign() == 0 {
-			_ = r.clearing.Reserve(maker.UserID, maker.Symbol, maker.Category, maker.Side, trade.Quantity, trade.Price)
+			if err := r.clearing.Reserve(maker.UserID, maker.Symbol, maker.Category, maker.Side, trade.Quantity, trade.Price); err != nil {
+				return err
+			}
 		}
 		if taker.Type == constants.ORDER_TYPE_MARKET && taker.Price.Sign() == 0 {
-			_ = r.clearing.Reserve(taker.UserID, taker.Symbol, taker.Category, taker.Side, trade.Quantity, trade.Price)
+			if err := r.clearing.Reserve(taker.UserID, taker.Symbol, taker.Category, taker.Side, trade.Quantity, trade.Price); err != nil {
+				return err
+			}
 		}
 		r.clearing.ExecuteTrade(&match)
 		_ = r.store.Fill(maker.UserID, maker.ID, trade.Quantity)

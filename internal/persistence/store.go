@@ -152,8 +152,16 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 	}
 
 	omsStore := oms.NewService()
-	portfolioService := portfolio.New(nil, reg)
-	clearingService := clearing.New(portfolioService, reg)
+	portfolioService, err := portfolio.New(nil, reg)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	clearingService, err := clearing.New(portfolioService, reg)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	replayer := replay.New(reg, omsStore, portfolioService, clearingService)
 	persistenceStore := &Store{
 		db:        db,
@@ -174,25 +182,15 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 }
 
 func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
 	closeStatements(s.stmts)
 	return s.db.Close()
 }
 
 func (s *Store) LoadCore(store *oms.Service, portfolio *portfolio.Service) error {
-	if s == nil || s.db == nil {
-		return nil
-	}
 	return s.loadCore(store, portfolio)
 }
 
 func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]OrderRecord, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-
 	query := `select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at from orders where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
@@ -259,10 +257,6 @@ func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, l
 }
 
 func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]FillRecord, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-
 	query := `select id, user_id, order_id, counterparty_order_id, symbol, category, side, role, price, qty, ts from fills where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
@@ -317,9 +311,6 @@ func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, li
 }
 
 func (s *Store) ListRPNL(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]RPNLRecord, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
 	query := `select id, user_id, order_id, symbol, category, side, price, qty, realized, created_at from rpnl_events where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
@@ -369,9 +360,6 @@ func (s *Store) ListRPNL(userID types.UserID, symbol string, category *int8, lim
 }
 
 func (s *Store) ListFundings(userID types.UserID, limit int, offset int) ([]FundingRecord, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
 	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings where user_id = ? order by updated_at desc`
 	args := []interface{}{userID}
 	if limit > 0 {
@@ -401,9 +389,6 @@ func (s *Store) ListFundings(userID types.UserID, limit int, offset int) ([]Fund
 }
 
 func (s *Store) ListFundingsAll(limit int, offset int, search string) ([]FundingRecord, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
 	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings`
 	args := []interface{}{}
 	if search != "" {
@@ -439,9 +424,6 @@ func (s *Store) ListFundingsAll(limit int, offset int, search string) ([]Funding
 }
 
 func (s *Store) CountPendingFundings() (int, error) {
-	if s == nil || s.db == nil {
-		return 0, nil
-	}
 	row := s.db.QueryRow("select count(1) from fundings where status = ?", string(types.FundingStatusPending))
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -451,7 +433,7 @@ func (s *Store) CountPendingFundings() (int, error) {
 }
 
 func (s *Store) Apply(eventsBatch []events.Event) error {
-	if s == nil || s.db == nil || len(eventsBatch) == 0 {
+	if len(eventsBatch) == 0 {
 		return nil
 	}
 
@@ -467,13 +449,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		}
 	}()
 
-	if s.balances == nil {
-		s.balances = make(map[types.UserID]struct{}, 1024)
-	}
-	if s.positions == nil {
-		s.positions = make(map[positionKey]struct{}, 1024)
-	}
-
 	addBalance := func(userID types.UserID) {
 		s.balances[userID] = struct{}{}
 	}
@@ -483,8 +458,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 
 	for i := range eventsBatch {
 		event := eventsBatch[i]
-		if s.replayer != nil {
-			_ = s.replayer.ApplyEvent(event)
+		if err := s.replayer.ApplyEvent(event); err != nil {
+			return err
 		}
 		switch event.Type {
 		case events.OrderPlaced:
@@ -562,11 +537,11 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				status = types.FundingStatusCompleted
 			}
 			err = updateFundingStatus(tx, s.stmts, evt.FundingID, status)
-			if userID, ok := selectFundingUser(tx, s.stmts, evt.FundingID); ok {
-				addBalance(userID)
-			} else {
-				return fmt.Errorf("missing funding %d", evt.FundingID)
+			userID, selErr := selectFundingUser(tx, s.stmts, evt.FundingID)
+			if selErr != nil {
+				return selErr
 			}
+			addBalance(userID)
 		case events.OrderTriggered:
 			evt, decErr := events.DecodeOrderTriggered(event.Data)
 			if decErr != nil {
@@ -624,12 +599,6 @@ func (s *Store) loadState() error {
 }
 
 func (s *Store) loadCore(store *oms.Service, portfolio *portfolio.Service) error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	if store == nil || portfolio == nil {
-		return nil
-	}
 	if err := loadBalances(s.db, portfolio); err != nil {
 		return err
 	}
@@ -644,7 +613,7 @@ func (s *Store) loadCore(store *oms.Service, portfolio *portfolio.Service) error
 
 func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 	if order == nil {
-		return nil
+		return fmt.Errorf("order is nil")
 	}
 	stmt := stmts.upsertOrder
 	if stmt == nil {
@@ -675,7 +644,10 @@ func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 }
 
 func upsertOpenOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
-	if order == nil || !isOpenStatus(order.Status) {
+	if order == nil {
+		return fmt.Errorf("order is nil")
+	}
+	if !isOpenStatus(order.Status) {
 		return nil
 	}
 	stmt := stmts.upsertOpenOrder
@@ -876,7 +848,7 @@ func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
 
 func upsertBalance(tx *sql.Tx, stmts *statements, bal *types.Balance) error {
 	if bal == nil {
-		return nil
+		return fmt.Errorf("balance is nil")
 	}
 	stmt := stmts.upsertBalance
 	if stmt == nil {
@@ -888,7 +860,7 @@ func upsertBalance(tx *sql.Tx, stmts *statements, bal *types.Balance) error {
 
 func upsertPosition(tx *sql.Tx, stmts *statements, pos *types.Position) error {
 	if pos == nil {
-		return nil
+		return fmt.Errorf("position is nil")
 	}
 	stmt := stmts.upsertPosition
 	if stmt == nil {
@@ -915,7 +887,7 @@ func upsertPosition(tx *sql.Tx, stmts *statements, pos *types.Position) error {
 
 func upsertFunding(tx *sql.Tx, stmts *statements, req *types.FundingRequest) error {
 	if req == nil {
-		return nil
+		return fmt.Errorf("funding request is nil")
 	}
 	stmt := stmts.upsertFunding
 	if stmt == nil {
@@ -946,17 +918,17 @@ func updateFundingStatus(tx *sql.Tx, stmts *statements, id types.FundingID, stat
 	return err
 }
 
-func selectFundingUser(tx *sql.Tx, stmts *statements, id types.FundingID) (types.UserID, bool) {
+func selectFundingUser(tx *sql.Tx, stmts *statements, id types.FundingID) (types.UserID, error) {
 	stmt := stmts.selectFundingUser
 	if stmt == nil {
-		return 0, false
+		return 0, fmt.Errorf("missing select funding user statement")
 	}
 	row := tx.Stmt(stmt).QueryRow(id)
 	var userID types.UserID
 	if err := row.Scan(&userID); err != nil {
-		return 0, false
+		return 0, err
 	}
-	return userID, true
+	return userID, nil
 }
 
 func loadBalances(db *sql.DB, portfolio *portfolio.Service) error {

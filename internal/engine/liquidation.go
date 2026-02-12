@@ -63,11 +63,15 @@ func (e *Engine) liquidatePosition(userID types.UserID, pos *types.Position, wri
 		_ = writer.Record(events.EncodeOrderPlaced(order))
 	}
 	if e.publisher != nil {
+		price := types.Price{}
+		if tick, ok := e.registry.GetPrice(pos.Symbol); ok {
+			price = tick.Price
+		}
 		e.publisher.OnLiquidation(LiquidationEvent{
 			UserID: userID,
 			Symbol: pos.Symbol,
 			Stage:  "LIQUIDATION_STARTED",
-			Price:  e.lastPrices[pos.Symbol],
+			Price:  price,
 			Size:   pos.Size,
 		})
 		e.publisher.OnOrderUpdated(order)
@@ -76,11 +80,15 @@ func (e *Engine) liquidatePosition(userID types.UserID, pos *types.Position, wri
 	e.activateConditional(order, writer)
 
 	if e.publisher != nil {
+		price := types.Price{}
+		if tick, ok := e.registry.GetPrice(pos.Symbol); ok {
+			price = tick.Price
+		}
 		e.publisher.OnLiquidation(LiquidationEvent{
 			UserID: userID,
 			Symbol: pos.Symbol,
 			Stage:  "LIQUIDATED",
-			Price:  e.lastPrices[pos.Symbol],
+			Price:  price,
 			Size:   pos.Size,
 		})
 	}

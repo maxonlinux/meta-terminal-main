@@ -25,7 +25,10 @@ func TestExecuteTradeSpotBalances(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 	})
-	svc := New(nil, reg)
+	svc, err := New(nil, reg)
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
 
 	base := "BTC"
 	quote := "USDT"
@@ -73,7 +76,10 @@ func TestExecuteTradeLinearPosition(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 	})
-	svc := New(nil, reg)
+	svc, err := New(nil, reg)
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
 	quote := "USDT"
 
 	svc.Balances[types.UserID(1)] = map[string]*types.Balance{

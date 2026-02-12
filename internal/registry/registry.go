@@ -39,13 +39,6 @@ func (r *Registry) GetInstrument(symbol string) *types.Instrument {
 	return r.instruments[symbol]
 }
 
-func GetInstrument(r *Registry, symbol string) *types.Instrument {
-	if r == nil {
-		return nil
-	}
-	return r.GetInstrument(symbol)
-}
-
 func (r *Registry) GetInstruments() []*types.Instrument {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

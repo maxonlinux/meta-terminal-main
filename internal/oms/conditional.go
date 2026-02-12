@@ -15,38 +15,54 @@ type condShard struct {
 }
 
 type ConditionalIndex struct {
-	shards  [constants.OMS_SHARD_COUNT]*condShard
-	deleted map[types.OrderID]bool
+	shards [constants.OMS_SHARD_COUNT]*condShard
 }
 
 type triggerHeap struct {
-	items []*types.Order
+	items []*triggerItem
+	index map[types.OrderID]*triggerItem
 	isBuy bool
+}
+
+type triggerItem struct {
+	order *types.Order
+	idx   int
 }
 
 func (h triggerHeap) Len() int { return len(h.items) }
 
 func (h triggerHeap) Less(i, j int) bool {
 	if h.isBuy {
-		return math.Cmp(h.items[i].TriggerPrice, h.items[j].TriggerPrice) > 0
+		return math.Cmp(h.items[i].order.TriggerPrice, h.items[j].order.TriggerPrice) > 0
 	}
-	return math.Cmp(h.items[i].TriggerPrice, h.items[j].TriggerPrice) < 0
+	return math.Cmp(h.items[i].order.TriggerPrice, h.items[j].order.TriggerPrice) < 0
 }
 
-func (h triggerHeap) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
+func (h triggerHeap) Swap(i, j int) {
+	h.items[i], h.items[j] = h.items[j], h.items[i]
+	h.items[i].idx = i
+	h.items[j].idx = j
+}
 
-func (h *triggerHeap) Push(x any) { h.items = append(h.items, x.(*types.Order)) }
+func (h *triggerHeap) Push(x any) {
+	item := x.(*triggerItem)
+	item.idx = len(h.items)
+	h.items = append(h.items, item)
+	h.index[item.order.ID] = item
+}
 
 func (h *triggerHeap) Pop() any {
 	n := len(h.items)
 	item := h.items[n-1]
+	item.idx = -1
 	h.items = h.items[:n-1]
+	delete(h.index, item.order.ID)
 	return item
 }
 
 func (h *triggerHeap) Peek() *types.Order {
 	for h.Len() > 0 {
-		order := h.items[0]
+		order := h.items[0].order
 		if order.Status != constants.ORDER_STATUS_UNTRIGGERED {
 			heap.Pop(h)
 			continue
@@ -57,9 +73,7 @@ func (h *triggerHeap) Peek() *types.Order {
 }
 
 func NewConditionalIndex() *ConditionalIndex {
-	c := &ConditionalIndex{
-		deleted: make(map[types.OrderID]bool),
-	}
+	c := &ConditionalIndex{}
 	for i := range c.shards {
 		c.shards[i] = &condShard{
 			buyTriggers:  make(map[string]*triggerHeap),
@@ -73,11 +87,9 @@ func (c *ConditionalIndex) Add(o *types.Order) {
 	if o.TriggerPrice.IsZero() {
 		return
 	}
-
-	delete(c.deleted, o.ID)
-
 	h := c.getHeap(o.Symbol, o.Side == constants.ORDER_SIDE_BUY)
-	heap.Push(h, o)
+	item := &triggerItem{order: o, idx: -1}
+	heap.Push(h, item)
 }
 
 func (c *ConditionalIndex) getHeap(symbol string, isBuy bool) *triggerHeap {
@@ -91,7 +103,7 @@ func (c *ConditionalIndex) getHeap(symbol string, isBuy bool) *triggerHeap {
 
 	h, ok := triggerMap[symbol]
 	if !ok {
-		h = &triggerHeap{isBuy: isBuy}
+		h = &triggerHeap{isBuy: isBuy, index: make(map[types.OrderID]*triggerItem)}
 		triggerMap[symbol] = h
 	}
 	return h
@@ -139,5 +151,10 @@ func (c *ConditionalIndex) Remove(o *types.Order) {
 	if o.TriggerPrice.IsZero() {
 		return
 	}
-	c.deleted[o.ID] = true
+	h := c.getHeap(o.Symbol, o.Side == constants.ORDER_SIDE_BUY)
+	item := h.index[o.ID]
+	if item == nil {
+		return
+	}
+	heap.Remove(h, item.idx)
 }

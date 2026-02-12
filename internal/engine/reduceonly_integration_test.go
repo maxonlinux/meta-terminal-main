@@ -24,7 +24,10 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng := NewEngine(nil, reg, nil)
+	eng, err := NewEngine(nil, reg, nil)
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
 
 	order1 := eng.store.Build(
 		types.UserID(1),

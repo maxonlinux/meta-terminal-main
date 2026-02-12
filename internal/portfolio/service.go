@@ -1,6 +1,8 @@
 package portfolio
 
 import (
+	"fmt"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
@@ -21,15 +23,17 @@ type Service struct {
 	registry      *registry.Registry
 }
 
-func New(onReduce OnPositionReduce, reg *registry.Registry) *Service {
-	s := &Service{
+func New(onReduce OnPositionReduce, reg *registry.Registry) (*Service, error) {
+	if reg == nil {
+		return nil, fmt.Errorf("registry is required")
+	}
+	return &Service{
 		Balances:  make(map[types.UserID]map[string]*types.Balance),
 		Positions: make(map[types.UserID]map[string]*types.Position),
 		Fundings:  make(map[types.FundingID]*types.FundingRequest),
 		onReduce:  onReduce,
 		registry:  reg,
-	}
-	return s
+	}, nil
 }
 
 func (s *Service) OnBalanceUpdate(fn OnBalanceUpdate) {
@@ -71,13 +75,9 @@ func (s *Service) ExecuteTrade(match *types.Match) {
 }
 
 func (s *Service) executeSpotTrade(match *types.Match) {
-	// Resolve instrument via registry to apply asset transfers correctly.
-	if s.registry == nil {
-		return
-	}
 	inst := s.registry.GetInstrument(match.Symbol)
 	if inst == nil {
-		return
+		panic("instrument not found: " + match.Symbol)
 	}
 	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
@@ -96,13 +96,9 @@ func (s *Service) executeSpotTrade(match *types.Match) {
 }
 
 func (s *Service) executeLinearTrade(match *types.Match) {
-	// Resolve instrument via registry to apply margin changes correctly.
-	if s.registry == nil {
-		return
-	}
 	inst := s.registry.GetInstrument(match.Symbol)
 	if inst == nil {
-		return
+		panic("instrument not found: " + match.Symbol)
 	}
 	quoteAsset := inst.QuoteAsset
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))

@@ -34,7 +34,10 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		LotSize:    types.Quantity(fixed.NewI(1, 0)),
 	})
 
-	eng := NewEngine(ob, reg, nil)
+	eng, err := NewEngine(ob, reg, nil)
+	if err != nil {
+		b.Fatalf("engine: %v", err)
+	}
 
 	price := types.Price(fixed.NewI(1, 0))
 	qty := types.Quantity(fixed.NewI(1, 0))

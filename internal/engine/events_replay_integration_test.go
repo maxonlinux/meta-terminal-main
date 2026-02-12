@@ -48,7 +48,10 @@ func TestEventSourcingReplay(t *testing.T) {
 	}
 	ob.Start()
 
-	eng := NewEngine(ob, reg, nil)
+	eng, err := NewEngine(ob, reg, nil)
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
 
 	makerID := types.UserID(1)
 	takerID := types.UserID(2)
@@ -202,7 +205,10 @@ func TestEventSourcingReplay(t *testing.T) {
 		_ = ob2.Close()
 	}()
 
-	eng2 := NewEngine(ob2, reg2, nil)
+	eng2, err := NewEngine(ob2, reg2, nil)
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
 	if err := historyStore2.LoadCore(eng2.Store(), eng2.Portfolio()); err != nil {
 		t.Fatalf("load core: %v", err)
 	}

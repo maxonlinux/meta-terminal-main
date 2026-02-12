@@ -263,7 +263,7 @@ func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quan
 	order.UpdatedAt = utils.NowNano()
 
 	if order.ReduceOnly {
-		s.reduceonly.adjustExposure(order.UserID, order.Symbol, math.Neg(delta))
+		s.reduceonly.adjustExposure(order.UserID, order.Symbol, order.Side, math.Neg(delta))
 	}
 
 	return nil
@@ -275,7 +275,7 @@ func (s *Service) Cancel(userID types.UserID, id types.OrderID) error {
 		return errors.New("order not found")
 	}
 
-	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
+	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED && order.Status != constants.ORDER_STATUS_TRIGGERED {
 		return errors.New("only active orders can be canceled")
 	}
 
@@ -301,7 +301,7 @@ func (s *Service) CancelWithDetails(userID types.UserID, id types.OrderID) (*typ
 		return nil, errors.New("order not found")
 	}
 
-	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED {
+	if order.Status != constants.ORDER_STATUS_NEW && order.Status != constants.ORDER_STATUS_PARTIALLY_FILLED && order.Status != constants.ORDER_STATUS_UNTRIGGERED && order.Status != constants.ORDER_STATUS_TRIGGERED {
 		return nil, errors.New("only active orders can be canceled")
 	}
 
@@ -324,7 +324,9 @@ func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity
 		return errors.New("order not found")
 	}
 
-	s.reduceonly.adjustExposure(order.UserID, order.Symbol, math.Neg(qty))
+	if order.ReduceOnly {
+		s.reduceonly.adjustExposure(order.UserID, order.Symbol, order.Side, math.Neg(qty))
+	}
 
 	order.Filled = math.Add(order.Filled, qty)
 	order.UpdatedAt = utils.NowNano()
@@ -340,8 +342,8 @@ func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity
 	return nil
 }
 
-func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionSize types.Quantity) {
-	s.reduceonly.OnPositionReduce(userID, symbol, positionSize)
+func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionSize types.Quantity, price types.Price) {
+	s.reduceonly.OnPositionReduce(userID, symbol, positionSize, price)
 }
 
 func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*types.Order)) {

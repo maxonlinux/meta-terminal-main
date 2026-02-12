@@ -210,15 +210,6 @@ func (h *UserHandler) Plan(c *echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
-	if h.plan == nil {
-		// Return amount-like values as strings for fixed-point consistency.
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"current":     nil,
-			"next":        nil,
-			"remaining":   "0",
-			"netDeposits": "0",
-		})
-	}
 	progress, err := h.plan.GetUserPlanProgress(claims.UserID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load plan"})

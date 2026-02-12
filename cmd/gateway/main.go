@@ -16,6 +16,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
+	"github.com/maxonlinux/meta-terminal-go/internal/mm"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
@@ -76,14 +77,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("plan repo: %v", err)
 	}
-	planService := plan.NewService(planRepo, reg)
+	planService, err := plan.NewService(planRepo, reg)
+	if err != nil {
+		log.Fatalf("plan service: %v", err)
+	}
 
-	eng := engine.NewEngine(ob, reg, nil)
+	eng, err := engine.NewEngine(ob, reg, nil)
+	if err != nil {
+		log.Fatalf("engine: %v", err)
+	}
 	eng.SetPlanPolicy(planService)
 	if err := persistenceStore.LoadCore(eng.Store(), eng.Portfolio()); err != nil {
 		log.Fatalf("load core: %v", err)
 	}
 	eng.RebuildBooks()
+
+	mmaker := mm.New(eng, reg, mm.Config{})
+	mmaker.Start(ctx)
 
 	ob.Start()
 
@@ -120,10 +130,12 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 	otpService := otp.NewService()
 	impService := impersonation.NewService(authService)
 
-	router := apihandlers.NewRouter(eng, persistenceStore, userStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, cfg)
 	wsHandler := wsapi.NewWsHandler(eng.ReadBook, jwtService, cfg.JwtCookieName)
 	eng.SetPublisher(wsHandler.Publisher())
-	router.SetWsHandler(wsHandler)
+	router, err := apihandlers.NewRouter(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, wsHandler, cfg)
+	if err != nil {
+		return err
+	}
 
 	e := echo.New()
 

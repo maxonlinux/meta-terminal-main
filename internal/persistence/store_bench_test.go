@@ -64,6 +64,13 @@ func BenchmarkHistoryApply(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		store.portfolio.LoadBalance(&types.Balance{
+			UserID:    1,
+			Asset:     "USDT",
+			Available: types.Quantity(fixed.NewI(1000000000, 0)),
+			Locked:    types.Quantity(fixed.NewI(0, 0)),
+			Margin:    types.Quantity(fixed.NewI(0, 0)),
+		})
 		if err := store.Apply(batch); err != nil {
 			b.Fatalf("apply: %v", err)
 		}
@@ -117,6 +124,13 @@ func BenchmarkHistoryApplyDefault(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		store.portfolio.LoadBalance(&types.Balance{
+			UserID:    1,
+			Asset:     "USDT",
+			Available: types.Quantity(fixed.NewI(1000000000, 0)),
+			Locked:    types.Quantity(fixed.NewI(0, 0)),
+			Margin:    types.Quantity(fixed.NewI(0, 0)),
+		})
 		if err := store.Apply(batch); err != nil {
 			b.Fatalf("apply: %v", err)
 		}

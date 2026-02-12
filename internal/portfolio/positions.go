@@ -36,16 +36,12 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 		return nil
 	}
 
-	// Resolve quote asset from registry to apply margin changes correctly.
-	if s.registry == nil {
-		return constants.ErrInstrumentNotFound
-	}
 	inst := s.registry.GetInstrument(symbol)
 	if inst == nil {
 		return constants.ErrInstrumentNotFound
 	}
 	quote := inst.QuoteAsset
-	notional := types.Quantity(math.Mul(pos.EntryPrice, absPositionSize(pos.Size)))
+	notional := types.Quantity(math.Mul(pos.EntryPrice, types.Quantity(math.AbsFixed(pos.Size))))
 	oldMargin := types.Quantity(math.Div(notional, oldLeverage))
 	newMargin := types.Quantity(math.Div(notional, newLeverage))
 	if err := s.applyMarginDelta(userID, quote, oldMargin, newMargin); err != nil {
@@ -65,13 +61,14 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 
 	signedTrade := sideSignedQty(order.Side, match.Quantity)
 	tradeSign := math.Sign(signedTrade)
-	posSign := math.Sign(pos.Size)
+	prevSize := pos.Size
+	prevSign := math.Sign(prevSize)
 
 	if tradeSign == 0 {
 		return
 	}
 
-	if posSign == 0 {
+	if prevSign == 0 {
 		pos.Size = signedTrade
 		pos.EntryPrice = match.Price
 		if math.Sign(pos.Leverage) <= 0 {
@@ -80,31 +77,35 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		return
 	}
 
-	if posSign == tradeSign {
-		newSize := math.Add(pos.Size, signedTrade)
-		weighted := math.Add(math.Mul(pos.EntryPrice, pos.Size), math.Mul(match.Price, signedTrade))
+	if prevSign == tradeSign {
+		newSize := math.Add(prevSize, signedTrade)
+		weighted := math.Add(math.Mul(pos.EntryPrice, prevSize), math.Mul(match.Price, signedTrade))
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
 		return
 	}
 
-	remaining := math.Add(pos.Size, signedTrade)
-	pos.Size = remaining
-	if math.Sign(remaining) == 0 {
+	newSize := math.Add(prevSize, signedTrade)
+	closedQty := types.Quantity(math.AbsFixed(signedTrade))
+	prevQty := types.Quantity(math.AbsFixed(prevSize))
+	if math.Cmp(closedQty, prevQty) > 0 {
+		closedQty = prevQty
+	}
+	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, prevSize)
+
+	pos.Size = newSize
+	if math.Sign(newSize) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
+	} else if math.Sign(prevSize) != math.Sign(newSize) {
+		// Reset entry price when flipping direction.
+		pos.EntryPrice = match.Price
 	}
-
-	closedQty := absPositionSize(signedTrade)
-	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, pos.Size)
 	if math.Sign(rpnl) != 0 {
 		// Use registry quote asset for realized PnL balance adjustment.
-		if s.registry == nil {
-			return
-		}
 		inst := s.registry.GetInstrument(match.Symbol)
 		if inst == nil {
-			return
+			panic("instrument not found: " + match.Symbol)
 		}
 		quote := inst.QuoteAsset
 		s.adjustAvailable(userID, quote, rpnl)
@@ -127,7 +128,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 			})
 		}
 	}
-	if s.onReduce != nil {
+	if s.onReduce != nil && math.Sign(closedQty) != 0 {
 		s.onReduce(userID, match.Symbol, pos.Size)
 	}
 }
@@ -165,13 +166,6 @@ func sideSignedQty(side int8, qty types.Quantity) types.Quantity {
 	return types.Quantity(math.Neg(qty))
 }
 
-func absPositionSize(size types.Quantity) types.Quantity {
-	if math.Sign(size) < 0 {
-		return types.Quantity(math.Neg(size))
-	}
-	return size
-}
-
 func normalizeLeverage(leverage types.Leverage) types.Leverage {
 	if math.Sign(leverage) <= 0 {
 		return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
@@ -199,12 +193,12 @@ func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin 
 	return nil
 }
 
-func realizedPnL(entryPrice types.Price, tradePrice types.Price, closedQty types.Quantity, remaining types.Quantity) types.Quantity {
+func realizedPnL(entryPrice types.Price, tradePrice types.Price, closedQty types.Quantity, positionSize types.Quantity) types.Quantity {
 	if math.Sign(closedQty) == 0 {
 		return types.Quantity(math.Zero)
 	}
 	priceDiff := math.Sub(tradePrice, entryPrice)
-	if math.Sign(remaining) < 0 {
+	if math.Sign(positionSize) < 0 {
 		priceDiff = math.Sub(entryPrice, tradePrice)
 	}
 	return types.Quantity(math.Mul(priceDiff, closedQty))

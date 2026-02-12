@@ -78,6 +78,7 @@ var (
 	ErrConditionalSpot          = errors.New("conditional orders not allowed for SPOT")
 	ErrReduceOnlySpot           = errors.New("reduce-only not allowed for SPOT")
 	ErrFOKInsufficientLiquidity = errors.New("FOK: insufficient liquidity in orderbook")
+	ErrSelfMatch                = errors.New("self-match is not allowed")
 	// ErrLeverageTooHigh indicates leverage would trigger immediate liquidation.
 	ErrLeverageTooHigh = errors.New("leverage would cause immediate liquidation")
 	// ErrPriceUnavailable indicates required pricing data is missing.

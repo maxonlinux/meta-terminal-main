@@ -108,9 +108,6 @@ type AdminImpersonateResponse struct {
 }
 
 func (h *AdminHandler) ExistingPlans(c *echo.Context) error {
-	if h.plan == nil {
-		return c.JSON(http.StatusOK, []string{})
-	}
 	plans := []string{
 		string(plan.PlanLowBase),
 		string(plan.PlanBase),
@@ -125,9 +122,6 @@ func (h *AdminHandler) ExistingPlans(c *echo.Context) error {
 }
 
 func (h *AdminHandler) Users(c *echo.Context) error {
-	if h.users == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
-	}
 	limit, offset := parsePagination(c)
 	query := strings.TrimSpace(c.QueryParam("q"))
 	profiles, err := h.users.ListProfiles(limit, offset, query)
@@ -145,17 +139,18 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 			Surname:  profile.Surname,
 			IsActive: profile.IsActive,
 		}
-		if h.planRepo != nil {
-			record, err := h.planRepo.GetUserPlan(profile.UserID)
-			if err == nil && record != nil {
-				user.Plan = &AdminUserPlan{
-					ID:        profile.UserID,
-					UserID:    profile.UserID,
-					Plan:      record.Plan,
-					IsManual:  record.IsManual,
-					CreatedAt: record.CreatedAt,
-					UpdatedAt: record.UpdatedAt,
-				}
+		record, err := h.planRepo.GetUserPlan(profile.UserID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user plan"})
+		}
+		if record != nil {
+			user.Plan = &AdminUserPlan{
+				ID:        profile.UserID,
+				UserID:    profile.UserID,
+				Plan:      record.Plan,
+				IsManual:  record.IsManual,
+				CreatedAt: record.CreatedAt,
+				UpdatedAt: record.UpdatedAt,
 			}
 		}
 		res = append(res, user)
@@ -164,9 +159,6 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 }
 
 func (h *AdminHandler) User(c *echo.Context) error {
-	if h.users == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -187,26 +179,24 @@ func (h *AdminHandler) User(c *echo.Context) error {
 		Surname:  profile.Surname,
 		IsActive: profile.IsActive,
 	}
-	if h.planRepo != nil {
-		record, err := h.planRepo.GetUserPlan(profile.UserID)
-		if err == nil && record != nil {
-			user.Plan = &AdminUserPlan{
-				ID:        profile.UserID,
-				UserID:    profile.UserID,
-				Plan:      record.Plan,
-				IsManual:  record.IsManual,
-				CreatedAt: record.CreatedAt,
-				UpdatedAt: record.UpdatedAt,
-			}
+	record, err := h.planRepo.GetUserPlan(profile.UserID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user plan"})
+	}
+	if record != nil {
+		user.Plan = &AdminUserPlan{
+			ID:        profile.UserID,
+			UserID:    profile.UserID,
+			Plan:      record.Plan,
+			IsManual:  record.IsManual,
+			CreatedAt: record.CreatedAt,
+			UpdatedAt: record.UpdatedAt,
 		}
 	}
 	return c.JSON(http.StatusOK, user)
 }
 
 func (h *AdminHandler) UserAddress(c *echo.Context) error {
-	if h.users == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "user service unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -228,9 +218,6 @@ func (h *AdminHandler) UserAddress(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UserTransactions(c *echo.Context) error {
-	if h.store == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -259,9 +246,6 @@ func (h *AdminHandler) UserTransactions(c *echo.Context) error {
 }
 
 func (h *AdminHandler) Funding(c *echo.Context) error {
-	if h.store == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
-	}
 	limit, offset := parsePagination(c)
 	query := strings.TrimSpace(c.QueryParam("q"))
 	items, err := h.store.ListFundingsAll(limit, offset, query)
@@ -274,7 +258,10 @@ func (h *AdminHandler) Funding(c *echo.Context) error {
 		username := usernames[item.UserID]
 		if username == "" {
 			user, err := h.users.GetUserByID(item.UserID)
-			if err == nil && user != nil {
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user"})
+			}
+			if user != nil {
 				username = user.Username
 				usernames[item.UserID] = username
 			}
@@ -297,9 +284,6 @@ func (h *AdminHandler) Funding(c *echo.Context) error {
 }
 
 func (h *AdminHandler) ApproveFunding(c *echo.Context) error {
-	if h.engine == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "engine unavailable"})
-	}
 	fundingID, err := parseFundingIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid funding id"})
@@ -312,9 +296,6 @@ func (h *AdminHandler) ApproveFunding(c *echo.Context) error {
 }
 
 func (h *AdminHandler) CancelFunding(c *echo.Context) error {
-	if h.engine == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "engine unavailable"})
-	}
 	fundingID, err := parseFundingIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid funding id"})
@@ -327,20 +308,13 @@ func (h *AdminHandler) CancelFunding(c *echo.Context) error {
 }
 
 func (h *AdminHandler) PendingCount(c *echo.Context) error {
-	if h.store == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
-	}
 	count, err := h.store.CountPendingFundings()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load counts"})
 	}
-	kycCount := 0
-	if h.kycRepo != nil {
-		count, err := h.kycRepo.CountPending()
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load counts"})
-		}
-		kycCount = count
+	kycCount, err := h.kycRepo.CountPending()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load counts"})
 	}
 	return c.JSON(http.StatusOK, AdminPendingCount{
 		Users:        0,
@@ -351,9 +325,6 @@ func (h *AdminHandler) PendingCount(c *echo.Context) error {
 }
 
 func (h *AdminHandler) Impersonate(c *echo.Context) error {
-	if h.impersonate == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "impersonation unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -369,9 +340,6 @@ func (h *AdminHandler) GetUserPlan(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
-	}
-	if h.plan == nil {
-		return c.JSON(http.StatusOK, map[string]interface{}{"current": nil})
 	}
 	progress, err := h.plan.GetUserPlanProgress(userID)
 	if err != nil {
@@ -395,9 +363,6 @@ func (h *AdminHandler) SetUserPlan(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
-	if h.plan == nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "plan service unavailable"})
-	}
 	var req PlanUpdateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -416,9 +381,6 @@ func (h *AdminHandler) ResetUserPlan(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
-	}
-	if h.plan == nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "plan service unavailable"})
 	}
 	if err := h.plan.ResetManualPlan(userID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to reset plan"})

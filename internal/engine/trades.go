@@ -50,7 +50,6 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 	publicTrade.IsMaker = false
 	publicTrade.Timestamp = match.Timestamp
 	e.tradeFeed.Add(match.Category, match.Symbol, *publicTrade)
-	putTrade(publicTrade)
 
 	if e.publisher != nil {
 		e.publisher.OnPublicTrades(match.Category, match.Symbol, []types.Trade{*publicTrade})
@@ -58,6 +57,7 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 		e.publisher.OnOrderUpdated(match.TakerOrder)
 		e.publisher.OnOrderbookUpdated(match.Category, match.Symbol)
 	}
+	putTrade(publicTrade)
 
 	if writer != nil {
 		_ = writer.Record(events.EncodeTrade(events.TradeEvent{

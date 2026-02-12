@@ -26,9 +26,6 @@ func NewTradeFeed() *TradeFeed {
 
 // Add stores a trade in the rolling buffer for category+symbol.
 func (t *TradeFeed) Add(category int8, symbol string, trade types.Trade) {
-	if t == nil {
-		return
-	}
 	categoryBuffers := t.buffers[category]
 	if categoryBuffers == nil {
 		categoryBuffers = make(map[string]*TradeBuffer)
@@ -44,9 +41,6 @@ func (t *TradeFeed) Add(category int8, symbol string, trade types.Trade) {
 
 // Recent returns trades for category+symbol in chronological order.
 func (t *TradeFeed) Recent(category int8, symbol string) []types.Trade {
-	if t == nil {
-		return nil
-	}
 	categoryBuffers := t.buffers[category]
 	if categoryBuffers == nil {
 		return nil
