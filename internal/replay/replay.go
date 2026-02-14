@@ -63,6 +63,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 			return nil
 		}
 		order.UpdatedAt = amend.Timestamp
+		if math.Sign(amend.NewPrice) > 0 {
+			order.Price = amend.NewPrice
+		}
 		if order.IsConditional || order.Type != constants.ORDER_TYPE_LIMIT {
 			order.Quantity = amend.NewQty
 			return nil

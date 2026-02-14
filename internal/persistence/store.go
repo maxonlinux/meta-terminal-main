@@ -477,9 +477,16 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			err = updateOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
-			if err == nil {
-				err = updateOpenOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
+			if math.Sign(amend.NewPrice) > 0 {
+				err = updateOrderPriceQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewPrice, amend.NewQty, amend.Timestamp)
+				if err == nil {
+					err = updateOpenOrderPriceQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewPrice, amend.NewQty, amend.Timestamp)
+				}
+			} else {
+				err = updateOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
+				if err == nil {
+					err = updateOpenOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
+				}
 			}
 			addBalance(amend.UserID)
 		case events.OrderCanceled:
@@ -684,6 +691,24 @@ func updateOpenOrderQty(tx *sql.Tx, stmts *statements, userID types.UserID, orde
 		return fmt.Errorf("missing update open order qty statement")
 	}
 	_, err := tx.Stmt(stmt).Exec(qty.String(), ts, orderID, userID)
+	return err
+}
+
+func updateOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
+	stmt := stmts.updateOrderPriceQty
+	if stmt == nil {
+		return fmt.Errorf("missing update order price qty statement")
+	}
+	_, err := tx.Stmt(stmt).Exec(price.String(), qty.String(), ts, orderID, userID)
+	return err
+}
+
+func updateOpenOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
+	stmt := stmts.updateOpenOrderPriceQty
+	if stmt == nil {
+		return fmt.Errorf("missing update open order price qty statement")
+	}
+	_, err := tx.Stmt(stmt).Exec(price.String(), qty.String(), ts, orderID, userID)
 	return err
 }
 

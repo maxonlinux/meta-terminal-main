@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
@@ -23,7 +25,11 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/nats-io/nats.go"
+	"github.com/robaho/fixed"
 )
 
 func main() {
@@ -65,7 +71,7 @@ func main() {
 		_ = batchSink.Stop()
 	}()
 
-	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{EventSink: batchSink})
+	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{EventSink: batchSink, SegmentSize: cfg.OutboxSegmentSize})
 	if err != nil {
 		log.Fatalf("outbox open: %v", err)
 	}
@@ -94,6 +100,16 @@ func main() {
 
 	mmaker := mm.New(eng, reg, mm.Config{})
 	mmaker.Start(ctx)
+	natsConn, err := startPriceSubscriber(ctx, cfg, eng, mmaker)
+	if err != nil {
+		log.Fatalf("nats price subscriber: %v", err)
+	}
+	defer func() {
+		if natsConn != nil {
+			_ = natsConn.Drain()
+			natsConn.Close()
+		}
+	}()
 
 	ob.Start()
 
@@ -111,6 +127,75 @@ func main() {
 	<-ctx.Done()
 	log.Printf("shutdown signal received")
 	eng.Shutdown()
+}
+
+type priceMessage struct {
+	Symbol    string      `json:"symbol"`
+	Price     json.Number `json:"price"`
+	Timestamp int64       `json:"timestamp"`
+}
+
+func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.Engine, mmaker *mm.MarketMaker) (*nats.Conn, error) {
+	if cfg.NatsURL == "" {
+		return nil, nil
+	}
+
+	options := []nats.Option{
+		nats.Name("meta-terminal-go-price-subscriber"),
+	}
+	if cfg.NatsToken != "" {
+		options = append(options, nats.Token(cfg.NatsToken))
+	}
+
+	nc, err := nats.Connect(cfg.NatsURL, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = nc.Subscribe(cfg.NatsPriceSubject, func(msg *nats.Msg) {
+		var payload priceMessage
+		decoder := json.NewDecoder(bytes.NewReader(msg.Data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&payload); err != nil {
+			log.Printf("nats price decode failed subject=%s err=%v", msg.Subject, err)
+			return
+		}
+		if payload.Symbol == "" {
+			log.Printf("nats price missing symbol subject=%s", msg.Subject)
+			return
+		}
+		priceValue := payload.Price.String()
+		if priceValue == "" {
+			log.Printf("nats price missing price subject=%s symbol=%s", msg.Subject, payload.Symbol)
+			return
+		}
+		parsed, err := fixed.Parse(priceValue)
+		if err != nil {
+			log.Printf("nats price parse failed subject=%s symbol=%s price=%s err=%v", msg.Subject, payload.Symbol, priceValue, err)
+			return
+		}
+		price := types.Price(parsed)
+		if math.Sign(price) <= 0 {
+			log.Printf("nats price invalid subject=%s symbol=%s price=%s", msg.Subject, payload.Symbol, price.String())
+			return
+		}
+		eng.OnPriceTick(payload.Symbol, price)
+		if mmaker != nil {
+			mmaker.OnPriceTick(payload.Symbol, price)
+		}
+	})
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+
+	go func() {
+		<-ctx.Done()
+		_ = nc.Drain()
+		nc.Close()
+	}()
+
+	return nc, nil
 }
 
 func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository) error {

@@ -8,14 +8,17 @@ import (
 )
 
 type Config struct {
-	DataDir         string
-	AssetsURL       string
-	MultiplexerURL  string
-	SyncInterval    time.Duration
-	Port            string
-	RegistryTimeout time.Duration
-	AdminToken      string
-	OtpDisabled     bool
+	DataDir          string
+	AssetsURL        string
+	MultiplexerURL   string
+	SyncInterval     time.Duration
+	Port             string
+	RegistryTimeout  time.Duration
+	AdminToken       string
+	NatsURL          string
+	NatsToken        string
+	NatsPriceSubject string
+	OtpDisabled      bool
 	// JWT config controls user session signing and cookies.
 	JwtSecret       string
 	JwtTokenExpiry  time.Duration
@@ -27,6 +30,7 @@ type Config struct {
 	AdminCookieName   string
 	AdminCookiePath   string
 	AdminCookieMaxAge int
+	OutboxSegmentSize int64
 }
 
 var (
@@ -44,6 +48,9 @@ func Load() Config {
 			Port:              envString("PORT", "8080"),
 			RegistryTimeout:   envDuration("REGISTRY_TIMEOUT", 30*time.Second),
 			AdminToken:        envString("ADMIN_TOKEN", ""),
+			NatsURL:           envString("NATS_URL", "nats://localhost:4222"),
+			NatsToken:         envString("NATS_TOKEN", ""),
+			NatsPriceSubject:  envString("NATS_PRICE_SUBJECT", "prices.*"),
 			OtpDisabled:       envBool("OTP_DISABLED", false),
 			JwtSecret:         envString("JWT_SECRET", ""),
 			JwtTokenExpiry:    envDuration("JWT_TOKEN_EXPIRY", 24*time.Hour),
@@ -54,6 +61,7 @@ func Load() Config {
 			AdminCookieName:   envString("ADMIN_COOKIE_NAME", "admin_token"),
 			AdminCookiePath:   envString("ADMIN_COOKIE_PATH", "/"),
 			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
+			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
 		}
 	})
 	return cfg
@@ -101,6 +109,19 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// envInt64 returns an int64 env value or the fallback.
+func envInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return fallback
 	}

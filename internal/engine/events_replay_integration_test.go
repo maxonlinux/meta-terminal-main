@@ -42,7 +42,7 @@ func TestEventSourcingReplay(t *testing.T) {
 		_ = historyStore.Close()
 	}()
 
-	ob, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore})
+	ob, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore, SegmentSize: 1 << 20})
 	if err != nil {
 		t.Fatalf("open outbox: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestEventSourcingReplay(t *testing.T) {
 		_ = historyStore2.Close()
 	}()
 
-	ob2, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore2})
+	ob2, err := outbox.OpenWithOptions(storeDir, outbox.Options{EventSink: historyStore2, SegmentSize: 1 << 20})
 	if err != nil {
 		t.Fatalf("reopen outbox: %v", err)
 	}

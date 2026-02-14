@@ -3,23 +3,25 @@ package persistence
 import "database/sql"
 
 type statements struct {
-	upsertOrder            *sql.Stmt
-	upsertOpenOrder        *sql.Stmt
-	updateOrderQty         *sql.Stmt
-	updateOpenOrderQty     *sql.Stmt
-	cancelOrder            *sql.Stmt
-	deleteOpenOrder        *sql.Stmt
-	markOrderTriggered     *sql.Stmt
-	markOpenOrderTriggered *sql.Stmt
-	insertFill             *sql.Stmt
-	updateOrderFilled      *sql.Stmt
-	updateOpenOrderFilled  *sql.Stmt
-	upsertBalance          *sql.Stmt
-	upsertPosition         *sql.Stmt
-	upsertFunding          *sql.Stmt
-	updateFundingStatus    *sql.Stmt
-	selectFundingUser      *sql.Stmt
-	insertRPNL             *sql.Stmt
+	upsertOrder             *sql.Stmt
+	upsertOpenOrder         *sql.Stmt
+	updateOrderQty          *sql.Stmt
+	updateOrderPriceQty     *sql.Stmt
+	updateOpenOrderQty      *sql.Stmt
+	updateOpenOrderPriceQty *sql.Stmt
+	cancelOrder             *sql.Stmt
+	deleteOpenOrder         *sql.Stmt
+	markOrderTriggered      *sql.Stmt
+	markOpenOrderTriggered  *sql.Stmt
+	insertFill              *sql.Stmt
+	updateOrderFilled       *sql.Stmt
+	updateOpenOrderFilled   *sql.Stmt
+	upsertBalance           *sql.Stmt
+	upsertPosition          *sql.Stmt
+	upsertFunding           *sql.Stmt
+	updateFundingStatus     *sql.Stmt
+	selectFundingUser       *sql.Stmt
+	insertRPNL              *sql.Stmt
 }
 
 func prepareStatements(db *sql.DB) (*statements, error) {
@@ -91,7 +93,13 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	if err := prepare(&stmts.updateOrderQty, `update orders set qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
+	if err := prepare(&stmts.updateOrderPriceQty, `update orders set price = ?, qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
+		return nil, err
+	}
 	if err := prepare(&stmts.updateOpenOrderQty, `update open_orders set qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
+		return nil, err
+	}
+	if err := prepare(&stmts.updateOpenOrderPriceQty, `update open_orders set price = ?, qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
 	if err := prepare(&stmts.cancelOrder, `
@@ -197,7 +205,9 @@ func closeStatements(stmts *statements) {
 	closeStmt(stmts.upsertOrder)
 	closeStmt(stmts.upsertOpenOrder)
 	closeStmt(stmts.updateOrderQty)
+	closeStmt(stmts.updateOrderPriceQty)
 	closeStmt(stmts.updateOpenOrderQty)
+	closeStmt(stmts.updateOpenOrderPriceQty)
 	closeStmt(stmts.cancelOrder)
 	closeStmt(stmts.deleteOpenOrder)
 	closeStmt(stmts.markOrderTriggered)

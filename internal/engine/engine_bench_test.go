@@ -12,7 +12,7 @@ import (
 
 func BenchmarkEnginePipeline(b *testing.B) {
 	root := b.TempDir()
-	ob, err := outbox.OpenWithOptions(root, outbox.Options{QueueSize: 1 << 16})
+	ob, err := outbox.OpenWithOptions(root, outbox.Options{QueueSize: 1 << 16, SegmentSize: 1 << 20})
 	if err != nil {
 		b.Fatal(err)
 	}

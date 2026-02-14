@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,10 +18,11 @@ import (
 )
 
 const (
-	logRecordBegin  byte = 1
-	logRecordData   byte = 2
-	logRecordCommit byte = 3
-	logRecordAbort  byte = 4
+	logRecordBegin     byte = 1
+	logRecordData      byte = 2
+	logRecordCommit    byte = 3
+	logRecordAbort     byte = 4
+	defaultSegmentSize      = 16 << 20
 )
 
 type Writer interface {
@@ -44,8 +48,15 @@ func Open(dir string) (*Outbox, error) {
 const defaultQueueSize = 1 << 18
 
 type Options struct {
-	QueueSize int
-	EventSink EventSink
+	QueueSize   int
+	EventSink   EventSink
+	SegmentSize int64
+}
+
+type segmentInfo struct {
+	path  string
+	start int64
+	size  int64
 }
 
 func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
@@ -56,7 +67,7 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 	logPath := filepath.Join(dir, "outbox.aol")
 	tailPath := filepath.Join(dir, "outbox.bin")
 
-	log, err := openAppendLog(logPath)
+	log, err := openAppendLog(logPath, opts.SegmentSize)
 	if err != nil {
 		return nil, err
 	}
@@ -182,12 +193,32 @@ type appendLog struct {
 	writer      *bufio.Writer
 	pending     int
 	size        int64
+	segmentBase int64
+	segmentSize int64
+	basePath    string
 	flushTicker *time.Ticker
 	quit        chan struct{}
 }
 
-func openAppendLog(path string) (*appendLog, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
+	if err := ensureSegments(path); err != nil {
+		return nil, err
+	}
+	segments, err := listSegments(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(segments) == 0 {
+		if err := createSegment(path, 0); err != nil {
+			return nil, err
+		}
+		segments, err = listSegments(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	last := segments[len(segments)-1]
+	file, err := os.OpenFile(last.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -196,16 +227,104 @@ func openAppendLog(path string) (*appendLog, error) {
 		_ = file.Close()
 		return nil, err
 	}
+	if segmentSize <= 0 {
+		segmentSize = defaultSegmentSize
+	}
 	log := &appendLog{
 		file:        file,
 		writer:      bufio.NewWriterSize(file, 1<<20),
 		pending:     0,
 		size:        info.Size(),
+		segmentBase: last.start,
+		segmentSize: segmentSize,
+		basePath:    path,
 		flushTicker: time.NewTicker(100 * time.Millisecond),
 		quit:        make(chan struct{}),
 	}
 	go log.flushLoop()
 	return log, nil
+}
+
+func ensureSegments(basePath string) error {
+	if basePath == "" {
+		return errors.New("log path is empty")
+	}
+	if _, err := os.Stat(basePath); err == nil {
+		segments, segErr := listSegments(basePath)
+		if segErr != nil {
+			return segErr
+		}
+		if len(segments) == 0 {
+			if err := os.Rename(basePath, segmentPath(basePath, 0)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func listSegments(basePath string) ([]segmentInfo, error) {
+	dir := filepath.Dir(basePath)
+	base := filepath.Base(basePath) + "."
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	segments := make([]segmentInfo, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, base) {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, base)
+		start, err := parseSegmentStart(suffix)
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		segments = append(segments, segmentInfo{path: path, start: start, size: info.Size()})
+	}
+	slices.SortFunc(segments, func(a, b segmentInfo) int {
+		if a.start < b.start {
+			return -1
+		}
+		if a.start > b.start {
+			return 1
+		}
+		return 0
+	})
+	return segments, nil
+}
+
+func parseSegmentStart(value string) (int64, error) {
+	if value == "" {
+		return 0, errors.New("empty segment start")
+	}
+	var start int64
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return 0, errors.New("invalid segment start")
+		}
+		start = start*10 + int64(ch-'0')
+	}
+	return start, nil
+}
+
+func segmentPath(basePath string, start int64) string {
+	return fmt.Sprintf("%s.%020d", basePath, start)
+}
+
+func createSegment(basePath string, start int64) error {
+	path := segmentPath(basePath, start)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (int64, error) {
@@ -238,7 +357,13 @@ func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (int64, e
 	l.size += int64(len(value))
 
 	l.pending++
-	return l.size, nil
+	endOffset := l.segmentBase + l.size
+	if l.size >= l.segmentSize {
+		if err := l.rotateLocked(); err != nil {
+			return endOffset, err
+		}
+	}
+	return endOffset, nil
 }
 
 func (l *appendLog) flushLoop() {
@@ -281,27 +406,56 @@ func (l *appendLog) Close() error {
 	return l.file.Close()
 }
 
-func (l *appendLog) TruncateIfFullyApplied(offset int64) (int64, error) {
+func (l *appendLog) CompactApplied(offset int64) (int64, error) {
 	if l == nil {
 		return offset, errors.New("log is closed")
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if offset == 0 || offset != l.size {
+	if offset <= 0 {
 		return offset, nil
 	}
-	if err := l.writer.Flush(); err != nil {
+	segments, err := listSegments(l.basePath)
+	if err != nil {
 		return offset, err
 	}
-	if err := l.file.Truncate(0); err != nil {
-		return offset, err
+	for _, seg := range segments {
+		if seg.start+seg.size <= offset {
+			_ = os.Remove(seg.path)
+			continue
+		}
 	}
-	if _, err := l.file.Seek(0, io.SeekEnd); err != nil {
-		return offset, err
+	if l.segmentBase+l.size <= offset {
+		if err := l.rotateLocked(); err != nil {
+			return offset, err
+		}
 	}
+	return offset, nil
+}
+
+func (l *appendLog) rotateLocked() error {
+	if l.writer != nil {
+		_ = l.writer.Flush()
+	}
+	if l.file != nil {
+		_ = l.file.Close()
+	}
+	l.segmentBase = l.segmentBase + l.size
 	l.size = 0
+	if err := createSegment(l.basePath, l.segmentBase); err != nil {
+		return err
+	}
+	segments, err := listSegments(l.basePath)
+	if err != nil {
+		return err
+	}
+	last := segments[len(segments)-1]
+	file, err := os.OpenFile(last.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	l.file = file
+	l.writer = bufio.NewWriterSize(file, 1<<20)
 	l.pending = 0
-	return 0, nil
+	return nil
 }
 
 type record struct {
@@ -380,7 +534,7 @@ func (w *worker) run() {
 			}
 		}
 		if w.log != nil && len(pending) == 0 {
-			if newOffset, err := w.log.TruncateIfFullyApplied(lastOffset); err == nil {
+			if newOffset, err := w.log.CompactApplied(lastOffset); err == nil {
 				lastOffset = newOffset
 			}
 		}
@@ -523,7 +677,7 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 	}
 
 	if len(pending) == 0 {
-		if newOffset, err := log.TruncateIfFullyApplied(appliedOffset); err == nil {
+		if newOffset, err := log.CompactApplied(appliedOffset); err == nil {
 			appliedOffset = newOffset
 		}
 	}

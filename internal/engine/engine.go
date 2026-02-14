@@ -425,11 +425,6 @@ func hasSelfMatch(matches []types.Match, userID types.UserID) bool {
 }
 
 func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, writer outbox.Writer, persist bool) CommandResult {
-	if order.TIF == constants.TIF_POST_ONLY {
-		if order.Type == constants.ORDER_TYPE_MARKET || book.WouldCross(order.Side, order.Price) {
-			return CommandResult{Err: constants.ErrPostOnlyWouldMatch}
-		}
-	}
 	limitPrice := order.Price
 	if order.Type == constants.ORDER_TYPE_MARKET {
 		limitPrice = types.Price{}
@@ -437,14 +432,17 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 
 	var buf [8]types.Match
 	matches := book.GetMatches(order, limitPrice, buf[:0])
+	if hasSelfMatch(matches, order.UserID) {
+		return CommandResult{Err: constants.ErrSelfMatch}
+	}
+	if order.TIF == constants.TIF_POST_ONLY && len(matches) > 0 {
+		return CommandResult{Err: constants.ErrPostOnlyWouldMatch}
+	}
 	var matchQty types.Quantity
 	var matchNotional types.Quantity
 	for i := range matches {
 		matchQty = math.Add(matchQty, matches[i].Quantity)
 		matchNotional = math.Add(matchNotional, math.Mul(matches[i].Price, matches[i].Quantity))
-	}
-	if hasSelfMatch(matches, order.UserID) {
-		return CommandResult{Err: constants.ErrSelfMatch}
 	}
 	remaining := math.Sub(order.Quantity, matchQty)
 
@@ -543,9 +541,10 @@ func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 }
 
 type AmendOrderCmd struct {
-	UserID  types.UserID
-	OrderID types.OrderID
-	NewQty  types.Quantity
+	UserID   types.UserID
+	OrderID  types.OrderID
+	NewQty   types.Quantity
+	NewPrice types.Price
 }
 
 func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
@@ -556,27 +555,60 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if !ok {
 		return CommandResult{Err: errOrderNotFound}
 	}
+	if math.Sign(c.NewPrice) > 0 && order.Origin != constants.ORDER_ORIGIN_SYSTEM {
+		return CommandResult{Err: errInvalidOrderRequest}
+	}
+	newPrice := order.Price
+	if math.Sign(c.NewPrice) > 0 {
+		newPrice = c.NewPrice
+	}
 
 	oldRemaining := math.Sub(order.Quantity, order.Filled)
-	if err := e.store.Amend(c.UserID, c.OrderID, c.NewQty); err != nil {
+	newRemaining := math.Sub(c.NewQty, order.Filled)
+	var reserveAsset string
+	var reserveDelta types.Quantity
+	if !order.IsConditional && order.Type == constants.ORDER_TYPE_LIMIT {
+		pos := e.portfolio.GetPosition(order.UserID, order.Symbol)
+		leverage := pos.Leverage
+		if math.Sign(leverage) <= 0 {
+			leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+		}
+		oldAmount, oldAsset := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, oldRemaining, order.Price, leverage, e.registry)
+		newAmount, newAsset := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, newRemaining, newPrice, leverage, e.registry)
+		if oldAsset != newAsset {
+			return CommandResult{Err: errInvalidOrderRequest}
+		}
+		reserveAsset = oldAsset
+		reserveDelta = types.Quantity(math.Sub(newAmount, oldAmount))
+		if math.Sign(reserveDelta) > 0 {
+			if err := e.portfolio.Reserve(order.UserID, reserveAsset, reserveDelta); err != nil {
+				return CommandResult{Err: err}
+			}
+		}
+	}
+
+	if err := e.store.Amend(c.UserID, c.OrderID, c.NewQty, c.NewPrice); err != nil {
+		if math.Sign(reserveDelta) > 0 {
+			e.portfolio.Release(order.UserID, reserveAsset, reserveDelta)
+		}
 		return CommandResult{Err: err}
 	}
 	if writer != nil {
-		_ = writer.Record(events.EncodeOrderAmended(events.OrderAmendedEvent{UserID: c.UserID, OrderID: c.OrderID, NewQty: c.NewQty, Timestamp: order.UpdatedAt}))
+		_ = writer.Record(events.EncodeOrderAmended(events.OrderAmendedEvent{UserID: c.UserID, OrderID: c.OrderID, NewQty: c.NewQty, NewPrice: c.NewPrice, Timestamp: order.UpdatedAt}))
 	}
 	order, ok = e.store.GetUserOrder(c.UserID, c.OrderID)
 	if !ok {
 		return CommandResult{}
 	}
 	if !order.IsConditional && order.Type == constants.ORDER_TYPE_LIMIT {
-		newRemaining := math.Sub(order.Quantity, order.Filled)
-		delta := math.Sub(newRemaining, oldRemaining)
-		if math.Sign(delta) > 0 {
-			if err := e.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, delta, order.Price); err != nil {
-				return CommandResult{Err: err}
+		if math.Sign(reserveDelta) < 0 {
+			e.portfolio.Release(order.UserID, reserveAsset, types.Quantity(math.Neg(reserveDelta)))
+		}
+		if math.Sign(c.NewPrice) > 0 {
+			if book, err := e.getBook(order.Category, order.Symbol); err == nil {
+				_ = book.Remove(order.ID)
+				book.Add(order)
 			}
-		} else if math.Sign(delta) < 0 {
-			e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price)
 		}
 		if e.publisher != nil {
 			e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)

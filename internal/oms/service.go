@@ -246,26 +246,37 @@ func (s *Service) Count() int {
 	return int(atomic.LoadInt64(&s.count))
 }
 
-func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quantity) error {
+func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quantity, newPrice types.Price) error {
 	order, ok := s.GetUserOrder(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
 
-	if math.Cmp(newQty, order.Quantity) >= 0 {
-		return errors.New("new quantity must be less than current")
-	}
+	oldRemaining := math.Sub(order.Quantity, order.Filled)
 
-	remaining := math.Sub(order.Quantity, order.Filled)
-	delta := math.Sub(remaining, newQty)
+	if math.Sign(newPrice) == 0 {
+		if math.Cmp(newQty, order.Quantity) >= 0 {
+			return errors.New("new quantity must be less than current")
+		}
+		remaining := math.Sub(order.Quantity, order.Filled)
+		delta := math.Sub(remaining, newQty)
+		order.Quantity = newQty
+		order.UpdatedAt = utils.NowNano()
+		if order.ReduceOnly {
+			s.reduceonly.adjustExposure(order.UserID, order.Symbol, order.Side, math.Neg(delta))
+		}
+		return nil
+	}
 
 	order.Quantity = newQty
+	order.Price = newPrice
 	order.UpdatedAt = utils.NowNano()
 
+	newRemaining := math.Sub(order.Quantity, order.Filled)
 	if order.ReduceOnly {
-		s.reduceonly.adjustExposure(order.UserID, order.Symbol, order.Side, math.Neg(delta))
+		delta := math.Sub(newRemaining, oldRemaining)
+		s.reduceonly.adjustExposure(order.UserID, order.Symbol, order.Side, delta)
 	}
-
 	return nil
 }
 

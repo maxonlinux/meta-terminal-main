@@ -32,6 +32,7 @@ type OrderAmendedEvent struct {
 	UserID    types.UserID
 	OrderID   types.OrderID
 	NewQty    types.Quantity
+	NewPrice  types.Price
 	Timestamp uint64
 }
 
@@ -97,12 +98,17 @@ func DecodeOrderPlaced(data []byte) (*types.Order, error) {
 
 func EncodeOrderAmended(ev OrderAmendedEvent) Event {
 	qty, _ := ev.NewQty.MarshalBinary()
-	data := make([]byte, 0, 24+len(qty))
+	price, _ := ev.NewPrice.MarshalBinary()
+	data := make([]byte, 0, 28+len(qty)+len(price))
 	data = appendU64(data, uint64(ev.UserID))
 	data = appendU64(data, uint64(ev.OrderID))
 	data = appendU32(data, uint32(len(qty)))
 	data = append(data, qty...)
 	data = appendU64(data, ev.Timestamp)
+	if len(price) > 0 {
+		data = appendU32(data, uint32(len(price)))
+		data = append(data, price...)
+	}
 	return Event{Type: OrderAmended, Data: data}
 }
 
@@ -123,7 +129,17 @@ func DecodeOrderAmended(data []byte) (OrderAmendedEvent, error) {
 	}
 	off += qtyLen
 	ts := readU64(data, &off)
-	return OrderAmendedEvent{UserID: userID, OrderID: orderID, NewQty: qty, Timestamp: ts}, nil
+	var price types.Price
+	if off < len(data) {
+		priceLen := int(readU32(data, &off))
+		if priceLen < 0 || off+priceLen > len(data) {
+			return OrderAmendedEvent{}, errors.New("invalid order amended payload")
+		}
+		if err := price.UnmarshalBinary(data[off : off+priceLen]); err != nil {
+			return OrderAmendedEvent{}, err
+		}
+	}
+	return OrderAmendedEvent{UserID: userID, OrderID: orderID, NewQty: qty, NewPrice: price, Timestamp: ts}, nil
 }
 
 func EncodeOrderCanceled(ev OrderCanceledEvent) Event {

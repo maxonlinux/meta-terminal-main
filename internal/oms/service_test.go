@@ -84,7 +84,7 @@ func TestService_Amend(t *testing.T) {
 		math.Zero, types.Quantity(fixed.NewI(10, 0)), math.Zero,
 		false, false, 0)
 
-	err := s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(5, 0)))
+	err := s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(5, 0)), types.Price{})
 	if err != nil {
 		t.Errorf("amend failed: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestService_Amend(t *testing.T) {
 		t.Errorf("expected quantity 5")
 	}
 
-	err = s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(15, 0)))
+	err = s.Amend(order.UserID, order.ID, types.Quantity(fixed.NewI(15, 0)), types.Price{})
 	if err == nil {
 		t.Error("amend to larger quantity should fail")
 	}

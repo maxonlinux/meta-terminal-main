@@ -26,7 +26,7 @@ func BenchmarkOutboxAppendPrepared(b *testing.B) {
 		_ = os.RemoveAll(dir)
 	})
 
-	log, err := openAppendLog(filepath.Join(dir, "outbox.aol"))
+	log, err := openAppendLog(filepath.Join(dir, "outbox.aol"), 1<<20)
 	if err != nil {
 		b.Fatal(err)
 	}

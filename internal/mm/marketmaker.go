@@ -21,6 +21,8 @@ const (
 	defaultMaxNotional   = 50000
 	defaultCancelPercent = 0.2
 	defaultSkipPercent   = 0.1
+	defaultMinBalance    = 500000
+	defaultTickQueue     = 4096
 )
 
 type Config struct {
@@ -31,6 +33,7 @@ type Config struct {
 	CancelPercent float64
 	SkipPercent   float64
 	BotUserID     types.UserID
+	MinBalance    int64
 }
 
 type MarketMaker struct {
@@ -40,11 +43,17 @@ type MarketMaker struct {
 	val *rand.Rand
 
 	orders map[marketKey]map[string]types.OrderID
+	ticks  chan priceTick
 }
 
 type marketKey struct {
 	symbol   string
 	category int8
+}
+
+type priceTick struct {
+	symbol string
+	price  types.Price
 }
 
 func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
@@ -69,6 +78,9 @@ func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
 	if cfg.BotUserID == 0 {
 		cfg.BotUserID = types.UserID(999999999)
 	}
+	if cfg.MinBalance <= 0 {
+		cfg.MinBalance = defaultMinBalance
+	}
 
 	return &MarketMaker{
 		eng:    eng,
@@ -76,6 +88,7 @@ func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
 		cfg:    cfg,
 		val:    rand.New(rand.NewSource(time.Now().UnixNano())),
 		orders: make(map[marketKey]map[string]types.OrderID),
+		ticks:  make(chan priceTick, defaultTickQueue),
 	}
 }
 
@@ -96,7 +109,20 @@ func (m *MarketMaker) loop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.refresh()
+		case tick := <-m.ticks:
+			m.refreshSymbol(tick.symbol, tick.price)
 		}
+	}
+}
+
+// OnPriceTick enqueues a per-symbol refresh for market makers.
+func (m *MarketMaker) OnPriceTick(symbol string, price types.Price) {
+	if m == nil {
+		return
+	}
+	select {
+	case m.ticks <- priceTick{symbol: symbol, price: price}:
+	default:
 	}
 }
 
@@ -115,7 +141,24 @@ func (m *MarketMaker) refresh() {
 
 		m.updateMarket(inst, constants.CATEGORY_SPOT, priceTick.Price)
 		m.updateMarket(inst, constants.CATEGORY_LINEAR, priceTick.Price)
+		// Top up after reserves to keep available balance above minimum.
+		m.ensureBalances(inst)
 	}
+}
+
+func (m *MarketMaker) refreshSymbol(symbol string, price types.Price) {
+	if math.Sign(price) <= 0 {
+		return
+	}
+	inst := m.reg.GetInstrument(symbol)
+	if inst == nil {
+		return
+	}
+	m.ensureBalances(inst)
+	m.updateMarket(inst, constants.CATEGORY_SPOT, price)
+	m.updateMarket(inst, constants.CATEGORY_LINEAR, price)
+	// Top up after reserves to keep available balance above minimum.
+	m.ensureBalances(inst)
 }
 
 func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price types.Price) {
@@ -135,13 +178,13 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		if math.Sign(up) > 0 {
 			req := m.buildOrder(inst, category, constants.ORDER_SIDE_SELL, up)
 			if req != nil {
-				desired[levelKey(constants.ORDER_SIDE_SELL, up)] = *req
+				desired[levelKey(constants.ORDER_SIDE_SELL, i)] = *req
 			}
 		}
 		if math.Sign(down) > 0 {
 			req := m.buildOrder(inst, category, constants.ORDER_SIDE_BUY, down)
 			if req != nil {
-				desired[levelKey(constants.ORDER_SIDE_BUY, down)] = *req
+				desired[levelKey(constants.ORDER_SIDE_BUY, i)] = *req
 			}
 		}
 	}
@@ -154,24 +197,42 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		}
 	}
 
-	// Add missing or randomly skipped levels
+	// Add or requote levels
 	for level, req := range desired {
-		if _, ok := existing[level]; ok {
+		orderID, ok := existing[level]
+		if !ok {
+			if m.val.Float64() < m.cfg.SkipPercent {
+				continue
+			}
+			m.ensureBalanceForOrder(inst, &req)
+			res := m.eng.Cmd(&engine.PlaceOrderCmd{Req: &req})
+			if res.Err != nil || res.Order == nil {
+				log.Printf("mm: place failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
+				continue
+			}
+			existing[level] = res.Order.ID
 			continue
 		}
-		if m.val.Float64() < m.cfg.SkipPercent {
-			continue
+
+		// Amend existing order to new price/qty to avoid DB growth.
+		m.ensureBalanceForOrder(inst, &req)
+		res := m.eng.Cmd(&engine.AmendOrderCmd{
+			UserID:   m.cfg.BotUserID,
+			OrderID:  orderID,
+			NewQty:   req.Quantity,
+			NewPrice: req.Price,
+		})
+		if res.Err != nil {
+			log.Printf("mm: amend failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
 		}
-		res := m.eng.Cmd(&engine.PlaceOrderCmd{Req: &req})
-		if res.Err != nil || res.Order == nil {
-			log.Printf("mm: place failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
-			continue
-		}
-		existing[level] = res.Order.ID
 	}
 }
 
 func (m *MarketMaker) buildOrder(inst *types.Instrument, category int8, side int8, price types.Price) *types.PlaceOrderRequest {
+	if math.Sign(price) <= 0 {
+		return nil
+	}
+	price = types.Price(math.RoundTo(price, inst.TickSize))
 	if math.Sign(price) <= 0 {
 		return nil
 	}
@@ -212,15 +273,55 @@ func (m *MarketMaker) buildOrder(inst *types.Instrument, category int8, side int
 
 func (m *MarketMaker) ensureBalances(inst *types.Instrument) {
 	bot := m.cfg.BotUserID
-	big := types.Quantity(fixed.NewI(1000000000, 0))
+	minBal := types.Quantity(fixed.NewI(m.cfg.MinBalance, 0))
 	if inst.BaseAsset != "" {
-		m.eng.Portfolio().LoadBalance(&types.Balance{UserID: bot, Asset: inst.BaseAsset, Available: big})
+		m.ensureBalance(bot, inst.BaseAsset, minBal)
 	}
 	if inst.QuoteAsset != "" {
-		m.eng.Portfolio().LoadBalance(&types.Balance{UserID: bot, Asset: inst.QuoteAsset, Available: big})
+		m.ensureBalance(bot, inst.QuoteAsset, minBal)
 	}
 }
 
-func levelKey(side int8, price types.Price) string {
-	return string(rune('0'+side)) + ":" + price.String()
+func (m *MarketMaker) ensureBalanceForOrder(inst *types.Instrument, req *types.PlaceOrderRequest) {
+	if req == nil || inst == nil {
+		return
+	}
+	bot := m.cfg.BotUserID
+	minBal := types.Quantity(fixed.NewI(m.cfg.MinBalance, 0))
+	if req.Category == constants.CATEGORY_LINEAR {
+		if inst.QuoteAsset != "" {
+			m.ensureBalance(bot, inst.QuoteAsset, minBal)
+		}
+		return
+	}
+	if req.Side == constants.ORDER_SIDE_BUY {
+		if inst.QuoteAsset != "" {
+			m.ensureBalance(bot, inst.QuoteAsset, minBal)
+		}
+		return
+	}
+	if inst.BaseAsset != "" {
+		m.ensureBalance(bot, inst.BaseAsset, minBal)
+	}
+}
+
+func (m *MarketMaker) ensureBalance(userID types.UserID, asset string, minBalance types.Quantity) {
+	bal := m.eng.Portfolio().GetBalance(userID, asset)
+	if bal == nil {
+		m.eng.Portfolio().LoadBalance(&types.Balance{UserID: userID, Asset: asset, Available: minBalance})
+		return
+	}
+	if math.Cmp(bal.Available, minBalance) < 0 {
+		m.eng.Portfolio().LoadBalance(&types.Balance{
+			UserID:    userID,
+			Asset:     asset,
+			Available: minBalance,
+			Locked:    bal.Locked,
+			Margin:    bal.Margin,
+		})
+	}
+}
+
+func levelKey(side int8, level int) string {
+	return string(rune('0'+side)) + ":" + fixed.NewI(int64(level), 0).String()
 }
