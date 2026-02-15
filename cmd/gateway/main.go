@@ -28,6 +28,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
+	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 	"github.com/nats-io/nats.go"
@@ -47,6 +48,9 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if err := snowflake.Init(cfg.SnowflakeNode); err != nil {
+		log.Fatalf("snowflake init: %v", err)
+	}
 	log.Printf("gateway config data_dir=%s port=%s", cfg.DataDir, cfg.Port)
 
 	reg := registry.New()
@@ -246,7 +250,16 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 		log.Fatalf("jwt service: %v", err)
 	}
 	authService := users.NewService(userStore)
-	otpService := otp.NewService()
+	otpService := otp.NewService(otp.Config{
+		SiteName:       cfg.SiteName,
+		SmsAuthToken:   cfg.SmsAuthToken,
+		SmtpHost:       cfg.SmtpHost,
+		SmtpPort:       cfg.SmtpPort,
+		SmtpUser:       cfg.SmtpUser,
+		SmtpPassword:   cfg.SmtpPassword,
+		SmtpFrom:       cfg.SmtpFrom,
+		SmtpSkipVerify: cfg.SmtpSkipVerify,
+	})
 	impService := impersonation.NewService(authService)
 
 	wsHandler := wsapi.NewWsHandler(eng.ReadBook, jwtService, cfg.JwtCookieName)

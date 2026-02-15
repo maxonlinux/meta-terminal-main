@@ -186,7 +186,7 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	if err := prepare(&stmts.selectFundingUser, `select user_id from fundings where id = ?`); err != nil {
 		return nil, err
 	}
-	if err := prepare(&stmts.insertRPNL, `insert into rpnl_events (user_id, order_id, symbol, category, side, price, qty, realized, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
+	if err := prepare(&stmts.insertRPNL, `insert into rpnl_events (id, user_id, order_id, symbol, category, side, price, qty, realized, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return nil, err
 	}
 

@@ -181,7 +181,16 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 	}
 	limit, offset := parsePagination(c)
 	query := strings.TrimSpace(c.QueryParam("q"))
-	items, err := h.repo.ListRequests(status, limit, offset, query)
+	var userID *types.UserID
+	if raw := strings.TrimSpace(c.QueryParam("userId")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid userId"})
+		}
+		id := types.UserID(parsed)
+		userID = &id
+	}
+	items, err := h.repo.ListRequests(status, limit, offset, query, userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load kyc"})
 	}

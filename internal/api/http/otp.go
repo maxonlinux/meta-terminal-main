@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type OTPHandler struct {
@@ -35,7 +36,8 @@ func (h *OTPHandler) Generate(c *echo.Context) error {
 	if err != nil || user == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 	}
-	_, err = h.otpService.Generate(user.Username)
+	email, phone := h.profileContact(user.UserID)
+	_, err = h.otpService.Generate(user.Username, email, phone)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate otp"})
 	}
@@ -74,4 +76,12 @@ func (h *OTPHandler) Check(c *echo.Context) error {
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "OTP_REQUIRED"})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"message": "OTP_VALID"})
+}
+
+func (h *OTPHandler) profileContact(userID types.UserID) (string, string) {
+	profile, _ := h.userService.GetProfile(userID)
+	if profile == nil {
+		return "", ""
+	}
+	return profile.Email, profile.Phone
 }

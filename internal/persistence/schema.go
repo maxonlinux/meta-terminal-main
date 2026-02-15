@@ -120,7 +120,7 @@ func initSchema(db *sql.DB) error {
     create index if not exists fundings_user_idx on fundings (user_id, updated_at);
 
     create table if not exists rpnl_events (
-      id integer primary key autoincrement,
+      id integer primary key,
       user_id integer not null,
       order_id integer not null,
       symbol text not null,

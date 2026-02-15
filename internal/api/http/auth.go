@@ -10,6 +10,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
+	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type AuthHandler struct {
@@ -82,7 +83,7 @@ func (h *AuthHandler) Register(c *echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assign wallets"})
 		}
 	}
-	_, _ = h.otpService.Generate(req.Username)
+	_, _ = h.otpService.Generate(req.Username, req.Email, req.Phone)
 	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": uint64(userID)})
 }
 
@@ -103,7 +104,8 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 	}
 	profile, _ := h.authService.GetProfile(user.UserID)
 	if profile != nil && !profile.IsActive {
-		_, _ = h.otpService.Generate(user.Username)
+		email, phone := h.profileContact(user.UserID)
+		_, _ = h.otpService.Generate(user.Username, email, phone)
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "USER_NOT_ACTIVE"})
 	}
 
@@ -196,4 +198,12 @@ func (h *AuthHandler) Logout(c *echo.Context) error {
 	h.clearAuthCookie(c)
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *AuthHandler) profileContact(userID types.UserID) (string, string) {
+	profile, _ := h.authService.GetProfile(userID)
+	if profile == nil {
+		return "", ""
+	}
+	return profile.Email, profile.Phone
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
@@ -27,9 +28,11 @@ func (r *Repository) CreateWallet(wallet Wallet) (int64, error) {
 		return 0, fmt.Errorf("wallet fields are required")
 	}
 	now := utils.NowNano()
+	wallet.ID = snowflake.Next()
 	res, err := r.db.Exec(
-		`insert into wallets (name, address, network, currency, is_custom, is_active, created_at, updated_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`insert into wallets (id, name, address, network, currency, is_custom, is_active, created_at, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		wallet.ID,
 		wallet.Name,
 		wallet.Address,
 		wallet.Network,
@@ -42,11 +45,8 @@ func (r *Repository) CreateWallet(wallet Wallet) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
+	_ = res
+	return wallet.ID, nil
 }
 
 func (r *Repository) UpdateWallet(id int64, wallet Wallet) error {
@@ -300,7 +300,7 @@ func (r *Repository) CountWallets() (int, error) {
 func ensureSchema(db *sql.DB) error {
 	_, err := db.Exec(`
     create table if not exists wallets (
-      id integer primary key autoincrement,
+      id integer primary key,
       name text not null unique,
       address text not null,
       network text not null,

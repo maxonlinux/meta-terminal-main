@@ -20,6 +20,14 @@ type Config struct {
 	NatsToken        string
 	NatsPriceSubject string
 	OtpDisabled      bool
+	SiteName         string
+	SmsAuthToken     string
+	SmtpHost         string
+	SmtpPort         int
+	SmtpUser         string
+	SmtpPassword     string
+	SmtpFrom         string
+	SmtpSkipVerify   bool
 	// JWT config controls user session signing and cookies.
 	JwtSecret       string
 	JwtTokenExpiry  time.Duration
@@ -32,6 +40,7 @@ type Config struct {
 	AdminCookiePath   string
 	AdminCookieMaxAge int
 	OutboxSegmentSize int64
+	SnowflakeNode     int64
 }
 
 var (
@@ -53,6 +62,14 @@ func Load() Config {
 			NatsToken:         envString("NATS_TOKEN", ""),
 			NatsPriceSubject:  envString("NATS_PRICE_SUBJECT", "prices.*"),
 			OtpDisabled:       envBool("OTP_DISABLED", false),
+			SiteName:          envString("SITE_NAME", "Terminal"),
+			SmsAuthToken:      envString("SMS_AUTH_TOKEN", ""),
+			SmtpHost:          envString("SMTP_HOST", ""),
+			SmtpPort:          envInt("SMTP_PORT", 25),
+			SmtpUser:          envString("SMTP_USER", ""),
+			SmtpPassword:      envString("SMTP_PASSWORD", ""),
+			SmtpFrom:          envString("SMTP_FROM", ""),
+			SmtpSkipVerify:    envBool("SMTP_SKIP_VERIFY", true),
 			JwtSecret:         envString("JWT_SECRET", ""),
 			JwtTokenExpiry:    envDuration("JWT_TOKEN_EXPIRY", 24*time.Hour),
 			JwtCookieName:     envString("JWT_COOKIE_NAME", "token"),
@@ -63,6 +80,7 @@ func Load() Config {
 			AdminCookiePath:   envString("ADMIN_COOKIE_PATH", "/"),
 			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
 			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
+			SnowflakeNode:     envInt64("SNOWFLAKE_NODE", 0),
 		}
 
 		cfg.CoreURL = strings.TrimRight(cfg.CoreURL, "/")

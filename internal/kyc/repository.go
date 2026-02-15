@@ -128,13 +128,17 @@ func (r *Repository) GetRequest(id int64) (*RequestRecord, []FileRecord, error) 
 }
 
 // ListRequests returns KYC requests with optional status and search filter.
-func (r *Repository) ListRequests(status string, limit int, offset int, search string) ([]RequestRecord, error) {
+func (r *Repository) ListRequests(status string, limit int, offset int, search string, userID *types.UserID) ([]RequestRecord, error) {
 	query := "select id, user_id, doc_type, country, status, reject_reason, created_at, updated_at from kyc_requests"
 	args := make([]any, 0)
 	clauses := make([]string, 0)
 	if status != "" {
 		clauses = append(clauses, "status = ?")
 		args = append(args, status)
+	}
+	if userID != nil && *userID != 0 {
+		clauses = append(clauses, "user_id = ?")
+		args = append(args, uint64(*userID))
 	}
 	if search != "" {
 		clauses = append(clauses, "(lower(doc_type) like ? or lower(country) like ?)")

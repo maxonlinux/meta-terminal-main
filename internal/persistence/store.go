@@ -16,6 +16,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
+	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -882,6 +883,7 @@ func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
 		return fmt.Errorf("missing insert rpnl statement")
 	}
 	_, err := stmt.Exec(
+		snowflake.Next(),
 		uint64(ev.UserID),
 		uint64(ev.OrderID),
 		ev.Symbol,

@@ -12,6 +12,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
+	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -24,6 +25,9 @@ func main() {
 	defer os.RemoveAll(workdir)
 
 	reg := registry.New()
+	if err := snowflake.Init(0); err != nil {
+		panic(err)
+	}
 	for i := 0; i < 500; i++ {
 		symbol := fmt.Sprintf("ASSET%03dUSDT", i)
 		reg.SetInstrument(symbol, &types.Instrument{
