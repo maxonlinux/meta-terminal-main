@@ -23,6 +23,8 @@ func getOrder() *types.Order {
 }
 
 type Service struct {
+	// mu guards order indexes and state.
+	mu          sync.RWMutex
 	byUser      map[types.UserID]map[types.OrderID]*types.Order
 	count       int64
 	reduceonly  *ReduceOnlyIndex
@@ -133,6 +135,8 @@ func (s *Service) Load(order *types.Order) {
 	if order == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.indexUser(order)
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
@@ -176,6 +180,8 @@ func (s *Service) Add(order *types.Order) {
 	if order == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.indexUser(order)
 	atomic.AddInt64(&s.count, 1)
 	s.indexOrder(order)
@@ -197,6 +203,8 @@ func (s *Service) Create(
 	stopOrderType int8,
 ) *types.Order {
 	now := utils.NowNano()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	order := newOrder(
 		userID,
 		symbol,
@@ -222,6 +230,13 @@ func (s *Service) Create(
 }
 
 func (s *Service) GetUserOrder(userID types.UserID, id types.OrderID) (*types.Order, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getUserOrderLocked(userID, id)
+}
+
+// getUserOrderLocked expects the service mutex to be held.
+func (s *Service) getUserOrderLocked(userID types.UserID, id types.OrderID) (*types.Order, bool) {
 	orders := s.byUser[userID]
 	if orders == nil {
 		return nil, false
@@ -231,6 +246,8 @@ func (s *Service) GetUserOrder(userID types.UserID, id types.OrderID) (*types.Or
 }
 
 func (s *Service) GetUserOrders(userID types.UserID) []*types.Order {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	orders := s.byUser[userID]
 	if orders == nil {
 		return nil
@@ -247,7 +264,9 @@ func (s *Service) Count() int {
 }
 
 func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quantity, newPrice types.Price) error {
-	order, ok := s.GetUserOrder(userID, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.getUserOrderLocked(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -281,7 +300,9 @@ func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quan
 }
 
 func (s *Service) Cancel(userID types.UserID, id types.OrderID) error {
-	order, ok := s.GetUserOrder(userID, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.getUserOrderLocked(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -307,7 +328,9 @@ func (s *Service) Cancel(userID types.UserID, id types.OrderID) error {
 }
 
 func (s *Service) CancelWithDetails(userID types.UserID, id types.OrderID) (*types.Order, error) {
-	order, ok := s.GetUserOrder(userID, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.getUserOrderLocked(userID, id)
 	if !ok {
 		return nil, errors.New("order not found")
 	}
@@ -330,7 +353,9 @@ func (s *Service) CancelWithDetails(userID types.UserID, id types.OrderID) (*typ
 }
 
 func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity) error {
-	order, ok := s.GetUserOrder(userID, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.getUserOrderLocked(userID, id)
 	if !ok {
 		return errors.New("order not found")
 	}
@@ -354,14 +379,23 @@ func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity
 }
 
 func (s *Service) OnPositionReduce(userID types.UserID, symbol string, positionSize types.Quantity, price types.Price) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.reduceonly.OnPositionReduce(userID, symbol, positionSize, price)
 }
 
 func (s *Service) OnPriceTick(symbol string, price types.Price, callback func(*types.Order)) {
-	s.conditional.CheckTriggers(symbol, price, callback)
+	s.mu.Lock()
+	orders := s.conditional.CheckTriggers(symbol, price)
+	s.mu.Unlock()
+	for _, order := range orders {
+		callback(order)
+	}
 }
 
 func (s *Service) Iterate(fn func(*types.Order) bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, orders := range s.byUser {
 		for _, order := range orders {
 			if !fn(order) {

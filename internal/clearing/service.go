@@ -15,7 +15,7 @@ var one = fixed.NewI(1, 0)
 type Portfolio interface {
 	Reserve(userID types.UserID, asset string, amount types.Quantity) error
 	Release(userID types.UserID, asset string, amount types.Quantity)
-	ExecuteTrade(match *types.Match)
+	ExecuteTrade(match *types.Match) error
 	GetPosition(userID types.UserID, symbol string) *types.Position
 }
 
@@ -35,17 +35,24 @@ func New(portfolio Portfolio, reg *registry.Registry) (*Service, error) {
 }
 
 func (s *Service) Reserve(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
-	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
+	amount, asset, err := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
+	if err != nil {
+		return err
+	}
 	return s.portfolio.Reserve(userID, asset, amount)
 }
 
-func (s *Service) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) {
-	amount, asset := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
+func (s *Service) Release(userID types.UserID, symbol string, category int8, side int8, qty types.Quantity, price types.Price) error {
+	amount, asset, err := CalculateReserveAmount(symbol, category, side, qty, price, s.leverageFor(userID, symbol), s.registry)
+	if err != nil {
+		return err
+	}
 	s.portfolio.Release(userID, asset, amount)
+	return nil
 }
 
-func (s *Service) ExecuteTrade(match *types.Match) {
-	s.portfolio.ExecuteTrade(match)
+func (s *Service) ExecuteTrade(match *types.Match) error {
+	return s.portfolio.ExecuteTrade(match)
 }
 
 func (s *Service) leverageFor(userID types.UserID, symbol string) types.Leverage {
@@ -56,16 +63,16 @@ func (s *Service) leverageFor(userID types.UserID, symbol string) types.Leverage
 	return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 }
 
-func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Quantity, price types.Price, leverage types.Leverage, reg *registry.Registry) (types.Quantity, string) {
+func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Quantity, price types.Price, leverage types.Leverage, reg *registry.Registry) (types.Quantity, string, error) {
 	if category == constants.CATEGORY_SPOT {
 		inst := reg.GetInstrument(symbol)
 		if inst == nil {
-			panic("instrument not found: " + symbol)
+			return types.Quantity{}, "", constants.ErrInstrumentNotFound
 		}
 		if side == constants.ORDER_SIDE_BUY {
-			return types.Quantity(math.Mul(qty, price)), inst.QuoteAsset
+			return types.Quantity(math.Mul(qty, price)), inst.QuoteAsset, nil
 		}
-		return qty, inst.BaseAsset
+		return qty, inst.BaseAsset, nil
 	}
 
 	effective := leverage
@@ -74,10 +81,10 @@ func CalculateReserveAmount(symbol string, category int8, side int8, qty types.Q
 	}
 	inst := reg.GetInstrument(symbol)
 	if inst == nil {
-		panic("instrument not found: " + symbol)
+		return types.Quantity{}, "", constants.ErrInstrumentNotFound
 	}
 	reserve := math.MulDiv(qty, price, effective)
-	return types.Quantity(reserve), inst.QuoteAsset
+	return types.Quantity(reserve), inst.QuoteAsset, nil
 }
 
 func LiquidationPrice(entryPrice types.Price, leverage types.Leverage, size types.Quantity) types.Price {

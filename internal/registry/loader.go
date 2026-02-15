@@ -81,7 +81,7 @@ type assetInfo struct {
 }
 
 func (l *Loader) fetchSymbols(ctx context.Context) ([]assetInfo, error) {
-	url := strings.TrimRight(l.cfg.AssetsURL, "/")
+	url := l.cfg.CoreURL + "/assets"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

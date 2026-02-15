@@ -2,6 +2,7 @@ package portfolio
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
@@ -14,6 +15,8 @@ type OnBalanceUpdate func(userID types.UserID, asset string, balance *types.Bala
 type OnRealizedPnL func(event types.RealizedPnL)
 
 type Service struct {
+	// mu guards balances, positions, and fundings.
+	mu            sync.RWMutex
 	Balances      map[types.UserID]map[string]*types.Balance
 	Positions     map[types.UserID]map[string]*types.Position
 	Fundings      map[types.FundingID]*types.FundingRequest
@@ -37,11 +40,15 @@ func New(onReduce OnPositionReduce, reg *registry.Registry) (*Service, error) {
 }
 
 func (s *Service) OnBalanceUpdate(fn OnBalanceUpdate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Registers a callback for balance updates on portfolio changes.
 	s.onBalance = fn
 }
 
 func (s *Service) OnRealizedPnL(fn OnRealizedPnL) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Registers a callback for realized PnL events on position reductions.
 	s.onRealizedPnL = fn
 }
@@ -50,6 +57,8 @@ func (s *Service) LoadBalance(balance *types.Balance) {
 	if balance == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Balances[balance.UserID] == nil {
 		s.Balances[balance.UserID] = make(map[string]*types.Balance)
 	}
@@ -60,24 +69,30 @@ func (s *Service) LoadPosition(pos *types.Position) {
 	if pos == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Positions[pos.UserID] == nil {
 		s.Positions[pos.UserID] = make(map[string]*types.Position)
 	}
 	s.Positions[pos.UserID][pos.Symbol] = pos
 }
 
-func (s *Service) ExecuteTrade(match *types.Match) {
-	if match.Category == constants.CATEGORY_SPOT {
-		s.executeSpotTrade(match)
-		return
+func (s *Service) ExecuteTrade(match *types.Match) error {
+	if match == nil {
+		return nil
 	}
-	s.executeLinearTrade(match)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if match.Category == constants.CATEGORY_SPOT {
+		return s.executeSpotTrade(match)
+	}
+	return s.executeLinearTrade(match)
 }
 
-func (s *Service) executeSpotTrade(match *types.Match) {
+func (s *Service) executeSpotTrade(match *types.Match) error {
 	inst := s.registry.GetInstrument(match.Symbol)
 	if inst == nil {
-		panic("instrument not found: " + match.Symbol)
+		return constants.ErrInstrumentNotFound
 	}
 	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
@@ -93,12 +108,13 @@ func (s *Service) executeSpotTrade(match *types.Match) {
 
 	s.applySpotLeg(match.TakerOrder.UserID, takerGets, takerPays, amountBase, amountQuote)
 	s.applySpotLeg(match.MakerOrder.UserID, makerGets, makerPays, amountQuote, amountBase)
+	return nil
 }
 
-func (s *Service) executeLinearTrade(match *types.Match) {
+func (s *Service) executeLinearTrade(match *types.Match) error {
 	inst := s.registry.GetInstrument(match.Symbol)
 	if inst == nil {
-		panic("instrument not found: " + match.Symbol)
+		return constants.ErrInstrumentNotFound
 	}
 	quoteAsset := inst.QuoteAsset
 	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))
@@ -109,8 +125,13 @@ func (s *Service) executeLinearTrade(match *types.Match) {
 	s.applyLinearLeg(match.TakerOrder.UserID, quoteAsset, tradeNotional, takerLeverage)
 	s.applyLinearLeg(match.MakerOrder.UserID, quoteAsset, tradeNotional, makerLeverage)
 
-	s.updatePosition(match.TakerOrder.UserID, match, match.TakerOrder)
-	s.updatePosition(match.MakerOrder.UserID, match, match.MakerOrder)
+	if err := s.updatePosition(match.TakerOrder.UserID, match, match.TakerOrder); err != nil {
+		return err
+	}
+	if err := s.updatePosition(match.MakerOrder.UserID, match, match.MakerOrder); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) applySpotLeg(userID types.UserID, getsAsset string, paysAsset string, getsQty types.Quantity, paysQty types.Quantity) {
@@ -125,6 +146,8 @@ func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNo
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	positions := s.Positions[userID]
 	if positions == nil {
 		return nil
@@ -138,6 +161,8 @@ func (s *Service) GetPositions(userID types.UserID) []*types.Position {
 }
 
 func (s *Service) GetBalances(userID types.UserID) []*types.Balance {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	balances := s.Balances[userID]
 	if balances == nil {
 		return nil

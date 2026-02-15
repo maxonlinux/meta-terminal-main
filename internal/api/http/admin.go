@@ -12,12 +12,14 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type AdminHandler struct {
 	plan        *plan.Service
 	planRepo    *plan.Repository
+	wallets     *wallets.Service
 	users       *users.Service
 	store       *persistence.Store
 	kycRepo     *kyc.Repository
@@ -25,10 +27,11 @@ type AdminHandler struct {
 	impersonate *impersonation.Service
 }
 
-func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, userService *users.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
+func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, userService *users.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
 	return &AdminHandler{
 		plan:        planService,
 		planRepo:    planRepo,
+		wallets:     walletService,
 		users:       userService,
 		store:       store,
 		kycRepo:     kycRepo,
@@ -57,12 +60,23 @@ type AdminUser struct {
 	Plan     *AdminUserPlan `json:"Plan,omitempty"`
 }
 
+type AdminUserActiveRequest struct {
+	Active bool `json:"active"`
+}
+
 type AdminUserAddress struct {
 	ID      types.UserID `json:"id"`
 	Country *string      `json:"country"`
 	City    *string      `json:"city"`
 	Address *string      `json:"address"`
 	Zip     *string      `json:"zip"`
+}
+
+type AdminAddressUpdateRequest struct {
+	Country *string `json:"country"`
+	City    *string `json:"city"`
+	Address *string `json:"address"`
+	Zip     *string `json:"zip"`
 }
 
 type AdminTransaction struct {
@@ -196,6 +210,21 @@ func (h *AdminHandler) User(c *echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
+func (h *AdminHandler) SetUserActive(c *echo.Context) error {
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	var req AdminUserActiveRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if err := h.users.SetActive(userID, req.Active); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update user"})
+	}
+	return c.NoContent(http.StatusOK)
+}
+
 func (h *AdminHandler) UserAddress(c *echo.Context) error {
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
@@ -215,6 +244,28 @@ func (h *AdminHandler) UserAddress(c *echo.Context) error {
 		Address: addr.Address,
 		Zip:     addr.Zip,
 	})
+}
+
+func (h *AdminHandler) UpdateUserAddress(c *echo.Context) error {
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	var req AdminAddressUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	addr := users.UserAddress{
+		UserID:  userID,
+		Country: req.Country,
+		City:    req.City,
+		Address: req.Address,
+		Zip:     req.Zip,
+	}
+	if err := h.users.UpdateAddress(userID, addr); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update address"})
+	}
+	return h.UserAddress(c)
 }
 
 func (h *AdminHandler) UserTransactions(c *echo.Context) error {
@@ -316,12 +367,162 @@ func (h *AdminHandler) PendingCount(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load counts"})
 	}
+	walletCount := 0
+	if h.wallets != nil {
+		if count, err := h.wallets.CountWallets(); err == nil {
+			walletCount = count
+		}
+	}
 	return c.JSON(http.StatusOK, AdminPendingCount{
 		Users:        0,
-		Wallets:      0,
+		Wallets:      walletCount,
 		Transactions: count,
 		KYC:          kycCount,
 	})
+}
+
+type WalletRequest struct {
+	Name     string `json:"name"`
+	Address  string `json:"address"`
+	Network  string `json:"network"`
+	Currency string `json:"currency"`
+	Custom   bool   `json:"custom"`
+	Active   bool   `json:"active"`
+}
+
+func (h *AdminHandler) ListWallets(c *echo.Context) error {
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	items, err := h.wallets.ListWallets()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallets"})
+	}
+	resp := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, map[string]interface{}{
+			"id":       item.ID,
+			"name":     item.Name,
+			"address":  item.Address,
+			"network":  item.Network,
+			"currency": item.Currency,
+			"custom":   item.IsCustom,
+			"active":   item.IsActive,
+			"created":  item.CreatedAt,
+			"updated":  item.UpdatedAt,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+func (h *AdminHandler) CreateWallet(c *echo.Context) error {
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	var req WalletRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.Name == "" || req.Address == "" || req.Network == "" || req.Currency == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing wallet fields"})
+	}
+	if !req.Active {
+		req.Active = true
+	}
+	_, err := h.wallets.CreateWallet(wallets.Wallet{
+		Name:     req.Name,
+		Address:  req.Address,
+		Network:  req.Network,
+		Currency: req.Currency,
+		IsCustom: req.Custom,
+		IsActive: req.Active,
+	})
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusCreated)
+}
+
+func (h *AdminHandler) UpdateWallet(c *echo.Context) error {
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	id, err := parseWalletIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wallet id"})
+	}
+	var req WalletRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.Name == "" || req.Address == "" || req.Network == "" || req.Currency == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing wallet fields"})
+	}
+	if err := h.wallets.UpdateWallet(id, wallets.Wallet{
+		Name:     req.Name,
+		Address:  req.Address,
+		Network:  req.Network,
+		Currency: req.Currency,
+		IsCustom: req.Custom,
+		IsActive: req.Active,
+	}); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusOK)
+}
+
+type WalletAssignRequest struct {
+	WalletID int64 `json:"walletId"`
+}
+
+func (h *AdminHandler) AssignUserWallet(c *echo.Context) error {
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	var req WalletAssignRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.WalletID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletId is required"})
+	}
+	if err := h.wallets.AssignWallet(userID, req.WalletID, "admin"); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusOK)
+}
+
+func (h *AdminHandler) ListUserWallets(c *echo.Context) error {
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	items, err := h.wallets.ListUserWallets(userID, false)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallets"})
+	}
+	resp := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, map[string]interface{}{
+			"id":       item.WalletID,
+			"name":     item.Name,
+			"address":  item.Address,
+			"network":  item.Network,
+			"currency": item.Currency,
+			"custom":   item.IsCustom,
+			"active":   item.IsActive,
+			"assigned": item.AssignedAt,
+			"by":       item.AssignedBy,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (h *AdminHandler) Impersonate(c *echo.Context) error {
@@ -408,6 +609,13 @@ func parseFundingIDParam(value string) (types.FundingID, error) {
 		return 0, err
 	}
 	return types.FundingID(parsed), nil
+}
+
+func parseWalletIDParam(value string) (int64, error) {
+	if value == "" {
+		return 0, strconv.ErrSyntax
+	}
+	return strconv.ParseInt(value, 10, 64)
 }
 
 func parsePagination(c *echo.Context) (int, int) {

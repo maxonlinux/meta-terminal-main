@@ -181,13 +181,23 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 		}
 	case *CancelOrderCmd:
 		if order, ok := e.store.GetUserOrder(c.UserID, c.OrderID); ok {
-			result = apply(order.Symbol, order.Category)
+			result = e.withBookLock(order.Symbol, order.Category, func() CommandResult {
+				if _, ok := e.store.GetUserOrder(c.UserID, c.OrderID); !ok {
+					return CommandResult{Err: errOrderNotFound}
+				}
+				return cmd.Apply(e, tx)
+			})
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
 		}
 	case *AmendOrderCmd:
 		if order, ok := e.store.GetUserOrder(c.UserID, c.OrderID); ok {
-			result = apply(order.Symbol, order.Category)
+			result = e.withBookLock(order.Symbol, order.Category, func() CommandResult {
+				if _, ok := e.store.GetUserOrder(c.UserID, c.OrderID); !ok {
+					return CommandResult{Err: errOrderNotFound}
+				}
+				return cmd.Apply(e, tx)
+			})
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
 		}
@@ -431,7 +441,7 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 	}
 
 	var buf [8]types.Match
-	matches := book.GetMatches(order, limitPrice, buf[:0])
+	matches := book.GetMatchesUnsafe(order, limitPrice, buf[:0])
 	if hasSelfMatch(matches, order.UserID) {
 		return CommandResult{Err: constants.ErrSelfMatch}
 	}
@@ -476,7 +486,9 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 		match := matches[i]
 		match.ID = types.TradeID(snowflake.Next())
 		match.Timestamp = utils.NowNano()
-		e.applyTrade(book, match, writer)
+		if err := e.applyTrade(book, match, writer); err != nil {
+			return CommandResult{Err: err}
+		}
 	}
 
 	if order.TIF == constants.TIF_IOC || order.Type == constants.ORDER_TYPE_MARKET {
@@ -488,7 +500,7 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 	}
 
 	if order.TIF == constants.TIF_POST_ONLY {
-		book.Add(order)
+		book.AddUnsafe(order)
 		if e.publisher != nil {
 			e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
 		}
@@ -496,7 +508,7 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 	}
 
 	if math.Sign(remaining) > 0 {
-		book.Add(order)
+		book.AddUnsafe(order)
 		if e.publisher != nil {
 			e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
 		}
@@ -526,10 +538,12 @@ func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	}
 	remaining := math.Sub(order.Quantity, order.Filled)
 	if math.Sign(remaining) > 0 {
-		e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+		if err := e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
+			return CommandResult{Err: err}
+		}
 	}
 	if book, err := e.getBook(order.Category, order.Symbol); err == nil {
-		_ = book.Remove(order.ID)
+		_ = book.RemoveUnsafe(order.ID)
 	}
 	if e.publisher != nil {
 		e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
@@ -573,8 +587,14 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		if math.Sign(leverage) <= 0 {
 			leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
-		oldAmount, oldAsset := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, oldRemaining, order.Price, leverage, e.registry)
-		newAmount, newAsset := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, newRemaining, newPrice, leverage, e.registry)
+		oldAmount, oldAsset, oldErr := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, oldRemaining, order.Price, leverage, e.registry)
+		if oldErr != nil {
+			return CommandResult{Err: oldErr}
+		}
+		newAmount, newAsset, newErr := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, newRemaining, newPrice, leverage, e.registry)
+		if newErr != nil {
+			return CommandResult{Err: newErr}
+		}
 		if oldAsset != newAsset {
 			return CommandResult{Err: errInvalidOrderRequest}
 		}
@@ -606,8 +626,8 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		}
 		if math.Sign(c.NewPrice) > 0 {
 			if book, err := e.getBook(order.Category, order.Symbol); err == nil {
-				_ = book.Remove(order.ID)
-				book.Add(order)
+				_ = book.RemoveUnsafe(order.ID)
+				book.AddUnsafe(order)
 			}
 		}
 		if e.publisher != nil {

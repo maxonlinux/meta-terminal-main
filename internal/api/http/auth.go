@@ -8,11 +8,13 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 )
 
 type AuthHandler struct {
 	authService     *users.Service
+	walletService   *wallets.Service
 	jwtService      *auth.JWTService
 	otpService      *otp.Service
 	impService      *impersonation.Service
@@ -21,9 +23,10 @@ type AuthHandler struct {
 	jwtCookieMaxAge int
 }
 
-func NewAuthHandler(authService *users.Service, jwtService *auth.JWTService, otpService *otp.Service, impService *impersonation.Service, cfg config.Config) *AuthHandler {
+func NewAuthHandler(authService *users.Service, walletService *wallets.Service, jwtService *auth.JWTService, otpService *otp.Service, impService *impersonation.Service, cfg config.Config) *AuthHandler {
 	return &AuthHandler{
 		authService:     authService,
+		walletService:   walletService,
 		jwtService:      jwtService,
 		otpService:      otpService,
 		impService:      impService,
@@ -73,6 +76,11 @@ func (h *AuthHandler) Register(c *echo.Context) error {
 	userID, err := h.authService.Register(req.Username, req.Password, req.Email, req.Phone)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if h.walletService != nil {
+		if err := h.walletService.AssignDefaultWallets(userID); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assign wallets"})
+		}
 	}
 	_, _ = h.otpService.Generate(req.Username)
 	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": uint64(userID)})

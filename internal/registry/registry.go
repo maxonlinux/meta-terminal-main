@@ -8,9 +8,6 @@ import (
 
 type PriceTick struct {
 	Price     types.Price
-	Bid       types.Price
-	Ask       types.Price
-	Volume    types.Quantity
 	Timestamp uint64
 }
 

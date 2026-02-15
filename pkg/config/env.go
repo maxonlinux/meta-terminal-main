@@ -3,13 +3,14 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 type Config struct {
 	DataDir          string
-	AssetsURL        string
+	CoreURL          string
 	MultiplexerURL   string
 	SyncInterval     time.Duration
 	Port             string
@@ -42,7 +43,7 @@ func Load() Config {
 	once.Do(func() {
 		cfg = Config{
 			DataDir:           envString("DATA_DIR", "data"),
-			AssetsURL:         envString("ASSETS_URL", "http://localhost:3333/proxy/core/assets"),
+			CoreURL:           envString("CORE_URL", "http://localhost:3030/api"),
 			MultiplexerURL:    envString("MULTIPLEXER_URL", "http://localhost:3333/proxy/multiplexer/prices"),
 			SyncInterval:      envDuration("SYNC_INTERVAL", time.Minute),
 			Port:              envString("PORT", "8080"),
@@ -63,6 +64,8 @@ func Load() Config {
 			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
 			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
 		}
+
+		cfg.CoreURL = strings.TrimRight(cfg.CoreURL, "/")
 	})
 	return cfg
 }

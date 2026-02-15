@@ -205,7 +205,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanStandard,
 			Threshold:   types.Quantity(fixed.NewI(1000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(5, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(15, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -214,7 +214,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanSilver,
 			Threshold:   types.Quantity(fixed.NewI(5000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(10, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(30, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -223,7 +223,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanGold,
 			Threshold:   types.Quantity(fixed.NewI(10000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(15, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(45, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -235,7 +235,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanPlatinum,
 			Threshold:   types.Quantity(fixed.NewI(25000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(20, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(60, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -247,7 +247,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanAdvanced,
 			Threshold:   types.Quantity(fixed.NewI(50000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(25, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(75, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",
@@ -259,7 +259,7 @@ func defaultRules() []Rule {
 		{
 			Name:        PlanProfessional,
 			Threshold:   types.Quantity(fixed.NewI(100000, 0)),
-			MaxLeverage: types.Leverage(fixed.NewI(30, 0)),
+			MaxLeverage: types.Leverage(fixed.NewI(100, 0)),
 			AssetTypes: assetSet(
 				"crypto",
 				"stock",

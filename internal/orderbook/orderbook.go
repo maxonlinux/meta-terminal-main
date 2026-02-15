@@ -294,6 +294,14 @@ func (ob *OrderBook) Add(order *types.Order) {
 	sh.Add(order)
 }
 
+// AddUnsafe assumes external synchronization.
+func (ob *OrderBook) AddUnsafe(order *types.Order) {
+	if ob == nil || ob.state == nil {
+		return
+	}
+	ob.state.Add(order)
+}
+
 func (sh *bookState) removeNode(nodeIdx int32) {
 	n := sh.nodes[nodeIdx]
 	delete(sh.orders, n.order.ID)
@@ -367,11 +375,27 @@ func (ob *OrderBook) Remove(orderID types.OrderID) bool {
 	return sh.Remove(orderID)
 }
 
+// RemoveUnsafe assumes external synchronization.
+func (ob *OrderBook) RemoveUnsafe(orderID types.OrderID) bool {
+	if ob == nil || ob.state == nil {
+		return false
+	}
+	return ob.state.Remove(orderID)
+}
+
 func (ob *OrderBook) ApplyFill(orderID types.OrderID, qty types.Quantity) {
 	sh := ob.state
 	sh.lock()
 	defer sh.unlock()
 	sh.applyFill(orderID, qty)
+}
+
+// ApplyFillUnsafe assumes external synchronization.
+func (ob *OrderBook) ApplyFillUnsafe(orderID types.OrderID, qty types.Quantity) {
+	if ob == nil || ob.state == nil {
+		return
+	}
+	ob.state.applyFill(orderID, qty)
 }
 
 func (sh *bookState) getMatches(taker *types.Order, limitPrice types.Price, matches []types.Match) []types.Match {
@@ -433,8 +457,30 @@ func (ob *OrderBook) GetMatches(taker *types.Order, limitPrice types.Price, matc
 	return sh.getMatches(taker, limitPrice, matches)
 }
 
+// GetMatchesUnsafe assumes external synchronization.
+func (ob *OrderBook) GetMatchesUnsafe(taker *types.Order, limitPrice types.Price, matches []types.Match) []types.Match {
+	if ob == nil || ob.state == nil {
+		return nil
+	}
+	return ob.state.getMatches(taker, limitPrice, matches)
+}
+
 func (ob *OrderBook) Snapshot(limit int) Snapshot {
 	sh := ob.state
+	sh.lock()
+	defer sh.unlock()
+	return snapshotUnsafe(sh, limit)
+}
+
+// SnapshotUnsafe assumes external synchronization.
+func (ob *OrderBook) SnapshotUnsafe(limit int) Snapshot {
+	if ob == nil || ob.state == nil {
+		return Snapshot{}
+	}
+	return snapshotUnsafe(ob.state, limit)
+}
+
+func snapshotUnsafe(sh *bookState, limit int) Snapshot {
 	if limit <= 0 {
 		limit = 50
 	}

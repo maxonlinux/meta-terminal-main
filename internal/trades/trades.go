@@ -1,6 +1,8 @@
 package trades
 
 import (
+	"sync"
+
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
@@ -14,6 +16,8 @@ type TradeBuffer struct {
 
 // TradeFeed stores rolling public trades per market.
 type TradeFeed struct {
+	// mu guards trade buffers by market.
+	mu      sync.RWMutex
 	buffers map[int8]map[string]*TradeBuffer
 }
 
@@ -26,6 +30,8 @@ func NewTradeFeed() *TradeFeed {
 
 // Add stores a trade in the rolling buffer for category+symbol.
 func (t *TradeFeed) Add(category int8, symbol string, trade types.Trade) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	categoryBuffers := t.buffers[category]
 	if categoryBuffers == nil {
 		categoryBuffers = make(map[string]*TradeBuffer)
@@ -41,6 +47,8 @@ func (t *TradeFeed) Add(category int8, symbol string, trade types.Trade) {
 
 // Recent returns trades for category+symbol in chronological order.
 func (t *TradeFeed) Recent(category int8, symbol string) []types.Trade {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	categoryBuffers := t.buffers[category]
 	if categoryBuffers == nil {
 		return nil

@@ -2,6 +2,7 @@ package mm
 
 import (
 	"context"
+	"errors"
 	"log"
 	"math/rand"
 	"time"
@@ -170,6 +171,10 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 	}
 
 	desired := make(map[string]types.PlaceOrderRequest, m.cfg.Levels*2)
+	var bestBuy types.Price
+	var bestSell types.Price
+	hasBuy := false
+	hasSell := false
 	step := inst.TickSize
 	for i := 1; i <= m.cfg.Levels; i++ {
 		stepSize := types.Price(math.Mul(step, fixed.NewI(int64(i), 0)))
@@ -179,14 +184,36 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 			req := m.buildOrder(inst, category, constants.ORDER_SIDE_SELL, up)
 			if req != nil {
 				desired[levelKey(constants.ORDER_SIDE_SELL, i)] = *req
+				if !hasSell || math.Cmp(req.Price, bestSell) < 0 {
+					bestSell = req.Price
+				}
+				hasSell = true
 			}
 		}
 		if math.Sign(down) > 0 {
 			req := m.buildOrder(inst, category, constants.ORDER_SIDE_BUY, down)
 			if req != nil {
 				desired[levelKey(constants.ORDER_SIDE_BUY, i)] = *req
+				if !hasBuy || math.Cmp(req.Price, bestBuy) > 0 {
+					bestBuy = req.Price
+				}
+				hasBuy = true
 			}
 		}
+	}
+
+	if hasBuy && hasSell && math.Cmp(bestBuy, bestSell) >= 0 {
+		filtered := make(map[string]types.PlaceOrderRequest, len(desired))
+		for level, req := range desired {
+			if req.Side == constants.ORDER_SIDE_BUY && math.Cmp(req.Price, bestSell) >= 0 {
+				continue
+			}
+			if req.Side == constants.ORDER_SIDE_SELL && math.Cmp(req.Price, bestBuy) <= 0 {
+				continue
+			}
+			filtered[level] = req
+		}
+		desired = filtered
 	}
 
 	// Cancel stale or randomly replaced orders
@@ -197,24 +224,17 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		}
 	}
 
-	// Add or requote levels
+	// Amend existing orders first to avoid self-matching on new placements.
 	for level, req := range desired {
 		orderID, ok := existing[level]
 		if !ok {
-			if m.val.Float64() < m.cfg.SkipPercent {
-				continue
-			}
-			m.ensureBalanceForOrder(inst, &req)
-			res := m.eng.Cmd(&engine.PlaceOrderCmd{Req: &req})
-			if res.Err != nil || res.Order == nil {
-				log.Printf("mm: place failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
-				continue
-			}
-			existing[level] = res.Order.ID
 			continue
 		}
-
-		// Amend existing order to new price/qty to avoid DB growth.
+		if m.wouldSelfMatch(&req) {
+			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: orderID})
+			delete(existing, level)
+			continue
+		}
 		m.ensureBalanceForOrder(inst, &req)
 		res := m.eng.Cmd(&engine.AmendOrderCmd{
 			UserID:   m.cfg.BotUserID,
@@ -222,10 +242,61 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 			NewQty:   req.Quantity,
 			NewPrice: req.Price,
 		})
-		if res.Err != nil {
+		if res.Err != nil && !errors.Is(res.Err, constants.ErrSelfMatch) {
 			log.Printf("mm: amend failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
 		}
 	}
+
+	// Place new orders after amendments are applied.
+	for level, req := range desired {
+		if _, ok := existing[level]; ok {
+			continue
+		}
+		if m.val.Float64() < m.cfg.SkipPercent {
+			continue
+		}
+		if m.wouldSelfMatch(&req) {
+			continue
+		}
+		m.ensureBalanceForOrder(inst, &req)
+		res := m.eng.Cmd(&engine.PlaceOrderCmd{Req: &req})
+		if res.Err != nil || res.Order == nil {
+			if res.Err != nil && !errors.Is(res.Err, constants.ErrSelfMatch) {
+				log.Printf("mm: place failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
+			}
+			continue
+		}
+		existing[level] = res.Order.ID
+	}
+}
+
+func (m *MarketMaker) wouldSelfMatch(req *types.PlaceOrderRequest) bool {
+	if req == nil {
+		return false
+	}
+	book := m.eng.ReadBook(req.Category, req.Symbol)
+	if book == nil {
+		return false
+	}
+	taker := &types.Order{
+		UserID:   req.UserID,
+		Symbol:   req.Symbol,
+		Category: req.Category,
+		Side:     req.Side,
+		Type:     req.Type,
+		TIF:      req.TIF,
+		Price:    req.Price,
+		Quantity: req.Quantity,
+	}
+	var buf [8]types.Match
+	matches := book.GetMatches(taker, req.Price, buf[:0])
+	for i := range matches {
+		maker := matches[i].MakerOrder
+		if maker != nil && maker.UserID == req.UserID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MarketMaker) buildOrder(inst *types.Instrument, category int8, side int8, price types.Price) *types.PlaceOrderRequest {

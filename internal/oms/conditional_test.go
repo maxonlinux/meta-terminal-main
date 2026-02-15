@@ -23,12 +23,9 @@ func TestConditionalIndex_AddBuy(t *testing.T) {
 	c.Add(order)
 
 	// Verify order was added by checking it triggers correctly
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 1 {
-		t.Errorf("expected 1 triggered order, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)))
+	if len(orders) != 1 {
+		t.Errorf("expected 1 triggered order, got %d", len(orders))
 	}
 }
 
@@ -47,12 +44,9 @@ func TestConditionalIndex_AddSell(t *testing.T) {
 	c.Add(order)
 
 	// Verify order was added by checking it triggers correctly
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51500, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 1 {
-		t.Errorf("expected 1 triggered order, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51500, 0)))
+	if len(orders) != 1 {
+		t.Errorf("expected 1 triggered order, got %d", len(orders))
 	}
 }
 
@@ -74,12 +68,9 @@ func TestConditionalIndex_CancelViaStatus(t *testing.T) {
 	order.Status = constants.ORDER_STATUS_CANCELED
 
 	// Order should not trigger even though price condition is met
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 0 {
-		t.Errorf("canceled order should not trigger, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)))
+	if len(orders) != 0 {
+		t.Errorf("canceled order should not trigger, got %d", len(orders))
 	}
 }
 
@@ -98,19 +89,15 @@ func TestConditionalIndex_CheckTriggers_BuyTriggered(t *testing.T) {
 	c.Add(order)
 
 	// Price drops to/below trigger - should trigger
-	triggeredOrder := false
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)), func(o *types.Order) {
-		triggeredOrder = true
-		if o.ID != order.ID {
-			t.Errorf("wrong order triggered")
-		}
-		if o.Status != constants.ORDER_STATUS_TRIGGERED {
-			t.Errorf("order status should be TRIGGERED")
-		}
-	})
-
-	if !triggeredOrder {
-		t.Error("order should have been triggered")
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48500, 0)))
+	if len(orders) != 1 {
+		t.Fatalf("order should have been triggered")
+	}
+	if orders[0].ID != order.ID {
+		t.Errorf("wrong order triggered")
+	}
+	if orders[0].Status != constants.ORDER_STATUS_TRIGGERED {
+		t.Errorf("order status should be TRIGGERED")
 	}
 }
 
@@ -127,12 +114,9 @@ func TestConditionalIndex_CheckTriggers_BuyNotTriggered(t *testing.T) {
 	})
 
 	// Price is still above trigger - should not trigger
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(49500, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 0 {
-		t.Errorf("order should not trigger, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(49500, 0)))
+	if len(orders) != 0 {
+		t.Errorf("order should not trigger, got %d", len(orders))
 	}
 }
 
@@ -151,16 +135,12 @@ func TestConditionalIndex_CheckTriggers_SellTriggered(t *testing.T) {
 	c.Add(order)
 
 	// Price rises to/above trigger - should trigger
-	triggeredOrder := false
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51500, 0)), func(o *types.Order) {
-		triggeredOrder = true
-		if o.ID != order.ID {
-			t.Errorf("wrong order triggered")
-		}
-	})
-
-	if !triggeredOrder {
-		t.Error("order should have been triggered")
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51500, 0)))
+	if len(orders) != 1 {
+		t.Fatalf("order should have been triggered")
+	}
+	if orders[0].ID != order.ID {
+		t.Errorf("wrong order triggered")
 	}
 }
 
@@ -177,12 +157,9 @@ func TestConditionalIndex_CheckTriggers_SellNotTriggered(t *testing.T) {
 	})
 
 	// Price is still below trigger - should not trigger
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(50500, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 0 {
-		t.Errorf("order should not trigger, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(50500, 0)))
+	if len(orders) != 0 {
+		t.Errorf("order should not trigger, got %d", len(orders))
 	}
 }
 
@@ -198,12 +175,9 @@ func TestConditionalIndex_CheckTriggers_SellPartialTrigger(t *testing.T) {
 	c.Add(order3)
 
 	// Price reaches 51000: only two lowest triggers should fire.
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51000, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 2 {
-		t.Errorf("expected 2 triggered orders, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(51000, 0)))
+	if len(orders) != 2 {
+		t.Errorf("expected 2 triggered orders, got %d", len(orders))
 	}
 	if order3.Status != constants.ORDER_STATUS_UNTRIGGERED {
 		t.Errorf("expected highest trigger to remain untriggered")
@@ -220,12 +194,9 @@ func TestConditionalIndex_CheckTriggers_BuyMaxHeap(t *testing.T) {
 	c.Add(&types.Order{ID: types.OrderID(3), Symbol: "BTCUSDT", Side: constants.ORDER_SIDE_BUY, TriggerPrice: types.Price(fixed.NewI(48500, 0)), Status: constants.ORDER_STATUS_UNTRIGGERED})
 
 	// When price drops to 48000, all should trigger
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48000, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 3 {
-		t.Errorf("expected 3 triggered orders, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(48000, 0)))
+	if len(orders) != 3 {
+		t.Errorf("expected 3 triggered orders, got %d", len(orders))
 	}
 }
 
@@ -239,12 +210,9 @@ func TestConditionalIndex_CheckTriggers_SellMinHeap(t *testing.T) {
 	c.Add(&types.Order{ID: types.OrderID(3), Symbol: "BTCUSDT", Side: constants.ORDER_SIDE_SELL, TriggerPrice: types.Price(fixed.NewI(51500, 0)), Status: constants.ORDER_STATUS_UNTRIGGERED})
 
 	// When price rises to 52000, all should trigger
-	triggered := 0
-	c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(52000, 0)), func(o *types.Order) {
-		triggered++
-	})
-	if triggered != 3 {
-		t.Errorf("expected 3 triggered orders, got %d", triggered)
+	orders := c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(52000, 0)))
+	if len(orders) != 3 {
+		t.Errorf("expected 3 triggered orders, got %d", len(orders))
 	}
 }
 
@@ -302,7 +270,7 @@ func BenchmarkConditionalIndex_CheckTriggers(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(49500, 0)), func(o *types.Order) {})
+		_ = c.CheckTriggers("BTCUSDT", types.Price(fixed.NewI(49500, 0)))
 	}
 }
 
@@ -325,7 +293,7 @@ func BenchmarkConditionalIndex_CheckTriggers_1000_symbols(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		symbol := generateTestSymbol(i % 1000)
-		c.CheckTriggers(symbol, types.Price(fixed.NewI(int64(49000+i%100), 0)), func(o *types.Order) {})
+		_ = c.CheckTriggers(symbol, types.Price(fixed.NewI(int64(49000+i%100), 0)))
 	}
 }
 

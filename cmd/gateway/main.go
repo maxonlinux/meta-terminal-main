@@ -24,10 +24,12 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 	"github.com/nats-io/nats.go"
 	"github.com/robaho/fixed"
 )
@@ -88,6 +90,12 @@ func main() {
 		log.Fatalf("plan service: %v", err)
 	}
 
+	walletRepo, err := wallets.NewRepository(persistenceStore.DB())
+	if err != nil {
+		log.Fatalf("wallet repo: %v", err)
+	}
+	walletService := wallets.NewService(walletRepo)
+
 	eng, err := engine.NewEngine(ob, reg, nil)
 	if err != nil {
 		log.Fatalf("engine: %v", err)
@@ -100,6 +108,7 @@ func main() {
 
 	mmaker := mm.New(eng, reg, mm.Config{})
 	mmaker.Start(ctx)
+	startSystemOrderCleanup(ctx, persistenceStore, 2*time.Minute)
 	natsConn, err := startPriceSubscriber(ctx, cfg, eng, mmaker)
 	if err != nil {
 		log.Fatalf("nats price subscriber: %v", err)
@@ -119,7 +128,7 @@ func main() {
 	}
 
 	go func() {
-		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, kycRepo); err != nil {
+		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, walletService, kycRepo); err != nil {
 			log.Printf("gateway error: %v", err)
 		}
 	}()
@@ -127,6 +136,31 @@ func main() {
 	<-ctx.Done()
 	log.Printf("shutdown signal received")
 	eng.Shutdown()
+}
+
+// startSystemOrderCleanup periodically removes closed system orders from history.
+func startSystemOrderCleanup(ctx context.Context, store *persistence.Store, interval time.Duration) {
+	if store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 2 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cutoff := utils.NowNano() - uint64(interval)
+				if _, err := store.CleanupSystemOrders(cutoff); err != nil {
+					log.Printf("system order cleanup failed: %v", err)
+				}
+			}
+		}
+	}()
 }
 
 type priceMessage struct {
@@ -198,7 +232,7 @@ func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.En
 	return nc, nil
 }
 
-func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository) error {
+func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository) error {
 	userStore, err := users.NewSQLiteStore(cfg.DataDir)
 	if err != nil {
 		return err
@@ -217,7 +251,7 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 
 	wsHandler := wsapi.NewWsHandler(eng.ReadBook, jwtService, cfg.JwtCookieName)
 	eng.SetPublisher(wsHandler.Publisher())
-	router, err := apihandlers.NewRouter(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, wsHandler, cfg)
+	router, err := apihandlers.NewRouter(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler, cfg)
 	if err != nil {
 		return err
 	}

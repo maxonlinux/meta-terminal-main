@@ -9,19 +9,21 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
 
 type UserHandler struct {
-	users *users.Service
-	eng   *engine.Engine
-	store *persistence.Store
-	plan  *plan.Service
+	users   *users.Service
+	eng     *engine.Engine
+	store   *persistence.Store
+	plan    *plan.Service
+	wallets *wallets.Service
 }
 
-func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service) *UserHandler {
-	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService}
+func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service, walletService *wallets.Service) *UserHandler {
+	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService, wallets: walletService}
 }
 
 func (h *UserHandler) Profile(c *echo.Context) error {
@@ -275,6 +277,11 @@ type FundingRequestBody struct {
 	Destination string `json:"destination"`
 }
 
+type DepositRequestBody struct {
+	WalletID int64  `json:"walletId"`
+	Amount   string `json:"amount"`
+}
+
 func (h *UserHandler) FundingList(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
@@ -316,7 +323,7 @@ func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
-	var req FundingRequestBody
+	var req DepositRequestBody
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
@@ -324,11 +331,49 @@ func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 	}
-	res := h.eng.Cmd(&engine.CreateDepositCmd{UserID: claims.UserID, Asset: req.Asset, Amount: types.Quantity(amount), Destination: req.Destination, CreatedBy: types.FundingCreatedByUser})
+	if req.WalletID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletId is required"})
+	}
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	wallet, err := h.wallets.GetUserWallet(claims.UserID, req.WalletID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallet"})
+	}
+	if wallet == nil || !wallet.IsActive {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "wallet not available"})
+	}
+	res := h.eng.Cmd(&engine.CreateDepositCmd{UserID: claims.UserID, Asset: wallet.Currency, Amount: types.Quantity(amount), Destination: wallet.Address, CreatedBy: types.FundingCreatedByUser})
 	if res.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
 	}
 	return c.JSON(http.StatusCreated, map[string]string{"message": "FUNDING_CREATED"})
+}
+
+func (h *UserHandler) Wallets(c *echo.Context) error {
+	claims := getUser(c)
+	if claims == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+	if h.wallets == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
+	}
+	items, err := h.wallets.ListUserWallets(claims.UserID, true)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallets"})
+	}
+	resp := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, map[string]interface{}{
+			"id":       item.WalletID,
+			"name":     item.Name,
+			"address":  item.Address,
+			"network":  item.Network,
+			"currency": item.Currency,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (h *UserHandler) FundingWithdraw(c *echo.Context) error {

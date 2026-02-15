@@ -97,7 +97,7 @@ func (r *Repository) ResetManualPlan(userID types.UserID) error {
 func (r *Repository) NetDeposits(userID types.UserID) (types.Quantity, error) {
 	// Sum deposits/withdrawals in fixed-point to avoid float rounding.
 	rows, err := r.db.Query(
-		`select type, amount from fundings where user_id = ? and status = ?`,
+		`select type, amount, asset from fundings where user_id = ? and status = ?`,
 		uint64(userID),
 		string(types.FundingStatusCompleted),
 	)
@@ -113,8 +113,12 @@ func (r *Repository) NetDeposits(userID types.UserID) (types.Quantity, error) {
 	for rows.Next() {
 		var fundingType string
 		var amountRaw string
-		if err := rows.Scan(&fundingType, &amountRaw); err != nil {
+		var asset string
+		if err := rows.Scan(&fundingType, &amountRaw, &asset); err != nil {
 			return types.Quantity{}, err
+		}
+		if !isStableAsset(asset) {
+			return types.Quantity{}, fmt.Errorf("unsupported funding asset: %s", asset)
 		}
 		amount, err := parseFundingAmount(amountRaw)
 		if err != nil {
@@ -132,6 +136,16 @@ func (r *Repository) NetDeposits(userID types.UserID) (types.Quantity, error) {
 		return types.Quantity{}, err
 	}
 	return types.Quantity(math.Sub(deposits, withdrawals)), nil
+}
+
+// isStableAsset determines whether an asset is treated as 1:1 with USDT.
+func isStableAsset(asset string) bool {
+	switch asset {
+	case "USDT", "USDC", "BUSD", "DAI":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseFundingAmount(value string) (types.Quantity, error) {

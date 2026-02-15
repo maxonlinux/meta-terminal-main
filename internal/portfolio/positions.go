@@ -9,6 +9,8 @@ import (
 )
 
 func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Position {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	pos := s.positionFor(userID, symbol)
 	if pos == nil {
 		pos = &types.Position{UserID: userID, Symbol: symbol}
@@ -18,6 +20,8 @@ func (s *Service) GetPosition(userID types.UserID, symbol string) *types.Positio
 }
 
 func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage types.Leverage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	pos := s.positionFor(userID, symbol)
 	if pos == nil {
 		pos = &types.Position{UserID: userID, Symbol: symbol}
@@ -52,7 +56,7 @@ func (s *Service) SetLeverage(userID types.UserID, symbol string, newLeverage ty
 	return nil
 }
 
-func (s *Service) updatePosition(userID types.UserID, match *types.Match, order *types.Order) {
+func (s *Service) updatePosition(userID types.UserID, match *types.Match, order *types.Order) error {
 	pos := s.positionFor(userID, match.Symbol)
 	if pos == nil {
 		pos = &types.Position{UserID: userID, Symbol: match.Symbol}
@@ -65,7 +69,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	prevSign := math.Sign(prevSize)
 
 	if tradeSign == 0 {
-		return
+		return nil
 	}
 
 	if prevSign == 0 {
@@ -74,7 +78,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		if math.Sign(pos.Leverage) <= 0 {
 			pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
-		return
+		return nil
 	}
 
 	if prevSign == tradeSign {
@@ -82,7 +86,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		weighted := math.Add(math.Mul(pos.EntryPrice, prevSize), math.Mul(match.Price, signedTrade))
 		pos.EntryPrice = types.Price(math.Div(weighted, newSize))
 		pos.Size = newSize
-		return
+		return nil
 	}
 
 	newSize := math.Add(prevSize, signedTrade)
@@ -105,7 +109,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 		// Use registry quote asset for realized PnL balance adjustment.
 		inst := s.registry.GetInstrument(match.Symbol)
 		if inst == nil {
-			panic("instrument not found: " + match.Symbol)
+			return constants.ErrInstrumentNotFound
 		}
 		quote := inst.QuoteAsset
 		s.adjustAvailable(userID, quote, rpnl)
@@ -131,6 +135,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if s.onReduce != nil && math.Sign(closedQty) != 0 {
 		s.onReduce(userID, match.Symbol, pos.Size)
 	}
+	return nil
 }
 
 func (s *Service) positionLeverage(userID types.UserID, symbol string) types.Leverage {
@@ -142,6 +147,7 @@ func (s *Service) positionLeverage(userID types.UserID, symbol string) types.Lev
 	return types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 }
 
+// positionFor expects the portfolio mutex to be held.
 func (s *Service) positionFor(userID types.UserID, symbol string) *types.Position {
 	userPositions := s.Positions[userID]
 	if userPositions == nil {
@@ -150,6 +156,7 @@ func (s *Service) positionFor(userID types.UserID, symbol string) *types.Positio
 	return userPositions[symbol]
 }
 
+// ensurePositions expects the portfolio mutex to be held.
 func (s *Service) ensurePositions(userID types.UserID) map[string]*types.Position {
 	userPositions := s.Positions[userID]
 	if userPositions == nil {
@@ -185,7 +192,8 @@ func (s *Service) applyMarginDelta(userID types.UserID, quote string, oldMargin 
 	}
 
 	required := types.Quantity(math.Neg(delta))
-	if math.Lt(s.GetBalance(userID, quote).Available, required) {
+	balance := s.balanceForLocked(userID, quote)
+	if math.Lt(balance.Available, required) {
 		return constants.ErrInsufficientBalance
 	}
 	s.adjustAvailable(userID, quote, math.Neg(required))

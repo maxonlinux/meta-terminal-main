@@ -26,7 +26,9 @@ func (s *Service) CreateWithdrawal(userID types.UserID, asset string, amount typ
 		return nil, ErrFundingDestination
 	}
 
-	if err := s.Reserve(userID, asset, amount); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.reserveLocked(userID, asset, amount); err != nil {
 		return nil, err
 	}
 
@@ -44,6 +46,8 @@ func (s *Service) CreateDeposit(userID types.UserID, asset string, amount types.
 		return nil, ErrFundingDestination
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	request := s.newFundingRequest(userID, asset, amount, destination, createdBy, message, types.FundingTypeDeposit)
 	s.addFunding(request)
 	return request, nil
@@ -51,7 +55,9 @@ func (s *Service) CreateDeposit(userID types.UserID, asset string, amount types.
 
 // ApproveFunding completes a pending funding request.
 func (s *Service) ApproveFunding(id types.FundingID) (*types.FundingRequest, error) {
-	request, err := s.pendingFunding(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request, err := s.pendingFundingLocked(id)
 	if err != nil {
 		return nil, err
 	}
@@ -66,20 +72,23 @@ func (s *Service) ApproveFunding(id types.FundingID) (*types.FundingRequest, err
 
 // RejectFunding cancels a pending funding request.
 func (s *Service) RejectFunding(id types.FundingID) (*types.FundingRequest, error) {
-	request, err := s.pendingFunding(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request, err := s.pendingFundingLocked(id)
 	if err != nil {
 		return nil, err
 	}
 
 	if request.Type == types.FundingTypeWithdrawal {
-		s.Release(request.UserID, request.Asset, request.Amount)
+		s.releaseLocked(request.UserID, request.Asset, request.Amount)
 	}
 
 	s.transitionFunding(request, types.FundingStatusCanceled)
 	return request, nil
 }
 
-func (s *Service) pendingFunding(id types.FundingID) (*types.FundingRequest, error) {
+// pendingFundingLocked expects the portfolio mutex to be held.
+func (s *Service) pendingFundingLocked(id types.FundingID) (*types.FundingRequest, error) {
 	request, ok := s.Fundings[id]
 	if !ok {
 		return nil, ErrFundingNotFound

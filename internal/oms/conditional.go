@@ -122,15 +122,16 @@ func triggerHeapForPrice(h *triggerHeap, currentPrice types.Price, trigger func(
 	}
 }
 
-func (c *ConditionalIndex) CheckTriggers(symbol string, currentPrice types.Price, callback func(*types.Order)) {
+func (c *ConditionalIndex) CheckTriggers(symbol string, currentPrice types.Price) []*types.Order {
 	shardIdx := ShardIndex(symbol)
 	shard := c.shards[shardIdx]
+	var triggered []*types.Order
 
 	if h := shard.buyTriggers[symbol]; h != nil {
 		trigger := func(o *types.Order) {
 			o.Status = constants.ORDER_STATUS_TRIGGERED
 			o.UpdatedAt = utils.NowNano()
-			callback(o)
+			triggered = append(triggered, o)
 			heap.Pop(h)
 		}
 		triggerHeapForPrice(h, currentPrice, trigger, 1)
@@ -140,11 +141,12 @@ func (c *ConditionalIndex) CheckTriggers(symbol string, currentPrice types.Price
 		trigger := func(o *types.Order) {
 			o.Status = constants.ORDER_STATUS_TRIGGERED
 			o.UpdatedAt = utils.NowNano()
-			callback(o)
+			triggered = append(triggered, o)
 			heap.Pop(h)
 		}
 		triggerHeapForPrice(h, currentPrice, trigger, -1)
 	}
+	return triggered
 }
 
 func (c *ConditionalIndex) Remove(o *types.Order) {

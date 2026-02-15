@@ -37,6 +37,30 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
+// CleanupSystemOrders removes closed system-origin orders older than cutoff.
+func (s *Store) CleanupSystemOrders(cutoff uint64) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	res, err := s.db.Exec(
+		`delete from orders where origin = ? and status in (?, ?, ?, ?) and updated_at <= ?`,
+		constants.ORDER_ORIGIN_SYSTEM,
+		constants.ORDER_STATUS_FILLED,
+		constants.ORDER_STATUS_CANCELED,
+		constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED,
+		constants.ORDER_STATUS_DEACTIVATED,
+		cutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 type positionKey struct {
 	userID types.UserID
 	symbol string

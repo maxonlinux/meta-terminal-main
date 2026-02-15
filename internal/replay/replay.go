@@ -79,7 +79,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 				return err
 			}
 		} else if math.Sign(delta) < 0 {
-			r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price)
+			if err := r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price); err != nil {
+				return err
+			}
 		}
 	case events.OrderCanceled:
 		cancel, err := events.DecodeOrderCanceled(ev.Data)
@@ -96,7 +98,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 			}
 			remaining := math.Sub(order.Quantity, order.Filled)
 			if math.Sign(remaining) > 0 {
-				r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+				if err := r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
+					return err
+				}
 			}
 			order.UpdatedAt = cancel.Timestamp
 			if err := r.store.Cancel(order.UserID, order.ID); err != nil {
@@ -133,7 +137,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 				return err
 			}
 		}
-		r.clearing.ExecuteTrade(&match)
+		if err := r.clearing.ExecuteTrade(&match); err != nil {
+			return err
+		}
 		_ = r.store.Fill(maker.UserID, maker.ID, trade.Quantity)
 		_ = r.store.Fill(taker.UserID, taker.ID, trade.Quantity)
 	case events.LeverageSet:

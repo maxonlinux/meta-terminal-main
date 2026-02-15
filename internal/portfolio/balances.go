@@ -7,11 +7,26 @@ import (
 )
 
 func (s *Service) GetBalance(userID types.UserID, asset string) *types.Balance {
-	return s.balanceFor(userID, asset)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.balanceForLocked(userID, asset)
 }
 
 func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quantity) error {
-	balance := s.balanceFor(userID, asset)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reserveLocked(userID, asset, amount)
+}
+
+func (s *Service) Release(userID types.UserID, asset string, amount types.Quantity) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseLocked(userID, asset, amount)
+}
+
+// reserveLocked expects the portfolio mutex to be held.
+func (s *Service) reserveLocked(userID types.UserID, asset string, amount types.Quantity) error {
+	balance := s.balanceForLocked(userID, asset)
 	if math.Lt(balance.Available, amount) {
 		return constants.ErrInsufficientBalance
 	}
@@ -23,21 +38,24 @@ func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quanti
 	return nil
 }
 
-func (s *Service) Release(userID types.UserID, asset string, amount types.Quantity) {
+// releaseLocked expects the portfolio mutex to be held.
+func (s *Service) releaseLocked(userID types.UserID, asset string, amount types.Quantity) {
 	s.adjustLocked(userID, asset, math.Neg(amount))
 	s.adjustAvailable(userID, asset, amount)
 }
 
+// adjustAvailable expects the portfolio mutex to be held.
 func (s *Service) adjustAvailable(userID types.UserID, asset string, delta types.Quantity) {
-	balance := s.balanceFor(userID, asset)
+	balance := s.balanceForLocked(userID, asset)
 	balance.Available = math.Add(balance.Available, delta)
 	if s.onBalance != nil {
 		s.onBalance(userID, asset, balance)
 	}
 }
 
+// adjustLocked expects the portfolio mutex to be held.
 func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Quantity) {
-	balance := s.balanceFor(userID, asset)
+	balance := s.balanceForLocked(userID, asset)
 	balance.Locked = math.Add(balance.Locked, delta)
 	if math.Sign(balance.Locked) < 0 {
 		balance.Locked = math.Zero
@@ -47,15 +65,17 @@ func (s *Service) adjustLocked(userID types.UserID, asset string, delta types.Qu
 	}
 }
 
+// adjustMargin expects the portfolio mutex to be held.
 func (s *Service) adjustMargin(userID types.UserID, asset string, delta types.Quantity) {
-	balance := s.balanceFor(userID, asset)
+	balance := s.balanceForLocked(userID, asset)
 	balance.Margin = math.Add(balance.Margin, delta)
 	if s.onBalance != nil {
 		s.onBalance(userID, asset, balance)
 	}
 }
 
-func (s *Service) balanceFor(userID types.UserID, asset string) *types.Balance {
+// balanceForLocked expects the portfolio mutex to be held.
+func (s *Service) balanceForLocked(userID types.UserID, asset string) *types.Balance {
 	balances := s.Balances[userID]
 	if balances == nil {
 		balances = make(map[string]*types.Balance)

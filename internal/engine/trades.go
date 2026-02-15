@@ -24,17 +24,19 @@ func putTrade(t *types.Trade) {
 	tradePool.Put(t)
 }
 
-func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer outbox.Writer) {
+func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer outbox.Writer) error {
 	if match.MakerOrder == nil || match.TakerOrder == nil {
-		return
+		return nil
 	}
 
-	e.clearing.ExecuteTrade(&match)
+	if err := e.clearing.ExecuteTrade(&match); err != nil {
+		return err
+	}
 
 	_ = e.store.Fill(match.MakerOrder.UserID, match.MakerOrder.ID, match.Quantity)
 	_ = e.store.Fill(match.TakerOrder.UserID, match.TakerOrder.ID, match.Quantity)
 	if book != nil {
-		book.ApplyFill(match.MakerOrder.ID, match.Quantity)
+		book.ApplyFillUnsafe(match.MakerOrder.ID, match.Quantity)
 	}
 
 	publicTrade := getTrade()
@@ -74,4 +76,5 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 			Timestamp:    match.Timestamp,
 		}))
 	}
+	return nil
 }

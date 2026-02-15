@@ -16,6 +16,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
+	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 )
 
@@ -41,21 +42,21 @@ type Router struct {
 	jwtCookieName string
 }
 
-func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, wsHandler *ws.WsHandler, cfg config.Config) (*Router, error) {
-	if err := validateRouterDeps(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, kycRepo, wsHandler); err != nil {
+func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler, cfg config.Config) (*Router, error) {
+	if err := validateRouterDeps(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler); err != nil {
 		return nil, err
 	}
 	return &Router{
-		AuthHandler:      NewAuthHandler(authService, jwtService, otpService, impService, cfg),
+		AuthHandler:      NewAuthHandler(authService, walletService, jwtService, otpService, impService, cfg),
 		OtpHandler:       NewOTPHandler(otpService, authService),
-		UserHandler:      NewUserHandler(authService, eng, persistenceStore, planService),
+		UserHandler:      NewUserHandler(authService, eng, persistenceStore, planService, walletService),
 		OrdersHandler:    NewOrdersHandler(eng),
 		PositionsHandler: NewPositionsHandler(eng),
 		BalancesHandler:  NewBalancesHandler(eng),
 		MarketHandler:    NewMarketHandler(eng),
 		ProfileHandler:   NewProfileHandler(authService),
 		HistoryHandler:   NewHistoryHandler(persistenceStore),
-		AdminHandler:     NewAdminHandler(planService, planRepo, authService, persistenceStore, kycRepo, eng, impService),
+		AdminHandler:     NewAdminHandler(planService, planRepo, walletService, authService, persistenceStore, kycRepo, eng, impService),
 		AdminAuthHandler: &AdminAuthHandler{},
 		KYCHandler:       NewKYCHandler(kycRepo, authService),
 		WsHandler:        wsHandler,
@@ -67,7 +68,7 @@ func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtServi
 	}, nil
 }
 
-func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository, wsHandler *ws.WsHandler) error {
+func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler) error {
 	missing := make([]string, 0, 8)
 	if eng == nil {
 		missing = append(missing, "engine")
@@ -92,6 +93,9 @@ func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store,
 	}
 	if planRepo == nil {
 		missing = append(missing, "plan repository")
+	}
+	if walletService == nil {
+		missing = append(missing, "wallet service")
 	}
 	if kycRepo == nil {
 		missing = append(missing, "kyc repository")
@@ -160,6 +164,7 @@ func (r *Router) Register(e *echo.Echo) {
 	userGroup := authenticated.Group("/user")
 	userGroup.GET("/plan", r.UserHandler.Plan)
 	userGroup.GET("/balance", r.UserHandler.Balance)
+	userGroup.GET("/wallets", r.UserHandler.Wallets)
 
 	settingsGroup := authenticated.Group("/user/settings")
 	settingsGroup.GET("", r.UserHandler.Settings)
@@ -211,7 +216,9 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.PATCH("/kyc/:id", r.KYCHandler.UpdateRequest)
 	adminGroup.GET("/users", r.AdminHandler.Users)
 	adminGroup.GET("/users/:id", r.AdminHandler.User)
+	adminGroup.PATCH("/users/:id/active", r.AdminHandler.SetUserActive)
 	adminGroup.GET("/users/:id/address", r.AdminHandler.UserAddress)
+	adminGroup.PATCH("/users/:id/address", r.AdminHandler.UpdateUserAddress)
 	adminGroup.GET("/users/:id/transactions", r.AdminHandler.UserTransactions)
 	adminGroup.GET("/users/:id/impersonate", r.AdminHandler.Impersonate)
 	adminGroup.GET("/funding", r.AdminHandler.Funding)
@@ -221,6 +228,11 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.GET("/users/:id/plan", r.AdminHandler.GetUserPlan)
 	adminGroup.PATCH("/users/:id/plan", r.AdminHandler.SetUserPlan)
 	adminGroup.PATCH("/users/:id/reset-plan", r.AdminHandler.ResetUserPlan)
+	adminGroup.GET("/wallets", r.AdminHandler.ListWallets)
+	adminGroup.POST("/wallets", r.AdminHandler.CreateWallet)
+	adminGroup.PATCH("/wallets/:id", r.AdminHandler.UpdateWallet)
+	adminGroup.GET("/users/:id/wallets", r.AdminHandler.ListUserWallets)
+	adminGroup.PATCH("/users/:id/wallets", r.AdminHandler.AssignUserWallet)
 }
 
 func (r *Router) Health(c *echo.Context) error {
