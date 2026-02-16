@@ -41,6 +41,8 @@ type Config struct {
 	AdminCookieMaxAge int
 	OutboxSegmentSize int64
 	SnowflakeNode     int64
+	LogLevel          string
+	LogFormat         string
 }
 
 var (
@@ -81,6 +83,8 @@ func Load() Config {
 			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
 			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
 			SnowflakeNode:     envInt64("SNOWFLAKE_NODE", 0),
+			LogLevel:          envString("LOG_LEVEL", "info"),
+			LogFormat:         envString("LOG_FORMAT", "text"),
 		}
 
 		cfg.CoreURL = strings.TrimRight(cfg.CoreURL, "/")

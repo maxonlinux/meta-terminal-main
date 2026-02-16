@@ -3,13 +3,13 @@ package mm
 import (
 	"context"
 	"errors"
-	"log"
 	"math/rand"
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/registry"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
@@ -243,7 +243,7 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 			NewPrice: req.Price,
 		})
 		if res.Err != nil && !errors.Is(res.Err, constants.ErrSelfMatch) {
-			log.Printf("mm: amend failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
+			logging.Log().Error().Str("symbol", req.Symbol).Int8("category", req.Category).Str("price", req.Price.String()).Err(res.Err).Msg("mm: amend failed")
 		}
 	}
 
@@ -262,7 +262,7 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		res := m.eng.Cmd(&engine.PlaceOrderCmd{Req: &req})
 		if res.Err != nil || res.Order == nil {
 			if res.Err != nil && !errors.Is(res.Err, constants.ErrSelfMatch) {
-				log.Printf("mm: place failed symbol=%s category=%d price=%s err=%v", req.Symbol, req.Category, req.Price.String(), res.Err)
+				logging.Log().Error().Str("symbol", req.Symbol).Int8("category", req.Category).Str("price", req.Price.String()).Err(res.Err).Msg("mm: place failed")
 			}
 			continue
 		}

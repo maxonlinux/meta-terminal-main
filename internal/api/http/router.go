@@ -125,6 +125,7 @@ func (r *Router) Register(e *echo.Echo) {
 	api := e.Group("/api/v1")
 
 	authGroup := api.Group("/auth")
+	authGroup.Use(r.PublicActionLogger())
 	authGroup.POST("/register", r.AuthHandler.Register)
 	authGroup.POST("/login", r.AuthHandler.Login)
 	authGroup.POST("/logout", r.AuthHandler.Logout)
@@ -133,12 +134,14 @@ func (r *Router) Register(e *echo.Echo) {
 	authGroup.GET("/impersonate/:code", r.AuthHandler.Impersonate)
 
 	otpGroup := api.Group("/otp")
+	otpGroup.Use(r.PublicActionLogger())
 	otpGroup.POST("/generate", r.OtpHandler.Generate)
 	otpGroup.POST("/validate", r.OtpHandler.Validate)
 	otpGroup.POST("/check", r.OtpHandler.Check)
 
 	authenticated := api.Group("")
 	authenticated.Use(r.AuthMiddleware())
+	authenticated.Use(r.UserActionLogger())
 	otpRequired := authenticated.Group("")
 	otpRequired.Use(r.OTPMiddleware())
 
@@ -203,12 +206,14 @@ func (r *Router) Register(e *echo.Echo) {
 
 	// Backoffice auth endpoints are public to allow initial setup/login.
 	adminAuthGroup := adminGroup.Group("/auth")
+	adminAuthGroup.Use(r.PublicActionLogger())
 	adminAuthGroup.GET("/status", r.AdminAuthHandler.Status)
 	adminAuthGroup.POST("/setup", r.AdminAuthHandler.Setup)
 	adminAuthGroup.POST("/login", r.AdminAuthHandler.Login)
 	adminAuthGroup.POST("/logout", r.AdminAuthHandler.Logout)
 
 	adminGroup.Use(r.AdminMiddleware())
+	adminGroup.Use(r.AdminActionLogger())
 	adminGroup.GET("/pending-count", r.AdminHandler.PendingCount)
 	adminGroup.GET("/kyc", r.KYCHandler.ListRequests)
 	adminGroup.GET("/kyc/:id", r.KYCHandler.GetRequest)

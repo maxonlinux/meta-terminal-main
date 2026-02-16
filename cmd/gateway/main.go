@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v5"
 	apihandlers "github.com/maxonlinux/meta-terminal-go/internal/api/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/snowflake"
@@ -38,7 +40,7 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
 	if envMap, err := godotenv.Read(); err != nil {
-		log.Printf("env file not loaded: %v", err)
+		logging.Log().Warn().Err(err).Msg("env file not loaded")
 	} else {
 		for key, value := range envMap {
 			if os.Getenv(key) == "" {
@@ -48,10 +50,26 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if _, err := logging.Init(cfg.LogLevel, cfg.LogFormat); err != nil {
+		log.Fatalf("logger init: %v", err)
+	}
 	if err := snowflake.Init(cfg.SnowflakeNode); err != nil {
 		log.Fatalf("snowflake init: %v", err)
 	}
-	log.Printf("gateway config data_dir=%s port=%s", cfg.DataDir, cfg.Port)
+
+	if os.Getenv("PYROSCOPE_ADDRESS") != "" {
+		if _, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName: os.Getenv("PYROSCOPE_APP_NAME"),
+			ServerAddress:   os.Getenv("PYROSCOPE_ADDRESS"),
+			Logger:          pyroscope.StandardLogger,
+		}); err != nil {
+			logging.Log().Warn().Err(err).Msg("pyroscope init failed")
+		} else {
+			logging.Log().Info().Str("address", os.Getenv("PYROSCOPE_ADDRESS")).Msg("pyroscope started")
+		}
+	}
+
+	logging.Log().Info().Str("data_dir", cfg.DataDir).Str("port", cfg.Port).Msg("gateway started")
 
 	reg := registry.New()
 
@@ -133,12 +151,12 @@ func main() {
 
 	go func() {
 		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, walletService, kycRepo); err != nil {
-			log.Printf("gateway error: %v", err)
+			logging.Log().Error().Err(err).Msg("gateway error")
 		}
 	}()
 
 	<-ctx.Done()
-	log.Printf("shutdown signal received")
+	logging.Log().Info().Msg("shutdown signal received")
 	eng.Shutdown()
 }
 
@@ -160,7 +178,7 @@ func startSystemOrderCleanup(ctx context.Context, store *persistence.Store, inte
 			case <-ticker.C:
 				cutoff := utils.NowNano() - uint64(interval)
 				if _, err := store.CleanupSystemOrders(cutoff); err != nil {
-					log.Printf("system order cleanup failed: %v", err)
+					logging.Log().Error().Err(err).Msg("system order cleanup failed")
 				}
 			}
 		}
@@ -195,26 +213,26 @@ func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.En
 		decoder := json.NewDecoder(bytes.NewReader(msg.Data))
 		decoder.UseNumber()
 		if err := decoder.Decode(&payload); err != nil {
-			log.Printf("nats price decode failed subject=%s err=%v", msg.Subject, err)
+			logging.Log().Error().Str("subject", msg.Subject).Err(err).Msg("nats price decode failed")
 			return
 		}
 		if payload.Symbol == "" {
-			log.Printf("nats price missing symbol subject=%s", msg.Subject)
+			logging.Log().Warn().Str("subject", msg.Subject).Msg("nats price missing symbol")
 			return
 		}
 		priceValue := payload.Price.String()
 		if priceValue == "" {
-			log.Printf("nats price missing price subject=%s symbol=%s", msg.Subject, payload.Symbol)
+			logging.Log().Warn().Str("subject", msg.Subject).Str("symbol", payload.Symbol).Msg("nats price missing price")
 			return
 		}
 		parsed, err := fixed.Parse(priceValue)
 		if err != nil {
-			log.Printf("nats price parse failed subject=%s symbol=%s price=%s err=%v", msg.Subject, payload.Symbol, priceValue, err)
+			logging.Log().Error().Str("subject", msg.Subject).Str("symbol", payload.Symbol).Str("price", priceValue).Err(err).Msg("nats price parse failed")
 			return
 		}
 		price := types.Price(parsed)
 		if math.Sign(price) <= 0 {
-			log.Printf("nats price invalid subject=%s symbol=%s price=%s", msg.Subject, payload.Symbol, price.String())
+			logging.Log().Warn().Str("subject", msg.Subject).Str("symbol", payload.Symbol).Str("price", price.String()).Msg("nats price invalid")
 			return
 		}
 		eng.OnPriceTick(payload.Symbol, price)
@@ -274,6 +292,6 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 	router.Register(e)
 
 	addr := ":" + cfg.Port
-	log.Printf("http server listening on %s", addr)
+	logging.Log().Info().Str("addr", addr).Msg("http server listening")
 	return e.Start(addr)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
+	"github.com/rs/zerolog"
 )
 
 type Loader struct {
@@ -48,20 +48,18 @@ func (l *Loader) Start(ctx context.Context) {
 func (l *Loader) sync(ctx context.Context) {
 	assets, err := l.fetchSymbols(ctx)
 	if err != nil {
-		// Use the standard logger for consistent output formatting.
-		log.Printf("registry loader: failed to fetch symbols: %v", err)
+		zerolog.Ctx(ctx).Error().Err(err).Msg("registry loader: failed to fetch symbols")
 		return
 	}
 
 	for _, asset := range assets {
 		price, err := l.fetchPrice(ctx, asset.Symbol)
 		if err != nil {
-			log.Printf("registry loader: skipping %s: %v", asset.Symbol, err)
+			zerolog.Ctx(ctx).Warn().Str("symbol", asset.Symbol).Err(err).Msg("registry loader: skipping asset")
 			continue
 		}
 		if math.Sign(price) <= 0 {
-			// Reject non-positive prices before registering instruments.
-			log.Printf("registry loader: skipping %s: invalid price %s", asset.Symbol, price.String())
+			zerolog.Ctx(ctx).Warn().Str("symbol", asset.Symbol).Str("price", price.String()).Msg("registry loader: skipping asset with invalid price")
 			continue
 		}
 
@@ -71,7 +69,7 @@ func (l *Loader) sync(ctx context.Context) {
 
 		inst := FromSymbol(asset.Symbol, price, asset.Type)
 		l.reg.SetInstrument(asset.Symbol, inst)
-		log.Printf("registry loader: loaded %s (price=%s)", asset.Symbol, price.String())
+		zerolog.Ctx(ctx).Info().Str("symbol", asset.Symbol).Str("price", price.String()).Msg("registry loader: loaded instrument")
 	}
 }
 

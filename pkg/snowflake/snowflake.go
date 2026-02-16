@@ -56,10 +56,7 @@ func nextID() int64 {
 	mu.Lock()
 	defer mu.Unlock()
 
-	nowMs := time.Now().UnixMilli()
-	if nowMs < snowflakeEpoch {
-		nowMs = snowflakeEpoch
-	}
+	nowMs := max(time.Now().UnixMilli(), snowflakeEpoch)
 	if nowMs < lastMs {
 		for nowMs < lastMs {
 			time.Sleep(time.Millisecond)

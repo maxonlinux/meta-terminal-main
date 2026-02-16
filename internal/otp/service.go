@@ -3,11 +3,12 @@ package otp
 import (
 	"crypto/rand"
 	"errors"
-	"log"
 	"math/big"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 )
 
 const GracePeriod = 5 * time.Minute
@@ -62,7 +63,7 @@ func (s *Service) Generate(username, email, phone string) (string, error) {
 	s.codes[username] = otpCode{code: code, expires: time.Now().Add(GracePeriod)}
 	s.mu.Unlock()
 
-	log.Printf("otp: code generated username=%s email=%s phone=%s code=%s", username, email, phone, code)
+	logging.Log().Debug().Str("username", username).Str("email", email).Str("phone", phone).Str("code", code).Msg("otp: code generated")
 
 	message, err := s.sendOtp(email, phone, code)
 	if err != nil {

@@ -1,8 +1,7 @@
 package engine
 
 import (
-	"log"
-
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
@@ -21,6 +20,6 @@ func (e *Engine) activateConditional(order *types.Order, writer outbox.Writer) {
 
 	result := e.executeOrder(order, book, writer, false)
 	if result.Err != nil {
-		log.Printf("engine conditional: activation failed order=%d user=%d symbol=%s err=%v", order.ID, order.UserID, order.Symbol, result.Err)
+		logging.Log().Error().Int64("order", int64(order.ID)).Int64("user", int64(order.UserID)).Str("symbol", order.Symbol).Err(result.Err).Msg("engine conditional: activation failed")
 	}
 }

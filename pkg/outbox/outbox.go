@@ -511,13 +511,15 @@ func (w *worker) Stop() {
 
 func (w *worker) run() {
 	defer close(w.done)
-	lastOffset := w.lastOffset
+	lastCommitted := w.lastOffset
 	pending := make(map[uint64][]record)
+	pendingOffsets := make(map[uint64]int64)
 
 	applyTx := func(txID uint64, offset int64) error {
 		records := pending[txID]
 		delete(pending, txID)
-		lastOffset = offset
+		delete(pendingOffsets, txID)
+		lastCommitted = offset
 		if w.sink != nil && len(records) > 0 {
 			eventsBatch := make([]events.Event, 0, len(records))
 			for i := range records {
@@ -533,12 +535,26 @@ func (w *worker) run() {
 				}
 			}
 		}
-		if w.log != nil && len(pending) == 0 {
-			if newOffset, err := w.log.CompactApplied(lastOffset); err == nil {
-				lastOffset = newOffset
+		if w.log != nil {
+			cutoff := lastCommitted
+			if len(pendingOffsets) > 0 {
+				minPending := cutoff
+				for _, off := range pendingOffsets {
+					if off < minPending {
+						minPending = off
+					}
+				}
+				if minPending > 0 && minPending-1 < cutoff {
+					cutoff = minPending - 1
+				}
+			}
+			if cutoff > 0 {
+				if _, err := w.log.CompactApplied(cutoff); err != nil {
+					return err
+				}
 			}
 		}
-		_ = storeTail(w.tailPath, lastOffset)
+		_ = storeTail(w.tailPath, lastCommitted)
 		return nil
 	}
 
@@ -547,23 +563,26 @@ func (w *worker) run() {
 		if !ok {
 			return
 		}
-		if rec.endOffset > 0 {
-			lastOffset = rec.endOffset
-		}
 		switch rec.recordType {
 		case logRecordBegin:
 			if _, ok := pending[rec.txID]; !ok {
 				pending[rec.txID] = nil
 			}
+			pendingOffsets[rec.txID] = rec.endOffset
 		case logRecordData:
 			pending[rec.txID] = append(pending[rec.txID], rec)
+			if off, ok := pendingOffsets[rec.txID]; !ok || rec.endOffset < off {
+				pendingOffsets[rec.txID] = rec.endOffset
+			}
 		case logRecordCommit:
-			if err := applyTx(rec.txID, lastOffset); err != nil {
+			if err := applyTx(rec.txID, rec.endOffset); err != nil {
 				return
 			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
-			_ = storeTail(w.tailPath, lastOffset)
+			delete(pendingOffsets, rec.txID)
+			lastCommitted = rec.endOffset
+			_ = storeTail(w.tailPath, lastCommitted)
 		}
 	}
 }
@@ -598,29 +617,14 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 	if log == nil {
 		return offset, nil
 	}
-	file, err := os.Open(log.file.Name())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return offset, nil
-		}
-		return 0, err
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	info, err := file.Stat()
+	segments, err := listSegments(log.basePath)
 	if err != nil {
 		return 0, err
 	}
-	if offset >= info.Size() {
-		return info.Size(), nil
-	}
-	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		return 0, err
+	if len(segments) == 0 {
+		return offset, nil
 	}
 
-	reader := bufio.NewReaderSize(file, 1<<20)
 	pending := make(map[uint64][]logRecord)
 	lastOffset := offset
 	appliedOffset := offset
@@ -647,33 +651,59 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 		return storeTail(tailPath, appliedOffset)
 	}
 
-	for {
-		rec, size, err := readLogRecord(reader)
-		if err == io.EOF {
-			break
+	for _, seg := range segments {
+		segStart := seg.start
+		segEnd := seg.start + seg.size
+		if offset >= segEnd {
+			continue
 		}
+		file, err := os.Open(seg.path)
 		if err != nil {
-			break
+			return appliedOffset, err
 		}
-		lastOffset += int64(size)
-		switch rec.recordType {
-		case logRecordBegin:
-			if _, ok := pending[rec.txID]; !ok {
-				pending[rec.txID] = nil
+		seekOffset := int64(0)
+		if offset > segStart {
+			seekOffset = offset - segStart
+		}
+		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
+			_ = file.Close()
+			return appliedOffset, err
+		}
+		reader := bufio.NewReaderSize(file, 1<<20)
+		pos := segStart + seekOffset
+		for {
+			rec, size, err := readLogRecord(reader)
+			if err == io.EOF {
+				break
 			}
-		case logRecordData:
-			pending[rec.txID] = append(pending[rec.txID], rec)
-		case logRecordCommit:
-			if err := applyTx(rec.txID); err != nil {
-				return lastOffset, err
+			if err != nil {
+				_ = file.Close()
+				return appliedOffset, err
 			}
-		case logRecordAbort:
-			delete(pending, rec.txID)
-			appliedOffset = lastOffset
-			if err := storeTail(tailPath, appliedOffset); err != nil {
-				return lastOffset, err
+			pos += int64(size)
+			lastOffset = pos
+			switch rec.recordType {
+			case logRecordBegin:
+				if _, ok := pending[rec.txID]; !ok {
+					pending[rec.txID] = nil
+				}
+			case logRecordData:
+				pending[rec.txID] = append(pending[rec.txID], rec)
+			case logRecordCommit:
+				if err := applyTx(rec.txID); err != nil {
+					_ = file.Close()
+					return lastOffset, err
+				}
+			case logRecordAbort:
+				delete(pending, rec.txID)
+				appliedOffset = lastOffset
+				if err := storeTail(tailPath, appliedOffset); err != nil {
+					_ = file.Close()
+					return lastOffset, err
+				}
 			}
 		}
+		_ = file.Close()
 	}
 
 	if len(pending) == 0 {
