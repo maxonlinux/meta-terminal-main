@@ -33,8 +33,12 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 		return err
 	}
 
-	_ = e.store.Fill(match.MakerOrder.UserID, match.MakerOrder.ID, match.Quantity)
-	_ = e.store.Fill(match.TakerOrder.UserID, match.TakerOrder.ID, match.Quantity)
+	if err := e.store.Fill(match.MakerOrder.UserID, match.MakerOrder.ID, match.Quantity); err != nil {
+		return err
+	}
+	if err := e.store.Fill(match.TakerOrder.UserID, match.TakerOrder.ID, match.Quantity); err != nil {
+		return err
+	}
 	if book != nil {
 		book.ApplyFillUnsafe(match.MakerOrder.ID, match.Quantity)
 	}

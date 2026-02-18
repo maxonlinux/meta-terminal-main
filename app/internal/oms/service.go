@@ -270,6 +270,12 @@ func (s *Service) Amend(userID types.UserID, id types.OrderID, newQty types.Quan
 	if !ok {
 		return errors.New("order not found")
 	}
+	if newQty.Sign() <= 0 {
+		return errors.New("new quantity must be positive")
+	}
+	if math.Cmp(newQty, order.Filled) < 0 {
+		return errors.New("new quantity cannot be below filled")
+	}
 
 	oldRemaining := math.Sub(order.Quantity, order.Filled)
 
@@ -358,6 +364,13 @@ func (s *Service) Fill(userID types.UserID, id types.OrderID, qty types.Quantity
 	order, ok := s.getUserOrderLocked(userID, id)
 	if !ok {
 		return errors.New("order not found")
+	}
+	if qty.Sign() <= 0 {
+		return errors.New("fill qty must be positive")
+	}
+	remaining := math.Sub(order.Quantity, order.Filled)
+	if math.Cmp(qty, remaining) > 0 {
+		return errors.New("fill qty exceeds remaining")
 	}
 
 	if order.ReduceOnly {

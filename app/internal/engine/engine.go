@@ -581,7 +581,15 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	newRemaining := math.Sub(c.NewQty, order.Filled)
 	var reserveAsset string
 	var reserveDelta types.Quantity
+	remainDelta := math.Sub(newRemaining, oldRemaining)
+	var book *orderbook.OrderBook
 	if !order.IsConditional && order.Type == constants.ORDER_TYPE_LIMIT {
+		if math.Sign(c.NewPrice) > 0 || math.Sign(remainDelta) != 0 {
+			if b, err := e.getBook(order.Category, order.Symbol); err == nil {
+				book = b
+				_ = book.RemoveUnsafe(order.ID)
+			}
+		}
 		pos := e.portfolio.GetPosition(order.UserID, order.Symbol)
 		leverage := pos.Leverage
 		if math.Sign(leverage) <= 0 {
@@ -608,6 +616,9 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	}
 
 	if err := e.store.Amend(c.UserID, c.OrderID, c.NewQty, c.NewPrice); err != nil {
+		if book != nil {
+			book.AddUnsafe(order)
+		}
 		if math.Sign(reserveDelta) > 0 {
 			e.portfolio.Release(order.UserID, reserveAsset, reserveDelta)
 		}
@@ -624,9 +635,8 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		if math.Sign(reserveDelta) < 0 {
 			e.portfolio.Release(order.UserID, reserveAsset, types.Quantity(math.Neg(reserveDelta)))
 		}
-		if math.Sign(c.NewPrice) > 0 {
-			if book, err := e.getBook(order.Category, order.Symbol); err == nil {
-				_ = book.RemoveUnsafe(order.ID)
+		if book != nil {
+			if math.Sign(newRemaining) > 0 {
 				book.AddUnsafe(order)
 			}
 		}

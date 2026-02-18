@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -250,6 +251,10 @@ func (sh *bookState) Add(order *types.Order) {
 	if rem.Sign() <= 0 {
 		return
 	}
+	if nodeIdx, ok := sh.orders[order.ID]; ok {
+		logging.Log().Error().Int64("order", int64(order.ID)).Str("symbol", order.Symbol).Msg("orderbook: duplicate add")
+		sh.removeNode(nodeIdx)
+	}
 
 	lvlIdx, lvl := sh.ensureLevel(order)
 	lvl.total = lvl.total.Add(rem)
@@ -320,6 +325,14 @@ func (sh *bookState) removeNode(nodeIdx int32) {
 	rem := remaining(n.order)
 	if rem.Sign() > 0 {
 		lvl.total = lvl.total.Sub(rem)
+		if lvl.total.Sign() < 0 {
+			logging.Log().Error().
+				Int64("order", int64(n.order.ID)).
+				Str("price", lvl.price.String()).
+				Str("total", lvl.total.String()).
+				Str("remaining", rem.String()).
+				Msg("orderbook: negative total on remove")
+		}
 	}
 
 	prevIdx := n.prev
@@ -369,10 +382,21 @@ func (sh *bookState) applyFill(orderID types.OrderID, qty types.Quantity) {
 	}
 	n := sh.nodes[nodeIdx]
 	lvl := &sh.levels[n.level]
-	if qty.Sign() > 0 {
-		lvl.total = lvl.total.Sub(qty)
+	if qty.Sign() <= 0 {
+		return
 	}
-	if remaining(n.order).Sign() <= 0 {
+	lvl.total = lvl.total.Sub(qty)
+	rem := remaining(n.order)
+	if rem.Sign() < 0 || lvl.total.Sign() < 0 {
+		logging.Log().Error().
+			Int64("order", int64(orderID)).
+			Str("price", lvl.price.String()).
+			Str("total", lvl.total.String()).
+			Str("remaining", rem.String()).
+			Str("qty", qty.String()).
+			Msg("orderbook: negative totals")
+	}
+	if rem.Sign() <= 0 {
 		sh.removeNode(nodeIdx)
 	}
 }
@@ -405,6 +429,37 @@ func (ob *OrderBook) ApplyFillUnsafe(orderID types.OrderID, qty types.Quantity) 
 		return
 	}
 	ob.state.applyFill(orderID, qty)
+}
+
+func (sh *bookState) amendRemaining(orderID types.OrderID, delta types.Quantity) {
+	if delta.Sign() == 0 {
+		return
+	}
+	nodeIdx, ok := sh.orders[orderID]
+	if !ok {
+		return
+	}
+	n := sh.nodes[nodeIdx]
+	lvl := &sh.levels[n.level]
+	lvl.total = lvl.total.Add(delta)
+	if remaining(n.order).Sign() <= 0 {
+		sh.removeNode(nodeIdx)
+	}
+}
+
+func (ob *OrderBook) AmendRemaining(orderID types.OrderID, delta types.Quantity) {
+	sh := ob.state
+	sh.lock()
+	defer sh.unlock()
+	sh.amendRemaining(orderID, delta)
+}
+
+// AmendRemainingUnsafe assumes external synchronization.
+func (ob *OrderBook) AmendRemainingUnsafe(orderID types.OrderID, delta types.Quantity) {
+	if ob == nil || ob.state == nil {
+		return
+	}
+	ob.state.amendRemaining(orderID, delta)
 }
 
 func (sh *bookState) getMatches(taker *types.Order, limitPrice types.Price, matches []types.Match) []types.Match {
