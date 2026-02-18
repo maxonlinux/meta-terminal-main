@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
-	"github.com/robaho/fixed"
 )
 
 func FromSymbol(symbol string, lastPrice types.Price, assetType string) *types.Instrument {
@@ -13,18 +12,16 @@ func FromSymbol(symbol string, lastPrice types.Price, assetType string) *types.I
 	band := GetPriceBand(lastPrice)
 
 	return &types.Instrument{
-		Symbol:     symbol,
-		BaseAsset:  base,
-		QuoteAsset: quote,
-		AssetType:  assetType,
-		PricePrec:  band.PricePrecision,
-		QtyPrec:    band.QuantityPrecision,
-		MinQty:     band.MinQty,
-		MaxQty:     types.Quantity(fixed.NewI(999999999, 0)),
-		MinPrice:   types.Price(fixed.NewI(0, 0)),
-		MaxPrice:   types.Price(fixed.NewI(999999999, 0)),
-		TickSize:   band.TickSize,
-		LotSize:    band.StepSize,
+		Symbol:      symbol,
+		BaseAsset:   base,
+		QuoteAsset:  quote,
+		AssetType:   assetType,
+		PricePrec:   band.PricePrecision,
+		QtyPrec:     band.QuantityPrecision,
+		MinQty:      band.MinQty,
+		MinNotional: band.MinNotional,
+		TickSize:    band.TickSize,
+		StepSize:    band.StepSize,
 	}
 }
 

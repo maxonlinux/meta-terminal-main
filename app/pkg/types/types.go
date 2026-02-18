@@ -25,18 +25,16 @@ type Match struct {
 
 // Instrument represents a trading pair with its parameters.
 type Instrument struct {
-	Symbol     string
-	BaseAsset  string
-	QuoteAsset string
-	AssetType  string
-	PricePrec  int8
-	QtyPrec    int8
-	MinQty     Quantity
-	MaxQty     Quantity
-	MinPrice   Price
-	MaxPrice   Price
-	TickSize   Price
-	LotSize    Quantity
+	Symbol      string
+	BaseAsset   string
+	QuoteAsset  string
+	AssetType   string
+	PricePrec   int8
+	QtyPrec     int8
+	MinQty      Quantity
+	MinNotional Quantity
+	TickSize    Price
+	StepSize    Quantity
 }
 
 // Risk

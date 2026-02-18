@@ -353,14 +353,11 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	}
 
 	if inst := e.registry.GetInstrument(req.Symbol); inst != nil {
-		if math.Cmp(req.Price, inst.MinPrice) < 0 || math.Cmp(req.Price, inst.MaxPrice) > 0 {
-			return CommandResult{Err: constants.ErrPriceOutOfBounds}
-		}
-		if math.Cmp(req.Quantity, inst.MinQty) < 0 || math.Cmp(req.Quantity, inst.MaxQty) > 0 {
+		if math.Cmp(req.Quantity, inst.MinQty) < 0 {
 			return CommandResult{Err: constants.ErrQtyOutOfBounds}
 		}
 		req.Price = types.Price(math.RoundTo(req.Price, inst.TickSize))
-		req.Quantity = types.Quantity(math.RoundTo(req.Quantity, inst.LotSize))
+		req.Quantity = types.Quantity(math.RoundTo(req.Quantity, inst.StepSize))
 	} else if e.registry != nil {
 		return CommandResult{Err: constants.ErrInstrumentNotFound}
 	}

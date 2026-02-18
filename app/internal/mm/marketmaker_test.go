@@ -18,11 +18,8 @@ func TestMarketMakerAmendKeepsOrderIDs(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 		MinQty:     types.Quantity(fixed.NewI(1, 0)),
-		MaxQty:     types.Quantity(fixed.NewI(1000000, 0)),
-		MinPrice:   types.Price(fixed.NewI(1, 0)),
-		MaxPrice:   types.Price(fixed.NewI(1000000, 0)),
 		TickSize:   types.Price(fixed.NewI(1, 0)),
-		LotSize:    types.Quantity(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
 
 	eng, err := engine.NewEngine(nil, reg, nil)
@@ -72,22 +69,16 @@ func TestMarketMakerPlacesAllMarkets(t *testing.T) {
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 		MinQty:     types.Quantity(fixed.NewI(1, 0)),
-		MaxQty:     types.Quantity(fixed.NewI(1000000, 0)),
-		MinPrice:   types.Price(fixed.NewI(1, 0)),
-		MaxPrice:   types.Price(fixed.NewI(1000000, 0)),
 		TickSize:   types.Price(fixed.NewI(1, 0)),
-		LotSize:    types.Quantity(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
 	reg.SetInstrument("ETHUSDT", &types.Instrument{
 		Symbol:     "ETHUSDT",
 		BaseAsset:  "ETH",
 		QuoteAsset: "USDT",
 		MinQty:     types.Quantity(fixed.NewI(1, 0)),
-		MaxQty:     types.Quantity(fixed.NewI(1000000, 0)),
-		MinPrice:   types.Price(fixed.NewI(1, 0)),
-		MaxPrice:   types.Price(fixed.NewI(1000000, 0)),
 		TickSize:   types.Price(fixed.NewI(1, 0)),
-		LotSize:    types.Quantity(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
 
 	eng, err := engine.NewEngine(nil, reg, nil)

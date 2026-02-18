@@ -35,11 +35,8 @@ func main() {
 			BaseAsset:  fmt.Sprintf("ASSET%03d", i),
 			QuoteAsset: "USDT",
 			MinQty:     types.Quantity(fixed.NewI(1, 0)),
-			MaxQty:     types.Quantity(fixed.NewI(1000000, 0)),
-			MinPrice:   types.Price(fixed.NewI(1, 0)),
-			MaxPrice:   types.Price(fixed.NewI(1000000, 0)),
 			TickSize:   types.Price(fixed.NewI(1, 0)),
-			LotSize:    types.Quantity(fixed.NewI(1, 0)),
+			StepSize:   types.Quantity(fixed.NewI(1, 0)),
 		})
 		reg.SetPrice(symbol, registry.PriceTick{Price: types.Price(fixed.NewI(int64(100+i), 0))})
 	}
@@ -54,7 +51,11 @@ func main() {
 		BatchSize:  1000,
 		FlushEvery: 100 * time.Millisecond,
 	})
-	defer batchSink.Stop()
+	defer func() {
+		if err := batchSink.Stop(); err != nil {
+			panic(err)
+		}
+	}()
 
 	ob, err := outbox.OpenWithOptions(workdir, outbox.Options{EventSink: batchSink, SegmentSize: 16 << 20})
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -164,11 +165,8 @@ func (m *MarketMaker) refreshSymbol(symbol string, price types.Price) {
 
 func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price types.Price) {
 	key := marketKey{symbol: inst.Symbol, category: category}
-	existing := m.orders[key]
-	if existing == nil {
-		existing = make(map[string]types.OrderID)
-		m.orders[key] = existing
-	}
+	existing, stale := m.rebuildExisting(inst, category, price)
+	m.orders[key] = make(map[string]types.OrderID, len(existing))
 
 	desired := make(map[string]types.PlaceOrderRequest, m.cfg.Levels*2)
 	var bestBuy types.Price
@@ -216,29 +214,42 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		desired = filtered
 	}
 
-	// Cancel stale or randomly replaced orders
-	for level, orderID := range existing {
-		if _, ok := desired[level]; !ok || m.val.Float64() < m.cfg.CancelPercent {
-			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: orderID})
-			delete(existing, level)
+	// Cancel stale orders first
+	for _, order := range stale {
+		if order == nil {
+			continue
 		}
+		_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: order.ID})
+	}
+
+	// Cancel stale or randomly replaced orders
+	for level, order := range existing {
+		if order == nil {
+			continue
+		}
+		if _, ok := desired[level]; !ok || m.val.Float64() < m.cfg.CancelPercent {
+			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: order.ID})
+			delete(existing, level)
+			continue
+		}
+		m.orders[key][level] = order.ID
 	}
 
 	// Amend existing orders first to avoid self-matching on new placements.
 	for level, req := range desired {
-		orderID, ok := existing[level]
+		order, ok := existing[level]
 		if !ok {
 			continue
 		}
 		if m.wouldSelfMatch(&req) {
-			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: orderID})
+			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: order.ID})
 			delete(existing, level)
 			continue
 		}
 		m.ensureBalanceForOrder(inst, &req)
 		res := m.eng.Cmd(&engine.AmendOrderCmd{
 			UserID:   m.cfg.BotUserID,
-			OrderID:  orderID,
+			OrderID:  order.ID,
 			NewQty:   req.Quantity,
 			NewPrice: req.Price,
 		})
@@ -266,8 +277,82 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 			}
 			continue
 		}
-		existing[level] = res.Order.ID
+		existing[level] = res.Order
+		m.orders[key][level] = res.Order.ID
 	}
+}
+
+func (m *MarketMaker) rebuildExisting(inst *types.Instrument, category int8, mark types.Price) (map[string]*types.Order, []*types.Order) {
+	store := m.eng.Store()
+	if store == nil {
+		return make(map[string]*types.Order), nil
+	}
+	orders := store.GetUserOrders(m.cfg.BotUserID)
+	if len(orders) == 0 {
+		return make(map[string]*types.Order), nil
+	}
+	result := make(map[string]*types.Order)
+	stale := make([]*types.Order, 0)
+	for _, order := range orders {
+		if order == nil {
+			continue
+		}
+		if order.Symbol != inst.Symbol || order.Category != category {
+			continue
+		}
+		if order.Origin != constants.ORDER_ORIGIN_SYSTEM {
+			continue
+		}
+		switch order.Status {
+		case constants.ORDER_STATUS_NEW, constants.ORDER_STATUS_PARTIALLY_FILLED:
+		default:
+			continue
+		}
+		level, ok := m.orderLevel(inst, mark, order.Price, order.Side)
+		if !ok {
+			stale = append(stale, order)
+			continue
+		}
+		key := levelKey(order.Side, level)
+		if prev, ok := result[key]; ok {
+			if order.UpdatedAt > prev.UpdatedAt {
+				stale = append(stale, prev)
+				result[key] = order
+			} else {
+				stale = append(stale, order)
+			}
+			continue
+		}
+		result[key] = order
+	}
+	return result, stale
+}
+
+func (m *MarketMaker) orderLevel(inst *types.Instrument, mark types.Price, price types.Price, side int8) (int, bool) {
+	if inst == nil || math.Sign(inst.TickSize) <= 0 {
+		return 0, false
+	}
+	cmp := math.Cmp(price, mark)
+	if side == constants.ORDER_SIDE_BUY && cmp >= 0 {
+		return 0, false
+	}
+	if side == constants.ORDER_SIDE_SELL && cmp <= 0 {
+		return 0, false
+	}
+	diff := math.AbsFixed(math.Sub(price, mark))
+	if math.Sign(diff) <= 0 {
+		return 0, false
+	}
+	levels := math.Div(diff, inst.TickSize)
+	if math.Sign(levels) <= 0 {
+		return 0, false
+	}
+	levelStr := levels.Round(0).String()
+	level, err := strconv.Atoi(levelStr)
+	if err != nil || level <= 0 || level > m.cfg.Levels {
+		return 0, false
+	}
+	return level, true
 }
 
 func (m *MarketMaker) wouldSelfMatch(req *types.PlaceOrderRequest) bool {
@@ -318,12 +403,9 @@ func (m *MarketMaker) buildOrder(inst *types.Instrument, category int8, side int
 	}
 
 	qty := types.Quantity(math.Div(types.Quantity(fixed.NewI(notional, 0)), price))
-	qty = types.Quantity(math.RoundTo(qty, inst.LotSize))
+	qty = types.Quantity(math.RoundTo(qty, inst.StepSize))
 	if math.Cmp(qty, inst.MinQty) < 0 {
 		qty = inst.MinQty
-	}
-	if math.Cmp(qty, inst.MaxQty) > 0 {
-		qty = inst.MaxQty
 	}
 	if math.Sign(qty) <= 0 {
 		return nil

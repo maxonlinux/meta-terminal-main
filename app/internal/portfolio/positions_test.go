@@ -43,7 +43,9 @@ func TestUpdatePositionReduceRealizedPnL(t *testing.T) {
 		MakerOrder: order,
 	}
 
-	svc.updatePosition(userID, match, order)
+	if err := svc.updatePosition(userID, match, order); err != nil {
+		t.Fatalf("updatePosition: %v", err)
+	}
 
 	if math.Cmp(pos.Size, qty(6)) != 0 {
 		t.Fatalf("expected size 6, got %s", pos.Size.String())
@@ -89,7 +91,9 @@ func TestUpdatePositionFlipResetsEntry(t *testing.T) {
 		MakerOrder: order,
 	}
 
-	svc.updatePosition(userID, match, order)
+	if err := svc.updatePosition(userID, match, order); err != nil {
+		t.Fatalf("updatePosition: %v", err)
+	}
 
 	if math.Cmp(pos.Size, qty(-5)) != 0 {
 		t.Fatalf("expected size -5, got %s", pos.Size.String())

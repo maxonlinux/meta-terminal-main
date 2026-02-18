@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,7 +48,7 @@ func (s *Service) sendEmail(email, code string) error {
 	)
 
 	msg := buildMultipartEmail(from, email, subject, text, html)
-	addr := fmt.Sprintf("%s:%d", s.cfg.SmtpHost, s.cfg.SmtpPort)
+	addr := net.JoinHostPort(s.cfg.SmtpHost, strconv.Itoa(s.cfg.SmtpPort))
 
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {

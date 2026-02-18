@@ -225,11 +225,8 @@ func newEngineWithInstrument(t *testing.T, symbol string) (*Engine, *registry.Re
 		BaseAsset:  "BTC",
 		QuoteAsset: "USDT",
 		MinQty:     types.Quantity(fixed.NewI(1, 0)),
-		MaxQty:     types.Quantity(fixed.NewI(1000000, 0)),
-		MinPrice:   types.Price(fixed.NewI(1, 0)),
-		MaxPrice:   types.Price(fixed.NewI(1000000, 0)),
 		TickSize:   types.Price(fixed.NewI(1, 0)),
-		LotSize:    types.Quantity(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
 	eng, err := NewEngine(nil, reg, nil)
 	if err != nil {

@@ -19,17 +19,16 @@ func NewMarketHandler(eng *engine.Engine) *MarketHandler {
 }
 
 type InstrumentResponse struct {
-	Symbol     string `json:"symbol"`
-	BaseAsset  string `json:"baseAsset"`
-	QuoteAsset string `json:"quoteAsset"`
-	PricePrec  int8   `json:"pricePrec"`
-	QtyPrec    int8   `json:"qtyPrec"`
-	MinQty     string `json:"minQty"`
-	MaxQty     string `json:"maxQty"`
-	MinPrice   string `json:"minPrice"`
-	MaxPrice   string `json:"maxPrice"`
-	TickSize   string `json:"tickSize"`
-	LotSize    string `json:"lotSize"`
+	Symbol            string `json:"symbol"`
+	Base              string `json:"base"`
+	Quote             string `json:"quote"`
+	AssetType         string `json:"assetType"`
+	PricePrecision    int8   `json:"pricePrecision"`
+	QuantityPrecision int8   `json:"quantityPrecision"`
+	TickSize          string `json:"tickSize"`
+	StepSize          string `json:"stepSize"`
+	MinQty            string `json:"minQty"`
+	MinNotional       string `json:"minNotional"`
 }
 
 func (h *MarketHandler) Instruments(c *echo.Context) error {
@@ -49,17 +48,16 @@ func (h *MarketHandler) Instruments(c *echo.Context) error {
 	resp := make([]InstrumentResponse, len(instruments))
 	for i, inst := range instruments {
 		resp[i] = InstrumentResponse{
-			Symbol:     inst.Symbol,
-			BaseAsset:  inst.BaseAsset,
-			QuoteAsset: inst.QuoteAsset,
-			PricePrec:  inst.PricePrec,
-			QtyPrec:    inst.QtyPrec,
-			MinQty:     inst.MinQty.String(),
-			MaxQty:     inst.MaxQty.String(),
-			MinPrice:   inst.MinPrice.String(),
-			MaxPrice:   inst.MaxPrice.String(),
-			TickSize:   inst.TickSize.String(),
-			LotSize:    inst.LotSize.String(),
+			Symbol:            inst.Symbol,
+			Base:              inst.BaseAsset,
+			Quote:             inst.QuoteAsset,
+			AssetType:         inst.AssetType,
+			PricePrecision:    inst.PricePrec,
+			QuantityPrecision: inst.QtyPrec,
+			TickSize:          inst.TickSize.String(),
+			StepSize:          inst.StepSize.String(),
+			MinQty:            inst.MinQty.String(),
+			MinNotional:       inst.MinNotional.String(),
 		}
 	}
 
