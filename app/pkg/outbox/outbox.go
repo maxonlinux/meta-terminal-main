@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
+	"github.com/maxonlinux/meta-terminal-go/pkg/logging"
 )
 
 const (
@@ -531,6 +532,7 @@ func (w *worker) run() {
 			}
 			if len(eventsBatch) > 0 {
 				if err := w.sink.Apply(eventsBatch); err != nil {
+					logging.Log().Error().Err(err).Uint64("tx_id", txID).Int("events", len(eventsBatch)).Msg("outbox: sink apply failed")
 					return err
 				}
 			}
@@ -550,6 +552,7 @@ func (w *worker) run() {
 			}
 			if cutoff > 0 {
 				if _, err := w.log.CompactApplied(cutoff); err != nil {
+					logging.Log().Error().Err(err).Int64("cutoff", cutoff).Msg("outbox: compact failed")
 					return err
 				}
 			}
@@ -576,6 +579,7 @@ func (w *worker) run() {
 			}
 		case logRecordCommit:
 			if err := applyTx(rec.txID, rec.endOffset); err != nil {
+				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Int64("end_offset", rec.endOffset).Msg("outbox: apply tx failed, worker stopped")
 				return
 			}
 		case logRecordAbort:

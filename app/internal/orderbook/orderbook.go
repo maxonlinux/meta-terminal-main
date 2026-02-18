@@ -113,6 +113,9 @@ func (sh *bookState) allocNode() int32 {
 		idx := sh.nodeFree
 		sh.nodeFree = sh.nodes[idx].next
 		sh.nodes[idx].prev = -1
+		sh.nodes[idx].next = -1
+		sh.nodes[idx].order = nil
+		sh.nodes[idx].level = -1
 		return idx
 	}
 	idx := int32(len(sh.nodes))
@@ -121,6 +124,9 @@ func (sh *bookState) allocNode() int32 {
 }
 
 func (sh *bookState) freeNode(idx int32) {
+	sh.nodes[idx].order = nil
+	sh.nodes[idx].level = -1
+	sh.nodes[idx].prev = -1
 	sh.nodes[idx].next = sh.nodeFree
 	sh.nodeFree = idx
 }
@@ -256,12 +262,15 @@ func (sh *bookState) Add(order *types.Order) {
 	if lvl.tail == -1 {
 		lvl.head = nodeIdx
 		lvl.tail = nodeIdx
+		sh.nodes[nodeIdx].prev = -1
+		sh.nodes[nodeIdx].next = -1
 		return
 	}
 	prevIdx := lvl.tail
 	lvl.tail = nodeIdx
 	sh.nodes[prevIdx].next = nodeIdx
 	sh.nodes[nodeIdx].prev = prevIdx
+	sh.nodes[nodeIdx].next = -1
 }
 
 // ensureLevel returns the price level for this order, creating and linking if needed.

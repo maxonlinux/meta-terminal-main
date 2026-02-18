@@ -378,18 +378,32 @@ func (m *MarketMaker) ensureBalanceForOrder(inst *types.Instrument, req *types.P
 
 func (m *MarketMaker) ensureBalance(userID types.UserID, asset string, minBalance types.Quantity) {
 	bal := m.eng.Portfolio().GetBalance(userID, asset)
-	if bal == nil {
-		m.eng.Portfolio().LoadBalance(&types.Balance{UserID: userID, Asset: asset, Available: minBalance})
+	current := math.Zero
+	if bal != nil {
+		current = bal.Available
+	}
+	if math.Cmp(current, minBalance) >= 0 {
 		return
 	}
-	if math.Cmp(bal.Available, minBalance) < 0 {
-		m.eng.Portfolio().LoadBalance(&types.Balance{
-			UserID:    userID,
-			Asset:     asset,
-			Available: minBalance,
-			Locked:    bal.Locked,
-			Margin:    bal.Margin,
-		})
+	delta := math.Sub(minBalance, current)
+	if math.Sign(delta) <= 0 {
+		return
+	}
+	res := m.eng.Cmd(&engine.CreateDepositCmd{
+		UserID:      userID,
+		Asset:       asset,
+		Amount:      delta,
+		Destination: "market-maker",
+		CreatedBy:   types.FundingCreatedByPlatform,
+		Message:     "mm seed balance",
+	})
+	if res.Err != nil || res.Funding == nil {
+		logging.Log().Error().Err(res.Err).Str("asset", asset).Msg("mm: failed to create deposit")
+		return
+	}
+	approve := m.eng.Cmd(&engine.ApproveFundingCmd{FundingID: res.Funding.ID})
+	if approve.Err != nil {
+		logging.Log().Error().Err(approve.Err).Str("asset", asset).Msg("mm: failed to approve deposit")
 	}
 }
 
