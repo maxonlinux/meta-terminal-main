@@ -11,6 +11,13 @@ type BalancesHandler struct {
 	engine *engine.Engine
 }
 
+type BalanceResponse struct {
+	Asset     string `json:"asset"`
+	Available string `json:"available"`
+	Locked    string `json:"locked"`
+	Margin    string `json:"margin"`
+}
+
 func NewBalancesHandler(eng *engine.Engine) *BalancesHandler {
 	return &BalancesHandler{engine: eng}
 }
@@ -23,13 +30,13 @@ func (h *BalancesHandler) List(c *echo.Context) error {
 
 	balances := h.engine.Portfolio().GetBalances(claims.UserID)
 
-	resp := make([]map[string]interface{}, len(balances))
+	resp := make([]BalanceResponse, len(balances))
 	for i, b := range balances {
-		resp[i] = map[string]interface{}{
-			"asset":     b.Asset,
-			"available": b.Available.String(),
-			"locked":    b.Locked.String(),
-			"margin":    b.Margin.String(),
+		resp[i] = BalanceResponse{
+			Asset:     b.Asset,
+			Available: b.Available.String(),
+			Locked:    b.Locked.String(),
+			Margin:    b.Margin.String(),
 		}
 	}
 

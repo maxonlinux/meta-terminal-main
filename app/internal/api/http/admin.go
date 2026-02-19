@@ -546,12 +546,11 @@ func (h *AdminHandler) GetUserPlan(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load plan"})
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"current": planNameOrNil(progress.Current),
-		"next":    planNameOrNil(progress.Next),
-		// Serialize fixed-point values as strings to preserve precision.
-		"remaining":   progress.Remaining.String(),
-		"netDeposits": progress.NetDeposits.String(),
+	return c.JSON(http.StatusOK, UserPlanResponse{
+		Current:     planNameOrNil(progress.Current),
+		Next:        planNameOrNil(progress.Next),
+		Remaining:   progress.Remaining.String(),
+		NetDeposits: progress.NetDeposits.String(),
 	})
 }
 

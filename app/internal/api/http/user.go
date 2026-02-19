@@ -23,6 +23,42 @@ type UserHandler struct {
 	wallets *wallets.Service
 }
 
+type UserProfileResponse struct {
+	ID       uint64  `json:"id"`
+	Email    string  `json:"email"`
+	Username string  `json:"username"`
+	Phone    string  `json:"phone"`
+	Name     *string `json:"name"`
+	Surname  *string `json:"surname"`
+	IsActive bool    `json:"isActive"`
+}
+
+type UserSettingsResponse struct {
+	ID                      uint64 `json:"id"`
+	UserID                  uint64 `json:"userId"`
+	Is2FAEnabled            bool   `json:"is2FAEnabled"`
+	NewsAndOffers           bool   `json:"newsAndOffers"`
+	AccessToTransactionData bool   `json:"accessToTransactionData"`
+	AccessToGeolocation     bool   `json:"accessToGeolocation"`
+	Preferences             string `json:"preferences"`
+}
+
+type UserAddressResponse struct {
+	ID      uint64  `json:"id"`
+	UserID  uint64  `json:"userId"`
+	Country *string `json:"country"`
+	City    *string `json:"city"`
+	Address *string `json:"address"`
+	Zip     *string `json:"zip"`
+}
+
+type UserPlanResponse struct {
+	Current     interface{} `json:"current"`
+	Next        interface{} `json:"next"`
+	Remaining   string      `json:"remaining"`
+	NetDeposits string      `json:"netDeposits"`
+}
+
 func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service, walletService *wallets.Service) *UserHandler {
 	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService, wallets: walletService}
 }
@@ -36,14 +72,14 @@ func (h *UserHandler) Profile(c *echo.Context) error {
 	if err != nil || profile == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "profile not found"})
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"id":       uint64(profile.UserID),
-		"email":    profile.Email,
-		"username": profile.Username,
-		"phone":    profile.Phone,
-		"name":     profile.Name,
-		"surname":  profile.Surname,
-		"isActive": profile.IsActive,
+	return c.JSON(http.StatusOK, UserProfileResponse{
+		ID:       uint64(profile.UserID),
+		Email:    profile.Email,
+		Username: profile.Username,
+		Phone:    profile.Phone,
+		Name:     profile.Name,
+		Surname:  profile.Surname,
+		IsActive: profile.IsActive,
 	})
 }
 
@@ -76,14 +112,14 @@ func (h *UserHandler) Settings(c *echo.Context) error {
 	if err != nil || settings == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "settings not found"})
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"id":                      uint64(settings.UserID),
-		"userId":                  uint64(settings.UserID),
-		"is2FAEnabled":            settings.Is2FAEnabled,
-		"newsAndOffers":           settings.NewsAndOffers,
-		"accessToTransactionData": settings.AccessToTransactionData,
-		"accessToGeolocation":     settings.AccessToGeolocation,
-		"preferences":             settings.Preferences,
+	return c.JSON(http.StatusOK, UserSettingsResponse{
+		ID:                      uint64(settings.UserID),
+		UserID:                  uint64(settings.UserID),
+		Is2FAEnabled:            settings.Is2FAEnabled,
+		NewsAndOffers:           settings.NewsAndOffers,
+		AccessToTransactionData: settings.AccessToTransactionData,
+		AccessToGeolocation:     settings.AccessToGeolocation,
+		Preferences:             settings.Preferences,
 	})
 }
 
@@ -138,13 +174,13 @@ func (h *UserHandler) Address(c *echo.Context) error {
 	if err != nil || addr == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "address not found"})
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"id":      uint64(addr.UserID),
-		"userId":  uint64(addr.UserID),
-		"country": addr.Country,
-		"city":    addr.City,
-		"address": addr.Address,
-		"zip":     addr.Zip,
+	return c.JSON(http.StatusOK, UserAddressResponse{
+		ID:      uint64(addr.UserID),
+		UserID:  uint64(addr.UserID),
+		Country: addr.Country,
+		City:    addr.City,
+		Address: addr.Address,
+		Zip:     addr.Zip,
 	})
 }
 
@@ -220,11 +256,11 @@ func (h *UserHandler) Plan(c *echo.Context) error {
 	current := planNameOrNil(progress.Current)
 	next := planNameOrNil(progress.Next)
 	// Serialize fixed-point values as strings to preserve precision.
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"current":     current,
-		"next":        next,
-		"remaining":   progress.Remaining.String(),
-		"netDeposits": progress.NetDeposits.String(),
+	return c.JSON(http.StatusOK, UserPlanResponse{
+		Current:     current,
+		Next:        next,
+		Remaining:   progress.Remaining.String(),
+		NetDeposits: progress.NetDeposits.String(),
 	})
 }
 
@@ -241,12 +277,13 @@ func (h *UserHandler) Balances(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 	balances := h.eng.Portfolio().GetBalances(claims.UserID)
-	resp := make([]map[string]interface{}, 0, len(balances))
+	resp := make([]BalanceResponse, 0, len(balances))
 	for _, b := range balances {
-		resp = append(resp, map[string]interface{}{
-			"currency": b.Asset,
-			"free":     b.Available.String(),
-			"locked":   b.Locked.String(),
+		resp = append(resp, BalanceResponse{
+			Asset:     b.Asset,
+			Available: b.Available.String(),
+			Locked:    b.Locked.String(),
+			Margin:    b.Margin.String(),
 		})
 	}
 	return c.JSON(http.StatusOK, resp)

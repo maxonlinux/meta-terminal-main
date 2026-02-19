@@ -11,6 +11,16 @@ type ProfileHandler struct {
 	service *users.Service
 }
 
+type ProfileResponse struct {
+	ID       uint64  `json:"id"`
+	Email    string  `json:"email"`
+	Username string  `json:"username"`
+	Phone    string  `json:"phone"`
+	Name     *string `json:"name"`
+	Surname  *string `json:"surname"`
+	IsActive bool    `json:"isActive"`
+}
+
 func NewProfileHandler(service *users.Service) *ProfileHandler {
 	return &ProfileHandler{service: service}
 }
@@ -26,13 +36,13 @@ func (h *ProfileHandler) Get(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"id":       uint64(profile.UserID),
-		"email":    profile.Email,
-		"username": profile.Username,
-		"phone":    profile.Phone,
-		"name":     profile.Name,
-		"surname":  profile.Surname,
-		"isActive": profile.IsActive,
+	return c.JSON(http.StatusOK, ProfileResponse{
+		ID:       uint64(profile.UserID),
+		Email:    profile.Email,
+		Username: profile.Username,
+		Phone:    profile.Phone,
+		Name:     profile.Name,
+		Surname:  profile.Surname,
+		IsActive: profile.IsActive,
 	})
 }
