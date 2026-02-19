@@ -38,7 +38,7 @@ func (h *PositionsHandler) List(c *echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"positions": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 type SetLeverageRequest struct {

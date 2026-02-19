@@ -59,7 +59,7 @@ func (h *HistoryHandler) Orders(c *echo.Context) error {
 		resp = append(resp, shared.OrderResponseFromRecord(order))
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"orders": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (h *HistoryHandler) Fills(c *echo.Context) error {
@@ -101,7 +101,7 @@ func (h *HistoryHandler) Fills(c *echo.Context) error {
 		resp = append(resp, shared.FillResponseFromRecord(fill))
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"fills": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 type PnLResponse struct {
@@ -163,9 +163,9 @@ func (h *HistoryHandler) PnL(c *echo.Context) error {
 			Price:     item.Price,
 			Quantity:  item.Quantity,
 			Realized:  item.Realized,
-			CreatedAt: item.CreatedAt,
+			CreatedAt: shared.UnixMilliFromNano(item.CreatedAt),
 		})
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"pnl": resp})
+	return c.JSON(http.StatusOK, resp)
 }

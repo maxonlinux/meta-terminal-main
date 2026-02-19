@@ -61,7 +61,7 @@ func (h *MarketHandler) Instruments(c *echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"instruments": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 type BookLevel struct {
@@ -147,7 +147,7 @@ func (h *MarketHandler) Trades(c *echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"trades": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 func snapshotBook(book *orderbook.OrderBook, depth int) orderbook.Snapshot {

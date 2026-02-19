@@ -33,5 +33,5 @@ func (h *BalancesHandler) List(c *echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"balances": resp})
+	return c.JSON(http.StatusOK, resp)
 }

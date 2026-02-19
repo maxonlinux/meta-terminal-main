@@ -45,8 +45,8 @@ func OrderResponseFromOrder(o *types.Order) OrderResponse {
 		ReduceOnly:     o.ReduceOnly,
 		CloseOnTrigger: o.CloseOnTrigger,
 		IsConditional:  o.IsConditional,
-		CreatedAt:      o.CreatedAt,
-		UpdatedAt:      o.UpdatedAt,
+		CreatedAt:      UnixMilliFromNano(o.CreatedAt),
+		UpdatedAt:      UnixMilliFromNano(o.UpdatedAt),
 	}
 	if o.Type == constants.ORDER_TYPE_MARKET {
 		resp.Price = ""
@@ -83,8 +83,8 @@ func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 		ReduceOnly:     order.ReduceOnly,
 		CloseOnTrigger: order.CloseOnTrigger,
 		IsConditional:  order.IsConditional,
-		CreatedAt:      order.CreatedAt,
-		UpdatedAt:      order.UpdatedAt,
+		CreatedAt:      UnixMilliFromNano(order.CreatedAt),
+		UpdatedAt:      UnixMilliFromNano(order.UpdatedAt),
 	}
 	if order.Type == constants.ORDER_TYPE_MARKET {
 		resp.Price = ""
@@ -124,7 +124,7 @@ func FillResponseFromRecord(fill persistence.FillRecord) FillResponse {
 		Role:                fill.Role,
 		Price:               fill.Price,
 		Qty:                 fill.Qty,
-		Timestamp:           fill.Timestamp,
+		Timestamp:           UnixMilliFromNano(fill.Timestamp),
 		OrderType:           OrderTypeToString(fill.OrderType),
 	}
 }

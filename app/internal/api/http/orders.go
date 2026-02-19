@@ -158,7 +158,7 @@ func (h *OrdersHandler) List(c *echo.Context) error {
 		resp[i] = shared.OrderResponseFromOrder(o)
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"orders": resp})
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (h *OrdersHandler) Get(c *echo.Context) error {

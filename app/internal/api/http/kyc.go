@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
@@ -340,8 +341,8 @@ func toKYCResponse(rec *kyc.RequestRecord, files []kyc.FileRecord) KYCResponse {
 		Country:      rec.Country,
 		Status:       rec.Status,
 		RejectReason: rec.RejectReason,
-		CreatedAt:    rec.CreatedAt,
-		UpdatedAt:    rec.UpdatedAt,
+		CreatedAt:    shared.UnixMilliFromNano(rec.CreatedAt),
+		UpdatedAt:    shared.UnixMilliFromNano(rec.UpdatedAt),
 		Files:        make([]KYCFileResponse, 0, len(files)),
 	}
 	for _, file := range files {

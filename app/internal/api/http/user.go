@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
@@ -256,18 +257,22 @@ func (h *UserHandler) Balance(c *echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
-	currency := c.QueryParam("currency")
-	if currency == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency is required"})
+	asset := c.QueryParam("asset")
+	if asset == "" {
+		asset = c.QueryParam("currency")
 	}
-	balance := h.eng.Portfolio().GetBalance(claims.UserID, currency)
+	if asset == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "asset is required"})
+	}
+	balance := h.eng.Portfolio().GetBalance(claims.UserID, asset)
 	if balance == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "balance not found"})
 	}
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"currency": balance.Asset,
-		"free":     balance.Available.String(),
-		"locked":   balance.Locked.String(),
+		"asset":     balance.Asset,
+		"available": balance.Available.String(),
+		"locked":    balance.Locked.String(),
+		"margin":    balance.Margin.String(),
 	})
 }
 
@@ -311,8 +316,8 @@ func (h *UserHandler) FundingList(c *echo.Context) error {
 			"destination": item.Destination,
 			"createdBy":   item.CreatedBy,
 			"message":     item.Message,
-			"createdAt":   item.CreatedAt,
-			"updatedAt":   item.UpdatedAt,
+			"createdAt":   shared.UnixMilliFromNano(item.CreatedAt),
+			"updatedAt":   shared.UnixMilliFromNano(item.UpdatedAt),
 		})
 	}
 	return c.JSON(http.StatusOK, resp)
