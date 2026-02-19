@@ -101,6 +101,10 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if math.Sign(newSize) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
 		pos.Leverage = types.Leverage(math.Zero)
+		pos.TakeProfit = types.Price{}
+		pos.StopLoss = types.Price{}
+		pos.TPOrderID = 0
+		pos.SLOrderID = 0
 	} else if math.Sign(prevSize) != math.Sign(newSize) {
 		// Reset entry price when flipping direction.
 		pos.EntryPrice = match.Price

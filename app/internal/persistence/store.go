@@ -165,11 +165,6 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := refreshOpenOrders(db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-
 	stmts, err := prepareStatements(db)
 	if err != nil {
 		_ = db.Close()
@@ -226,6 +221,14 @@ func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, l
 		query += " and category = ?"
 		args = append(args, *category)
 	}
+	query += " and status in (?, ?, ?, ?, ?)"
+	args = append(args,
+		constants.ORDER_STATUS_FILLED,
+		constants.ORDER_STATUS_CANCELED,
+		constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED,
+		constants.ORDER_STATUS_TRIGGERED,
+		constants.ORDER_STATUS_DEACTIVATED,
+	)
 	query += " order by updated_at desc"
 	if limit > 0 {
 		query += " limit ?"
@@ -493,9 +496,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return decErr
 			}
 			err = upsertOrder(tx, s.stmts, order)
-			if err == nil {
-				err = upsertOpenOrder(tx, s.stmts, order)
-			}
 			addBalance(order.UserID)
 		case events.OrderAmended:
 			amend, decErr := events.DecodeOrderAmended(event.Data)
@@ -504,14 +504,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			}
 			if math.Sign(amend.NewPrice) > 0 {
 				err = updateOrderPriceQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewPrice, amend.NewQty, amend.Timestamp)
-				if err == nil {
-					err = updateOpenOrderPriceQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewPrice, amend.NewQty, amend.Timestamp)
-				}
 			} else {
 				err = updateOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
-				if err == nil {
-					err = updateOpenOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
-				}
 			}
 			addBalance(amend.UserID)
 		case events.OrderCanceled:
@@ -520,9 +514,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return decErr
 			}
 			err = cancelOrder(tx, s.stmts, cancel.UserID, cancel.OrderID, cancel.Timestamp)
-			if err == nil {
-				err = deleteOpenOrder(tx, s.stmts, cancel.UserID, cancel.OrderID)
-			}
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
 			trade, decErr := events.DecodeTrade(event.Data)
@@ -530,16 +521,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return decErr
 			}
 			err = applyTrade(tx, s.stmts, trade)
-			if err == nil {
-				if updErr := addFillToOpenOrder(tx, s.stmts, trade.MakerUserID, trade.MakerOrderID, trade.Quantity, trade.Timestamp); updErr != nil {
-					err = updErr
-				}
-			}
-			if err == nil {
-				if updErr := addFillToOpenOrder(tx, s.stmts, trade.TakerUserID, trade.TakerOrderID, trade.Quantity, trade.Timestamp); updErr != nil {
-					err = updErr
-				}
-			}
 			addBalance(trade.MakerUserID)
 			addBalance(trade.TakerUserID)
 			if trade.Category == constants.CATEGORY_LINEAR {
@@ -580,9 +561,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return decErr
 			}
 			err = markOrderTriggered(tx, s.stmts, evt.UserID, evt.OrderID, evt.Timestamp)
-			if err == nil {
-				err = markOpenOrderTriggered(tx, s.stmts, evt.UserID, evt.OrderID, evt.Timestamp)
-			}
 			addBalance(evt.UserID)
 		case events.RPNLRecorded:
 			evt, decErr := events.DecodeRPNL(event.Data)
@@ -675,50 +653,6 @@ func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 	return err
 }
 
-func upsertOpenOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
-	if order == nil {
-		return fmt.Errorf("order is nil")
-	}
-	if !isOpenStatus(order.Status) {
-		return nil
-	}
-	stmt := stmts.upsertOpenOrder
-	if stmt == nil {
-		return fmt.Errorf("missing upsert open order statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(
-		order.ID,
-		order.UserID,
-		order.Symbol,
-		order.Category,
-		order.Origin,
-		order.Side,
-		order.Type,
-		order.TIF,
-		order.Status,
-		order.Price.String(),
-		order.Quantity.String(),
-		order.Filled.String(),
-		order.TriggerPrice.String(),
-		boolToInt(order.ReduceOnly),
-		boolToInt(order.CloseOnTrigger),
-		order.StopOrderType,
-		boolToInt(order.IsConditional),
-		order.CreatedAt,
-		order.UpdatedAt,
-	)
-	return err
-}
-
-func updateOpenOrderQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
-	stmt := stmts.updateOpenOrderQty
-	if stmt == nil {
-		return fmt.Errorf("missing update open order qty statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(qty.String(), ts, orderID, userID)
-	return err
-}
-
 func updateOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
 	stmt := stmts.updateOrderPriceQty
 	if stmt == nil {
@@ -727,68 +661,6 @@ func updateOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, ord
 	_, err := tx.Stmt(stmt).Exec(price.String(), qty.String(), ts, orderID, userID)
 	return err
 }
-
-func updateOpenOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
-	stmt := stmts.updateOpenOrderPriceQty
-	if stmt == nil {
-		return fmt.Errorf("missing update open order price qty statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(price.String(), qty.String(), ts, orderID, userID)
-	return err
-}
-
-func deleteOpenOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID) error {
-	stmt := stmts.deleteOpenOrder
-	if stmt == nil {
-		return fmt.Errorf("missing delete open order statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(orderID, userID)
-	return err
-}
-
-func markOpenOrderTriggered(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, ts uint64) error {
-	stmt := stmts.markOpenOrderTriggered
-	if stmt == nil {
-		return fmt.Errorf("missing mark open order triggered statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(constants.ORDER_STATUS_TRIGGERED, types.Price{}.String(), ts, orderID, userID)
-	return err
-}
-
-func addFillToOpenOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
-	row := tx.QueryRow(`select filled, qty, status from open_orders where id = ? and user_id = ?`, orderID, userID)
-	var filledStr, qtyStr string
-	var status int8
-	if err := row.Scan(&filledStr, &qtyStr, &status); err != nil {
-		return err
-	}
-	if !isOpenStatus(status) {
-		return fmt.Errorf("open order %d not active", orderID)
-	}
-	filled := parseFixed(filledStr)
-	newFilled := math.Add(filled, qty)
-	status = constants.ORDER_STATUS_PARTIALLY_FILLED
-	if math.Cmp(newFilled, parseFixed(qtyStr)) >= 0 {
-		status = constants.ORDER_STATUS_FILLED
-	}
-	if status == constants.ORDER_STATUS_FILLED {
-		return deleteOpenOrder(tx, stmts, userID, orderID)
-	}
-	stmt := stmts.updateOpenOrderFilled
-	if stmt == nil {
-		return fmt.Errorf("missing update open order filled statement")
-	}
-	_, err := tx.Stmt(stmt).Exec(newFilled.String(), status, ts, orderID, userID)
-	return err
-}
-
-func isOpenStatus(status int8) bool {
-	return status == constants.ORDER_STATUS_NEW ||
-		status == constants.ORDER_STATUS_PARTIALLY_FILLED ||
-		status == constants.ORDER_STATUS_UNTRIGGERED ||
-		status == constants.ORDER_STATUS_TRIGGERED
-}
-
 func updateOrderQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
 	stmt := stmts.updateOrderQty
 	if stmt == nil {
@@ -1048,7 +920,11 @@ func loadPositions(db *sql.DB, portfolio *portfolio.Service) error {
 func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 	rows, err := db.Query(
 		`select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at
-     from open_orders`,
+     from orders
+     where status in (?, ?, ?)`,
+		constants.ORDER_STATUS_NEW,
+		constants.ORDER_STATUS_PARTIALLY_FILLED,
+		constants.ORDER_STATUS_UNTRIGGERED,
 	)
 	if err != nil {
 		return err
@@ -1057,7 +933,7 @@ func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 		_ = rows.Close()
 	}()
 	for rows.Next() {
-		var order types.Order
+		order := types.Order{}
 		var price, qty, filled, triggerPrice string
 		var reduceOnly, closeOnTrigger, isConditional int
 		if err := rows.Scan(
@@ -1093,22 +969,6 @@ func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 		store.Load(&order)
 	}
 	return nil
-}
-
-func refreshOpenOrders(db *sql.DB) error {
-	_, err := db.Exec(`
-    delete from open_orders;
-    insert into open_orders (id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at)
-    select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at
-    from orders
-    where status in (?, ?, ?, ?);
-  `,
-		constants.ORDER_STATUS_NEW,
-		constants.ORDER_STATUS_PARTIALLY_FILLED,
-		constants.ORDER_STATUS_UNTRIGGERED,
-		constants.ORDER_STATUS_TRIGGERED,
-	)
-	return err
 }
 
 func parseFixed(value string) types.Quantity {

@@ -19,11 +19,11 @@ import (
 const (
 	defaultLevels        = 15
 	defaultInterval      = 5 * time.Second
-	defaultMinNotional   = 10000
-	defaultMaxNotional   = 50000
+	defaultMinNotional   = 300000
+	defaultMaxNotional   = 400000
 	defaultCancelPercent = 0.2
 	defaultSkipPercent   = 0.1
-	defaultMinBalance    = 500000
+	defaultMinBalance    = 10000000
 	defaultTickQueue     = 4096
 )
 

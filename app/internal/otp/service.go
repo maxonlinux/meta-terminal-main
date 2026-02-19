@@ -63,7 +63,7 @@ func (s *Service) Generate(username, email, phone string) (string, error) {
 	s.codes[username] = otpCode{code: code, expires: time.Now().Add(GracePeriod)}
 	s.mu.Unlock()
 
-	logging.Log().Debug().Str("username", username).Str("email", email).Str("phone", phone).Str("code", code).Msg("otp: code generated")
+	logging.Log().Info().Str("username", username).Str("email", email).Str("phone", phone).Str("code", code).Msg("otp: code generated")
 
 	message, err := s.sendOtp(email, phone, code)
 	if err != nil {

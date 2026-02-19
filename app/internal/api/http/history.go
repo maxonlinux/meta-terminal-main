@@ -29,6 +29,9 @@ func (h *HistoryHandler) Orders(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
+	if limit == 0 {
+		limit = 100
+	}
 	offset, err := parseOffset(c.QueryParam("offset"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -70,6 +73,9 @@ func (h *HistoryHandler) Fills(c *echo.Context) error {
 	limit, err := parseLimit(c.QueryParam("limit"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if limit == 0 {
+		limit = 100
 	}
 	offset, err := parseOffset(c.QueryParam("offset"))
 	if err != nil {
@@ -123,6 +129,9 @@ func (h *HistoryHandler) PnL(c *echo.Context) error {
 	limit, err := parseLimit(c.QueryParam("limit"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if limit == 0 {
+		limit = 100
 	}
 	offset, err := parseOffset(c.QueryParam("offset"))
 	if err != nil {

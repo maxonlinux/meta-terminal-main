@@ -80,9 +80,9 @@ func TestApplyOrderAmendedWithPrice(t *testing.T) {
 		t.Fatalf("expected qty 9, got %s", qty)
 	}
 
-	row = store.db.QueryRow("select price, qty from open_orders where id = ? and user_id = ?", order.ID, order.UserID)
+	row = store.db.QueryRow("select price, qty from orders where id = ? and user_id = ?", order.ID, order.UserID)
 	if err := row.Scan(&price, &qty); err != nil {
-		t.Fatalf("scan open_orders: %v", err)
+		t.Fatalf("scan orders: %v", err)
 	}
 	if price != "101" {
 		t.Fatalf("expected open price 101, got %s", price)

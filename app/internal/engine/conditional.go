@@ -6,13 +6,13 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
-func (e *Engine) activateConditional(order *types.Order, writer outbox.Writer) {
+func (e *Engine) activateConditional(order *types.Order, writer outbox.Writer) CommandResult {
 	if order == nil {
-		return
+		return CommandResult{}
 	}
 	book, err := e.getBook(order.Category, order.Symbol)
 	if err != nil {
-		return
+		return CommandResult{Err: err}
 	}
 
 	order.IsConditional = false
@@ -22,4 +22,5 @@ func (e *Engine) activateConditional(order *types.Order, writer outbox.Writer) {
 	if result.Err != nil {
 		logging.Log().Error().Int64("order", int64(order.ID)).Int64("user", int64(order.UserID)).Str("symbol", order.Symbol).Err(result.Err).Msg("engine conditional: activation failed")
 	}
+	return result
 }

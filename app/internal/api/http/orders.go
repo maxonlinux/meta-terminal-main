@@ -253,6 +253,14 @@ func (h *OrdersHandler) listOrders(userID types.UserID, symbol string, category 
 		if o.Origin == constants.ORDER_ORIGIN_SYSTEM {
 			continue
 		}
+		switch o.Status {
+		case constants.ORDER_STATUS_NEW,
+			constants.ORDER_STATUS_PARTIALLY_FILLED,
+			constants.ORDER_STATUS_UNTRIGGERED:
+			// active
+		default:
+			continue
+		}
 		if symbol != "" && o.Symbol != symbol {
 			continue
 		}

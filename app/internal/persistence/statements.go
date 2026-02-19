@@ -3,25 +3,19 @@ package persistence
 import "database/sql"
 
 type statements struct {
-	upsertOrder             *sql.Stmt
-	upsertOpenOrder         *sql.Stmt
-	updateOrderQty          *sql.Stmt
-	updateOrderPriceQty     *sql.Stmt
-	updateOpenOrderQty      *sql.Stmt
-	updateOpenOrderPriceQty *sql.Stmt
-	cancelOrder             *sql.Stmt
-	deleteOpenOrder         *sql.Stmt
-	markOrderTriggered      *sql.Stmt
-	markOpenOrderTriggered  *sql.Stmt
-	insertFill              *sql.Stmt
-	updateOrderFilled       *sql.Stmt
-	updateOpenOrderFilled   *sql.Stmt
-	upsertBalance           *sql.Stmt
-	upsertPosition          *sql.Stmt
-	upsertFunding           *sql.Stmt
-	updateFundingStatus     *sql.Stmt
-	selectFundingUser       *sql.Stmt
-	insertRPNL              *sql.Stmt
+	upsertOrder         *sql.Stmt
+	updateOrderQty      *sql.Stmt
+	updateOrderPriceQty *sql.Stmt
+	cancelOrder         *sql.Stmt
+	markOrderTriggered  *sql.Stmt
+	insertFill          *sql.Stmt
+	updateOrderFilled   *sql.Stmt
+	upsertBalance       *sql.Stmt
+	upsertPosition      *sql.Stmt
+	upsertFunding       *sql.Stmt
+	updateFundingStatus *sql.Stmt
+	selectFundingUser   *sql.Stmt
+	insertRPNL          *sql.Stmt
 }
 
 func prepareStatements(db *sql.DB) (*statements, error) {
@@ -63,43 +57,10 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 		return nil, err
 	}
 
-	if err := prepare(&stmts.upsertOpenOrder, `
-    insert into open_orders (id, user_id, symbol, category, origin, side, type, tif, status,
-      price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      user_id=excluded.user_id,
-      symbol=excluded.symbol,
-      category=excluded.category,
-      origin=excluded.origin,
-      side=excluded.side,
-      type=excluded.type,
-      tif=excluded.tif,
-      status=excluded.status,
-      price=excluded.price,
-      qty=excluded.qty,
-      filled=excluded.filled,
-      trigger_price=excluded.trigger_price,
-      reduce_only=excluded.reduce_only,
-      close_on_trigger=excluded.close_on_trigger,
-      stop_order_type=excluded.stop_order_type,
-      is_conditional=excluded.is_conditional,
-      created_at=excluded.created_at,
-      updated_at=excluded.updated_at
-  `); err != nil {
-		return nil, err
-	}
-
 	if err := prepare(&stmts.updateOrderQty, `update orders set qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
 	if err := prepare(&stmts.updateOrderPriceQty, `update orders set price = ?, qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
-		return nil, err
-	}
-	if err := prepare(&stmts.updateOpenOrderQty, `update open_orders set qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
-		return nil, err
-	}
-	if err := prepare(&stmts.updateOpenOrderPriceQty, `update open_orders set price = ?, qty = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
 	if err := prepare(&stmts.cancelOrder, `
@@ -113,13 +74,7 @@ func prepareStatements(db *sql.DB) (*statements, error) {
   `); err != nil {
 		return nil, err
 	}
-	if err := prepare(&stmts.deleteOpenOrder, `delete from open_orders where id = ? and user_id = ?`); err != nil {
-		return nil, err
-	}
 	if err := prepare(&stmts.markOrderTriggered, `update orders set status = ?, is_conditional = 0, trigger_price = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
-		return nil, err
-	}
-	if err := prepare(&stmts.markOpenOrderTriggered, `update open_orders set status = ?, is_conditional = 0, trigger_price = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
 	if err := prepare(&stmts.insertFill, `
@@ -129,9 +84,6 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 		return nil, err
 	}
 	if err := prepare(&stmts.updateOrderFilled, `update orders set filled = ?, status = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
-		return nil, err
-	}
-	if err := prepare(&stmts.updateOpenOrderFilled, `update open_orders set filled = ?, status = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
 	if err := prepare(&stmts.upsertBalance, `
@@ -203,18 +155,12 @@ func closeStatements(stmts *statements) {
 		}
 	}
 	closeStmt(stmts.upsertOrder)
-	closeStmt(stmts.upsertOpenOrder)
 	closeStmt(stmts.updateOrderQty)
 	closeStmt(stmts.updateOrderPriceQty)
-	closeStmt(stmts.updateOpenOrderQty)
-	closeStmt(stmts.updateOpenOrderPriceQty)
 	closeStmt(stmts.cancelOrder)
-	closeStmt(stmts.deleteOpenOrder)
 	closeStmt(stmts.markOrderTriggered)
-	closeStmt(stmts.markOpenOrderTriggered)
 	closeStmt(stmts.insertFill)
 	closeStmt(stmts.updateOrderFilled)
-	closeStmt(stmts.updateOpenOrderFilled)
 	closeStmt(stmts.upsertBalance)
 	closeStmt(stmts.upsertPosition)
 	closeStmt(stmts.upsertFunding)

@@ -28,31 +28,10 @@ func initSchema(db *sql.DB) error {
 
     create index if not exists orders_user_idx on orders (user_id, updated_at);
     create index if not exists orders_symbol_idx on orders (symbol, category, updated_at);
+    create index if not exists orders_user_status_idx on orders (user_id, status, updated_at);
+    create index if not exists orders_symbol_status_idx on orders (symbol, category, status, updated_at);
 
-    create table if not exists open_orders (
-      id integer primary key,
-      user_id integer not null,
-      symbol text not null,
-      category integer not null,
-      origin integer not null,
-      side integer not null,
-      type integer not null,
-      tif integer not null,
-      status integer not null,
-      price text not null,
-      qty text not null,
-      filled text not null,
-      trigger_price text not null,
-      reduce_only integer not null,
-      close_on_trigger integer not null,
-      stop_order_type integer not null,
-      is_conditional integer not null,
-      created_at integer not null,
-      updated_at integer not null
-    );
 
-    create index if not exists open_orders_user_idx on open_orders (user_id, updated_at);
-    create index if not exists open_orders_symbol_idx on open_orders (symbol, category, updated_at);
 
     create table if not exists fills (
       id integer not null,

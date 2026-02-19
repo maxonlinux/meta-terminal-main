@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
@@ -60,6 +61,8 @@ type Engine struct {
 	planPolicy PlanPolicy
 	locksMu    sync.Mutex
 	locks      map[bookLockKey]*sync.Mutex // symbol & category -> mutex
+	liqMu      sync.Mutex
+	liqNext    map[bookLockKey]time.Time
 }
 
 func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*Engine, error) {
@@ -75,6 +78,7 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 		registry:  reg,
 		callback:  cb,
 		locks:     make(map[bookLockKey]*sync.Mutex),
+		liqNext:   make(map[bookLockKey]time.Time),
 	}
 	portfolioService, err := portfolio.New(func(userID types.UserID, symbol string, size types.Quantity) {
 		e.onPositionReduce(userID, symbol, size)
@@ -246,6 +250,35 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 		price = tick.Price
 	}
 	e.store.OnPositionReduce(userID, symbol, size, price)
+	if math.Sign(size) == 0 {
+		ids := make([]types.OrderID, 0)
+		e.store.Iterate(func(order *types.Order) bool {
+			if order == nil {
+				return true
+			}
+			if order.UserID != userID || order.Symbol != symbol {
+				return true
+			}
+			if !order.CloseOnTrigger || !order.ReduceOnly {
+				return true
+			}
+			switch order.StopOrderType {
+			case constants.STOP_ORDER_TYPE_TAKE_PROFIT, constants.STOP_ORDER_TYPE_STOP_LOSS:
+				ids = append(ids, order.ID)
+			}
+			return true
+		})
+		for _, id := range ids {
+			order, ok := e.store.GetUserOrder(userID, id)
+			if !ok {
+				continue
+			}
+			_ = e.store.Cancel(userID, id)
+			if e.publisher != nil {
+				e.publisher.OnOrderUpdated(order)
+			}
+		}
+	}
 }
 
 func (e *Engine) onBalanceUpdated(userID types.UserID, asset string, balance *types.Balance) {
@@ -266,7 +299,7 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 			recorded = true
 			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt}))
 		}
-		e.activateConditional(order, tx)
+		_ = e.activateConditional(order, tx)
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(order)
 		}

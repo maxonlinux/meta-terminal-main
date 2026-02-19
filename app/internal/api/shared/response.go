@@ -2,6 +2,7 @@ package shared
 
 import (
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
+	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
@@ -18,7 +19,7 @@ type OrderResponse struct {
 	Qty            string `json:"qty"`
 	Filled         string `json:"filled"`
 	Price          string `json:"price"`
-	TriggerPrice   string `json:"triggerPrice,omitempty"`
+	TriggerPrice   string `json:"triggerPrice"`
 	ReduceOnly     bool   `json:"reduceOnly"`
 	CloseOnTrigger bool   `json:"closeOnTrigger"`
 	StopOrderType  string `json:"stopOrderType,omitempty"`
@@ -41,19 +42,26 @@ func OrderResponseFromOrder(o *types.Order) OrderResponse {
 		Qty:            o.Quantity.String(),
 		Filled:         o.Filled.String(),
 		Price:          o.Price.String(),
-		TriggerPrice:   "",
 		ReduceOnly:     o.ReduceOnly,
 		CloseOnTrigger: o.CloseOnTrigger,
 		IsConditional:  o.IsConditional,
 		CreatedAt:      o.CreatedAt,
 		UpdatedAt:      o.UpdatedAt,
 	}
+	if o.Type == constants.ORDER_TYPE_MARKET {
+		resp.Price = ""
+	}
+
 	if o.TriggerPrice.Sign() > 0 {
 		resp.TriggerPrice = o.TriggerPrice.String()
+	} else {
+		resp.TriggerPrice = ""
 	}
+
 	if o.StopOrderType != 0 {
 		resp.StopOrderType = StopOrderTypeToString(o.StopOrderType)
 	}
+
 	return resp
 }
 
@@ -78,9 +86,14 @@ func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 		CreatedAt:      order.CreatedAt,
 		UpdatedAt:      order.UpdatedAt,
 	}
+	if order.Type == constants.ORDER_TYPE_MARKET {
+		resp.Price = ""
+	}
+
 	if order.StopOrderType != 0 {
 		resp.StopOrderType = StopOrderTypeToString(order.StopOrderType)
 	}
+
 	return resp
 }
 
