@@ -3,10 +3,10 @@ package types
 import "github.com/robaho/fixed"
 
 // Basic type aliases for domain concepts
-type OrderID int64
-type TradeID int64
-type FundingID int64
-type UserID uint64
+type OrderID = int64
+type TradeID = int64
+type FundingID = int64
+type UserID = int64
 
 type Price = fixed.Fixed
 type Quantity = fixed.Fixed

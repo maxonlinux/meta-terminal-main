@@ -12,7 +12,7 @@ type ProfileHandler struct {
 }
 
 type ProfileResponse struct {
-	ID       uint64  `json:"id"`
+	ID       int64   `json:"id"`
 	Email    string  `json:"email"`
 	Username string  `json:"username"`
 	Phone    string  `json:"phone"`
@@ -37,7 +37,7 @@ func (h *ProfileHandler) Get(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ProfileResponse{
-		ID:       uint64(profile.UserID),
+		ID:       profile.UserID,
 		Email:    profile.Email,
 		Username: profile.Username,
 		Phone:    profile.Phone,

@@ -84,7 +84,7 @@ func (h *AuthHandler) Register(c *echo.Context) error {
 		}
 	}
 	_, _ = h.otpService.Generate(req.Username, req.Email, req.Phone)
-	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": uint64(userID)})
+	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": userID})
 }
 
 type LoginRequest struct {

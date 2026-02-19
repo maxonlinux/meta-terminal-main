@@ -167,7 +167,7 @@ func (h *OrdersHandler) Get(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
@@ -186,7 +186,7 @@ func (h *OrdersHandler) Cancel(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
@@ -209,7 +209,7 @@ func (h *OrdersHandler) Amend(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}

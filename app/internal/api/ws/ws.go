@@ -460,7 +460,7 @@ func (h *wsHub) publishTrades(topic string, trades []types.Trade) {
 			"price": t.Price.String(),
 			"qty":   t.Quantity.String(),
 			"side":  shared.SideToString(t.Side),
-			"ts":    t.Timestamp,
+			"ts":    int64(t.Timestamp),
 		})
 	}
 	payload := map[string]interface{}{
@@ -493,7 +493,7 @@ func (h *wsHub) OnOrderUpdated(order *types.Order) {
 		"event": "orders",
 		"data": map[string]interface{}{
 			"orders": []map[string]interface{}{{
-				"orderId": uint64(order.ID),
+				"orderId": order.ID,
 				"status":  shared.OrderStatusToString(order.Status),
 			}},
 		},

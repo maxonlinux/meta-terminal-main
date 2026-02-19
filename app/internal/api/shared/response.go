@@ -7,8 +7,8 @@ import (
 )
 
 type OrderResponse struct {
-	ID             uint64 `json:"id"`
-	UserID         uint64 `json:"userId"`
+	ID             int64  `json:"id"`
+	UserID         int64  `json:"userId"`
 	Symbol         string `json:"symbol"`
 	Category       string `json:"category"`
 	Origin         string `json:"origin"`
@@ -24,14 +24,14 @@ type OrderResponse struct {
 	CloseOnTrigger bool   `json:"closeOnTrigger"`
 	StopOrderType  string `json:"stopOrderType,omitempty"`
 	IsConditional  bool   `json:"isConditional"`
-	CreatedAt      uint64 `json:"createdAt"`
-	UpdatedAt      uint64 `json:"updatedAt"`
+	CreatedAt      int64  `json:"createdAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
 }
 
 func OrderResponseFromOrder(o *types.Order) OrderResponse {
 	resp := OrderResponse{
-		ID:             uint64(o.ID),
-		UserID:         uint64(o.UserID),
+		ID:             o.ID,
+		UserID:         o.UserID,
 		Symbol:         o.Symbol,
 		Category:       CategoryToString(o.Category),
 		Origin:         OriginToString(o.Origin),
@@ -67,8 +67,8 @@ func OrderResponseFromOrder(o *types.Order) OrderResponse {
 
 func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 	resp := OrderResponse{
-		ID:             uint64(order.ID),
-		UserID:         uint64(order.UserID),
+		ID:             order.ID,
+		UserID:         order.UserID,
 		Symbol:         order.Symbol,
 		Category:       CategoryToString(order.Category),
 		Origin:         OriginToString(order.Origin),
@@ -98,26 +98,26 @@ func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 }
 
 type FillResponse struct {
-	ID                  uint64 `json:"id"`
-	UserID              uint64 `json:"userId"`
-	OrderID             uint64 `json:"orderId"`
-	CounterpartyOrderID uint64 `json:"counterpartyOrderId"`
+	ID                  int64  `json:"id"`
+	UserID              int64  `json:"userId"`
+	OrderID             int64  `json:"orderId"`
+	CounterpartyOrderID int64  `json:"counterpartyOrderId"`
 	Symbol              string `json:"symbol"`
 	Category            string `json:"category"`
 	Side                string `json:"side"`
 	Role                string `json:"role"`
 	Price               string `json:"price"`
 	Qty                 string `json:"qty"`
-	Timestamp           uint64 `json:"timestamp"`
+	Timestamp           int64  `json:"timestamp"`
 	OrderType           string `json:"orderType"`
 }
 
 func FillResponseFromRecord(fill persistence.FillRecord) FillResponse {
 	return FillResponse{
-		ID:                  uint64(fill.ID),
-		UserID:              uint64(fill.UserID),
-		OrderID:             uint64(fill.OrderID),
-		CounterpartyOrderID: uint64(fill.CounterpartyOrderID),
+		ID:                  fill.ID,
+		UserID:              fill.UserID,
+		OrderID:             fill.OrderID,
+		CounterpartyOrderID: fill.CounterpartyOrderID,
 		Symbol:              fill.Symbol,
 		Category:            CategoryToString(fill.Category),
 		Side:                SideToString(fill.Side),

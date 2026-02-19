@@ -107,14 +107,14 @@ func (h *HistoryHandler) Fills(c *echo.Context) error {
 type PnLResponse struct {
 	// PnLResponse is a single realized PnL record for the user.
 	ID        int64  `json:"id"`
-	OrderID   uint64 `json:"orderId"`
+	OrderID   int64  `json:"orderId"`
 	Symbol    string `json:"symbol"`
-	Category  int8   `json:"category"`
-	Side      int8   `json:"side"`
+	Category  string `json:"category"`
+	Side      string `json:"side"`
 	Price     string `json:"price"`
 	Quantity  string `json:"qty"`
 	Realized  string `json:"realized"`
-	CreatedAt uint64 `json:"createdAt"`
+	CreatedAt int64  `json:"createdAt"`
 }
 
 func (h *HistoryHandler) PnL(c *echo.Context) error {
@@ -156,10 +156,10 @@ func (h *HistoryHandler) PnL(c *echo.Context) error {
 	for _, item := range items {
 		resp = append(resp, PnLResponse{
 			ID:        item.ID,
-			OrderID:   uint64(item.OrderID),
+			OrderID:   item.OrderID,
 			Symbol:    item.Symbol,
-			Category:  item.Category,
-			Side:      item.Side,
+			Category:  shared.CategoryToString(item.Category),
+			Side:      shared.SideToString(item.Side),
 			Price:     item.Price,
 			Quantity:  item.Quantity,
 			Realized:  item.Realized,

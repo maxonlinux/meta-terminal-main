@@ -24,7 +24,7 @@ type UserHandler struct {
 }
 
 type UserProfileResponse struct {
-	ID       uint64  `json:"id"`
+	ID       int64   `json:"id"`
 	Email    string  `json:"email"`
 	Username string  `json:"username"`
 	Phone    string  `json:"phone"`
@@ -34,8 +34,8 @@ type UserProfileResponse struct {
 }
 
 type UserSettingsResponse struct {
-	ID                      uint64 `json:"id"`
-	UserID                  uint64 `json:"userId"`
+	ID                      int64  `json:"id"`
+	UserID                  int64  `json:"userId"`
 	Is2FAEnabled            bool   `json:"is2FAEnabled"`
 	NewsAndOffers           bool   `json:"newsAndOffers"`
 	AccessToTransactionData bool   `json:"accessToTransactionData"`
@@ -44,8 +44,8 @@ type UserSettingsResponse struct {
 }
 
 type UserAddressResponse struct {
-	ID      uint64  `json:"id"`
-	UserID  uint64  `json:"userId"`
+	ID      int64   `json:"id"`
+	UserID  int64   `json:"userId"`
 	Country *string `json:"country"`
 	City    *string `json:"city"`
 	Address *string `json:"address"`
@@ -73,7 +73,7 @@ func (h *UserHandler) Profile(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "profile not found"})
 	}
 	return c.JSON(http.StatusOK, UserProfileResponse{
-		ID:       uint64(profile.UserID),
+		ID:       profile.UserID,
 		Email:    profile.Email,
 		Username: profile.Username,
 		Phone:    profile.Phone,
@@ -113,8 +113,8 @@ func (h *UserHandler) Settings(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "settings not found"})
 	}
 	return c.JSON(http.StatusOK, UserSettingsResponse{
-		ID:                      uint64(settings.UserID),
-		UserID:                  uint64(settings.UserID),
+		ID:                      settings.UserID,
+		UserID:                  settings.UserID,
 		Is2FAEnabled:            settings.Is2FAEnabled,
 		NewsAndOffers:           settings.NewsAndOffers,
 		AccessToTransactionData: settings.AccessToTransactionData,
@@ -175,8 +175,8 @@ func (h *UserHandler) Address(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "address not found"})
 	}
 	return c.JSON(http.StatusOK, UserAddressResponse{
-		ID:      uint64(addr.UserID),
-		UserID:  uint64(addr.UserID),
+		ID:      addr.UserID,
+		UserID:  addr.UserID,
 		Country: addr.Country,
 		City:    addr.City,
 		Address: addr.Address,
@@ -324,6 +324,20 @@ type DepositRequestBody struct {
 	Amount   string `json:"amount"`
 }
 
+type FundingResponse struct {
+	ID          int64  `json:"id"`
+	UserID      int64  `json:"userId"`
+	Type        string `json:"type"`
+	Status      string `json:"status"`
+	Asset       string `json:"asset"`
+	Amount      string `json:"amount"`
+	Destination string `json:"destination"`
+	CreatedBy   string `json:"createdBy"`
+	Message     string `json:"message"`
+	CreatedAt   int64  `json:"createdAt"`
+	UpdatedAt   int64  `json:"updatedAt"`
+}
+
 func (h *UserHandler) FundingList(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
@@ -341,20 +355,20 @@ func (h *UserHandler) FundingList(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load funding"})
 	}
-	resp := make([]map[string]interface{}, 0, len(items))
+	resp := make([]FundingResponse, 0, len(items))
 	for _, item := range items {
-		resp = append(resp, map[string]interface{}{
-			"id":          uint64(item.ID),
-			"userId":      uint64(item.UserID),
-			"type":        item.Type,
-			"status":      item.Status,
-			"asset":       item.Asset,
-			"amount":      item.Amount,
-			"destination": item.Destination,
-			"createdBy":   item.CreatedBy,
-			"message":     item.Message,
-			"createdAt":   shared.UnixMilliFromNano(item.CreatedAt),
-			"updatedAt":   shared.UnixMilliFromNano(item.UpdatedAt),
+		resp = append(resp, FundingResponse{
+			ID:          item.ID,
+			UserID:      item.UserID,
+			Type:        item.Type,
+			Status:      item.Status,
+			Asset:       item.Asset,
+			Amount:      item.Amount,
+			Destination: item.Destination,
+			CreatedBy:   item.CreatedBy,
+			Message:     item.Message,
+			CreatedAt:   shared.UnixMilliFromNano(item.CreatedAt),
+			UpdatedAt:   shared.UnixMilliFromNano(item.UpdatedAt),
 		})
 	}
 	return c.JSON(http.StatusOK, resp)

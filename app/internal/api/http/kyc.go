@@ -44,13 +44,13 @@ type KYCFileResponse struct {
 
 type KYCResponse struct {
 	ID           int64             `json:"id"`
-	UserID       uint64            `json:"userId"`
+	UserID       int64             `json:"userId"`
 	DocType      string            `json:"docType"`
 	Country      string            `json:"country"`
 	Status       string            `json:"status"`
 	RejectReason *string           `json:"rejectReason"`
-	CreatedAt    uint64            `json:"createdAt"`
-	UpdatedAt    uint64            `json:"updatedAt"`
+	CreatedAt    int64             `json:"createdAt"`
+	UpdatedAt    int64             `json:"updatedAt"`
 	Files        []KYCFileResponse `json:"files"`
 }
 
@@ -184,7 +184,7 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 	query := strings.TrimSpace(c.QueryParam("q"))
 	var userID *types.UserID
 	if raw := strings.TrimSpace(c.QueryParam("userId")); raw != "" {
-		parsed, err := strconv.ParseUint(raw, 10, 64)
+		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid userId"})
 		}
@@ -203,7 +203,7 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 		}
 		user, _ := h.users.GetProfile(item.UserID)
 		userPayload := map[string]interface{}{
-			"id":       uint64(item.UserID),
+			"id":       item.UserID,
 			"username": "",
 			"email":    "",
 			"phone":    "",
@@ -336,7 +336,7 @@ func saveKYCFile(baseDir string, kycID int64, kind string, header *multipart.Fil
 func toKYCResponse(rec *kyc.RequestRecord, files []kyc.FileRecord) KYCResponse {
 	resp := KYCResponse{
 		ID:           rec.ID,
-		UserID:       uint64(rec.UserID),
+		UserID:       int64(rec.UserID),
 		DocType:      rec.DocType,
 		Country:      rec.Country,
 		Status:       rec.Status,
@@ -373,7 +373,7 @@ func sanitizeFilename(name string) string {
 }
 
 func formatUserID(id types.UserID) string {
-	return strconv.FormatUint(uint64(id), 10)
+	return strconv.FormatInt(id, 10)
 }
 
 func formatInt64(value int64) string {

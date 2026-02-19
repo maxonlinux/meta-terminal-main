@@ -107,14 +107,14 @@ func (h *MarketHandler) OrderBook(c *echo.Context) error {
 }
 
 type TradeResponse struct {
-	ID        uint64 `json:"id"`
+	ID        int64  `json:"id"`
 	Symbol    string `json:"symbol"`
 	Category  string `json:"category"`
 	Side      string `json:"side"`
 	Price     string `json:"price"`
 	Quantity  string `json:"quantity"`
 	IsMaker   bool   `json:"isMaker"`
-	Timestamp uint64 `json:"timestamp"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 func (h *MarketHandler) Trades(c *echo.Context) error {
@@ -136,14 +136,14 @@ func (h *MarketHandler) Trades(c *echo.Context) error {
 	resp := make([]TradeResponse, len(trades))
 	for i, t := range trades {
 		resp[i] = TradeResponse{
-			ID:        uint64(t.ID),
+			ID:        t.ID,
 			Symbol:    t.Symbol,
 			Category:  shared.CategoryToString(t.Category),
 			Side:      shared.SideToString(t.Side),
 			Price:     t.Price.String(),
 			Quantity:  t.Quantity.String(),
 			IsMaker:   t.IsMaker,
-			Timestamp: t.Timestamp,
+			Timestamp: int64(t.Timestamp),
 		}
 	}
 

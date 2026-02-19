@@ -41,16 +41,16 @@ func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walle
 }
 
 type AdminUserPlan struct {
-	ID        types.UserID `json:"id"`
-	UserID    types.UserID `json:"userId"`
-	Plan      string       `json:"plan"`
-	IsManual  bool         `json:"isManual"`
-	CreatedAt uint64       `json:"createdAt"`
-	UpdatedAt uint64       `json:"updatedAt"`
+	ID        int64  `json:"id"`
+	UserID    int64  `json:"userId"`
+	Plan      string `json:"plan"`
+	IsManual  bool   `json:"isManual"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type AdminUser struct {
-	ID       types.UserID   `json:"id"`
+	ID       int64          `json:"id"`
 	Email    string         `json:"email"`
 	Username string         `json:"username"`
 	Phone    string         `json:"phone"`
@@ -65,11 +65,11 @@ type AdminUserActiveRequest struct {
 }
 
 type AdminUserAddress struct {
-	ID      types.UserID `json:"id"`
-	Country *string      `json:"country"`
-	City    *string      `json:"city"`
-	Address *string      `json:"address"`
-	Zip     *string      `json:"zip"`
+	ID      int64   `json:"id"`
+	Country *string `json:"country"`
+	City    *string `json:"city"`
+	Address *string `json:"address"`
+	Zip     *string `json:"zip"`
 }
 
 type AdminAddressUpdateRequest struct {
@@ -80,16 +80,16 @@ type AdminAddressUpdateRequest struct {
 }
 
 type AdminTransaction struct {
-	ID          types.FundingID `json:"id"`
-	UserID      types.UserID    `json:"userId"`
-	Type        string          `json:"type"`
-	Status      string          `json:"status"`
-	Amount      string          `json:"amount"`
-	Destination string          `json:"destination"`
-	Message     string          `json:"message"`
-	CreatedBy   string          `json:"createdBy"`
-	CreatedAt   uint64          `json:"createdAt"`
-	UpdatedAt   uint64          `json:"updatedAt"`
+	ID          int64  `json:"id"`
+	UserID      int64  `json:"userId"`
+	Type        string `json:"type"`
+	Status      string `json:"status"`
+	Amount      string `json:"amount"`
+	Destination string `json:"destination"`
+	Message     string `json:"message"`
+	CreatedBy   string `json:"createdBy"`
+	CreatedAt   int64  `json:"createdAt"`
+	UpdatedAt   int64  `json:"updatedAt"`
 }
 
 type AdminFundingUser struct {
@@ -97,16 +97,16 @@ type AdminFundingUser struct {
 }
 
 type AdminFunding struct {
-	ID          types.FundingID  `json:"id"`
-	UserID      types.UserID     `json:"userId"`
+	ID          int64            `json:"id"`
+	UserID      int64            `json:"userId"`
 	Type        string           `json:"type"`
 	Status      string           `json:"status"`
 	Amount      string           `json:"amount"`
 	Destination string           `json:"destination"`
 	Message     string           `json:"message"`
 	CreatedBy   string           `json:"createdBy"`
-	CreatedAt   uint64           `json:"createdAt"`
-	UpdatedAt   uint64           `json:"updatedAt"`
+	CreatedAt   int64            `json:"createdAt"`
+	UpdatedAt   int64            `json:"updatedAt"`
 	User        AdminFundingUser `json:"User"`
 }
 
@@ -163,8 +163,8 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 				UserID:    profile.UserID,
 				Plan:      record.Plan,
 				IsManual:  record.IsManual,
-				CreatedAt: record.CreatedAt,
-				UpdatedAt: record.UpdatedAt,
+				CreatedAt: int64(record.CreatedAt),
+				UpdatedAt: int64(record.UpdatedAt),
 			}
 		}
 		res = append(res, user)
@@ -203,8 +203,8 @@ func (h *AdminHandler) User(c *echo.Context) error {
 			UserID:    profile.UserID,
 			Plan:      record.Plan,
 			IsManual:  record.IsManual,
-			CreatedAt: record.CreatedAt,
-			UpdatedAt: record.UpdatedAt,
+			CreatedAt: int64(record.CreatedAt),
+			UpdatedAt: int64(record.UpdatedAt),
 		}
 	}
 	return c.JSON(http.StatusOK, user)
@@ -289,8 +289,8 @@ func (h *AdminHandler) UserTransactions(c *echo.Context) error {
 			Destination: item.Destination,
 			Message:     item.Message,
 			CreatedBy:   item.CreatedBy,
-			CreatedAt:   item.CreatedAt,
-			UpdatedAt:   item.UpdatedAt,
+			CreatedAt:   int64(item.CreatedAt),
+			UpdatedAt:   int64(item.UpdatedAt),
 		})
 	}
 	return c.JSON(http.StatusOK, res)
@@ -326,8 +326,8 @@ func (h *AdminHandler) Funding(c *echo.Context) error {
 			Destination: item.Destination,
 			Message:     item.Message,
 			CreatedBy:   item.CreatedBy,
-			CreatedAt:   item.CreatedAt,
-			UpdatedAt:   item.UpdatedAt,
+			CreatedAt:   int64(item.CreatedAt),
+			UpdatedAt:   int64(item.UpdatedAt),
 			User:        AdminFundingUser{Username: username},
 		})
 	}
@@ -592,7 +592,7 @@ func parseUserIDParam(value string) (types.UserID, error) {
 	if value == "" {
 		return 0, strconv.ErrSyntax
 	}
-	parsed, err := strconv.ParseUint(value, 10, 64)
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return 0, err
 	}

@@ -36,7 +36,7 @@ func actionLogger(scope string) echo.MiddlewareFunc {
 			var actorID string
 			if claims := getUser(c); claims != nil {
 				actorType = "user"
-				actorID = strconv.FormatUint(uint64(claims.UserID), 10)
+				actorID = strconv.FormatInt(claims.UserID, 10)
 			} else if getAdmin(c) != nil {
 				actorType = "admin"
 			}
