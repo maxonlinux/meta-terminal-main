@@ -36,9 +36,10 @@ type Order struct {
 	Filled       Quantity // Filled quantity
 	TriggerPrice Price    // 0 = regular order, >0 = conditional order
 
-	ReduceOnly     bool // Reduce-only flag (LINEAR only)
-	CloseOnTrigger bool // Close on trigger (CoT orders)
-	StopOrderType  int8 // Stop order type for conditional orders
+	ReduceOnly       bool // Reduce-only flag (LINEAR only)
+	CloseOnTrigger   bool // Close on trigger (CoT orders)
+	StopOrderType    int8 // Stop order type for conditional orders
+	TriggerDirection int8 // 1=UP, -1=DOWN, 0=NONE
 
 	IsConditional bool // true if TriggerPrice > 0
 

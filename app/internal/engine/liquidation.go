@@ -65,6 +65,7 @@ func (e *Engine) liquidatePosition(userID types.UserID, pos *types.Position, wri
 		true,
 		true,
 		constants.STOP_ORDER_TYPE_STOP,
+		constants.TRIGGER_DIRECTION_NONE,
 	)
 	if writer != nil {
 		_ = writer.Record(events.EncodeOrderPlaced(order))

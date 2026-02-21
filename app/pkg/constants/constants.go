@@ -42,6 +42,10 @@ const (
 	STOP_ORDER_TYPE_STOP_LOSS   = 3
 	STOP_ORDER_TYPE_TRAILING    = 4
 
+	TRIGGER_DIRECTION_NONE = 0
+	TRIGGER_DIRECTION_UP   = 1
+	TRIGGER_DIRECTION_DOWN = -1
+
 	OMS_SHARD_COUNT = 256
 
 	// TradeBufferSize defines the rolling trade buffer size.

@@ -5,6 +5,8 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
+	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
+	"github.com/maxonlinux/meta-terminal-go/pkg/math"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 	"github.com/robaho/fixed"
 )
@@ -26,11 +28,25 @@ func (h *PositionsHandler) List(c *echo.Context) error {
 	positions := h.engine.Portfolio().GetPositions(claims.UserID)
 
 	resp := make([]map[string]interface{}, len(positions))
+	mmRatio := fixed.MustParse(constants.MM_RATIO)
+
 	for i, p := range positions {
+		effectiveLev := p.Leverage
+		if math.Sign(effectiveLev) <= 0 {
+			effectiveLev = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+		}
+
+		sizeAbs := types.Quantity(math.AbsFixed(p.Size))
+		notional := types.Quantity(math.Mul(p.EntryPrice, sizeAbs))
+		im := types.Quantity(math.Div(notional, effectiveLev))
+		mm := types.Quantity(math.Mul(notional, mmRatio))
+
 		resp[i] = map[string]interface{}{
 			"symbol":     p.Symbol,
 			"size":       p.Size.String(),
 			"entryPrice": p.EntryPrice.String(),
+			"im":         im.String(),
+			"mm":         mm.String(),
 			"leverage":   p.Leverage.String(),
 			"takeProfit": p.TakeProfit.String(),
 			"stopLoss":   p.StopLoss.String(),

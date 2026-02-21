@@ -32,8 +32,8 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	}
 	if err := prepare(&stmts.upsertOrder, `
     insert into orders (id, user_id, symbol, category, origin, side, type, tif, status,
-      price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, trigger_direction, is_conditional, created_at, updated_at)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     on conflict(id) do update set
       user_id=excluded.user_id,
       symbol=excluded.symbol,
@@ -50,6 +50,7 @@ func prepareStatements(db *sql.DB) (*statements, error) {
       reduce_only=excluded.reduce_only,
       close_on_trigger=excluded.close_on_trigger,
       stop_order_type=excluded.stop_order_type,
+      trigger_direction=excluded.trigger_direction,
       is_conditional=excluded.is_conditional,
       created_at=excluded.created_at,
       updated_at=excluded.updated_at

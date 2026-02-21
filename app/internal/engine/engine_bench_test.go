@@ -57,6 +57,7 @@ func BenchmarkEnginePipeline(b *testing.B) {
 		false,
 		false,
 		0,
+		constants.TRIGGER_DIRECTION_NONE,
 	)
 	eng.store.Add(makerOrder)
 	book.Add(makerOrder)

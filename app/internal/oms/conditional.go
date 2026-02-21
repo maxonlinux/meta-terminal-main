@@ -87,7 +87,7 @@ func (c *ConditionalIndex) Add(o *types.Order) {
 	if o.TriggerPrice.IsZero() {
 		return
 	}
-	h := c.getHeap(o.Symbol, o.Side == constants.ORDER_SIDE_BUY)
+	h := c.getHeap(o.Symbol, triggerIsBuy(o.TriggerDirection, o.Side))
 	item := &triggerItem{order: o, idx: -1}
 	heap.Push(h, item)
 }
@@ -153,10 +153,21 @@ func (c *ConditionalIndex) Remove(o *types.Order) {
 	if o.TriggerPrice.IsZero() {
 		return
 	}
-	h := c.getHeap(o.Symbol, o.Side == constants.ORDER_SIDE_BUY)
+	h := c.getHeap(o.Symbol, triggerIsBuy(o.TriggerDirection, o.Side))
 	item := h.index[o.ID]
 	if item == nil {
 		return
 	}
 	heap.Remove(h, item.idx)
+}
+
+func triggerIsBuy(direction int8, side int8) bool {
+	switch direction {
+	case constants.TRIGGER_DIRECTION_DOWN:
+		return true
+	case constants.TRIGGER_DIRECTION_UP:
+		return false
+	default:
+		return side == constants.ORDER_SIDE_BUY
+	}
 }

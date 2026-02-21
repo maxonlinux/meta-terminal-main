@@ -1,6 +1,9 @@
 package persistence
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`
@@ -21,6 +24,7 @@ func initSchema(db *sql.DB) error {
       reduce_only integer not null,
       close_on_trigger integer not null,
       stop_order_type integer not null,
+      trigger_direction integer not null default 0,
       is_conditional integer not null,
       created_at integer not null,
       updated_at integer not null
@@ -114,5 +118,20 @@ func initSchema(db *sql.DB) error {
     create index if not exists rpnl_user_idx on rpnl_events (user_id, created_at);
     create index if not exists rpnl_symbol_idx on rpnl_events (symbol, category, created_at);
   `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	_, alterErr := db.Exec(`alter table orders add column trigger_direction integer not null default 0;`)
+	if alterErr != nil && !isDuplicateColumnError(alterErr) {
+		return alterErr
+	}
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "duplicate column name")
 }

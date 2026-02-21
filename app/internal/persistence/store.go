@@ -68,25 +68,26 @@ type positionKey struct {
 }
 
 type OrderRecord struct {
-	ID             types.OrderID
-	UserID         types.UserID
-	Symbol         string
-	Category       int8
-	Origin         int8
-	Side           int8
-	Type           int8
-	TIF            int8
-	Status         int8
-	Price          string
-	Qty            string
-	Filled         string
-	TriggerPrice   string
-	ReduceOnly     bool
-	CloseOnTrigger bool
-	StopOrderType  int8
-	IsConditional  bool
-	CreatedAt      uint64
-	UpdatedAt      uint64
+	ID               types.OrderID
+	UserID           types.UserID
+	Symbol           string
+	Category         int8
+	Origin           int8
+	Side             int8
+	Type             int8
+	TIF              int8
+	Status           int8
+	Price            string
+	Qty              string
+	Filled           string
+	TriggerPrice     string
+	ReduceOnly       bool
+	CloseOnTrigger   bool
+	StopOrderType    int8
+	TriggerDirection int8
+	IsConditional    bool
+	CreatedAt        uint64
+	UpdatedAt        uint64
 }
 
 type FillRecord struct {
@@ -211,7 +212,7 @@ func (s *Store) LoadCore(store *oms.Service, portfolio *portfolio.Service) error
 }
 
 func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]OrderRecord, error) {
-	query := `select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at from orders where user_id = ?`
+	query := `select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, trigger_direction, is_conditional, created_at, updated_at from orders where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
 		query += " and symbol = ?"
@@ -270,6 +271,7 @@ func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, l
 			&reduceOnly,
 			&closeOnTrigger,
 			&rec.StopOrderType,
+			&rec.TriggerDirection,
 			&isConditional,
 			&rec.CreatedAt,
 			&rec.UpdatedAt,
@@ -646,6 +648,7 @@ func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 		boolToInt(order.ReduceOnly),
 		boolToInt(order.CloseOnTrigger),
 		order.StopOrderType,
+		order.TriggerDirection,
 		boolToInt(order.IsConditional),
 		order.CreatedAt,
 		order.UpdatedAt,
@@ -919,7 +922,7 @@ func loadPositions(db *sql.DB, portfolio *portfolio.Service) error {
 
 func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 	rows, err := db.Query(
-		`select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, is_conditional, created_at, updated_at
+		`select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, trigger_direction, is_conditional, created_at, updated_at
      from orders
      where status in (?, ?, ?)`,
 		constants.ORDER_STATUS_NEW,
@@ -953,6 +956,7 @@ func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 			&reduceOnly,
 			&closeOnTrigger,
 			&order.StopOrderType,
+			&order.TriggerDirection,
 			&isConditional,
 			&order.CreatedAt,
 			&order.UpdatedAt,

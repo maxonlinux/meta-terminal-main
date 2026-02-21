@@ -82,6 +82,7 @@ func newOrder(
 	reduceOnly bool,
 	closeOnTrigger bool,
 	stopOrderType int8,
+	triggerDirection int8,
 	now uint64,
 ) *types.Order {
 	o := getOrder()
@@ -107,6 +108,7 @@ func newOrder(
 	o.ReduceOnly = reduceOnly
 	o.CloseOnTrigger = closeOnTrigger
 	o.StopOrderType = stopOrderType
+	o.TriggerDirection = triggerDirection
 	o.IsConditional = !triggerPrice.IsZero()
 	o.CreatedAt = now
 	o.UpdatedAt = now
@@ -156,6 +158,7 @@ func (s *Service) Build(
 	reduceOnly bool,
 	closeOnTrigger bool,
 	stopOrderType int8,
+	triggerDirection int8,
 ) *types.Order {
 	now := utils.NowNano()
 	return newOrder(
@@ -172,6 +175,7 @@ func (s *Service) Build(
 		reduceOnly,
 		closeOnTrigger,
 		stopOrderType,
+		triggerDirection,
 		now,
 	)
 }
@@ -201,6 +205,7 @@ func (s *Service) Create(
 	reduceOnly bool,
 	closeOnTrigger bool,
 	stopOrderType int8,
+	triggerDirection int8,
 ) *types.Order {
 	now := utils.NowNano()
 	s.mu.Lock()
@@ -219,6 +224,7 @@ func (s *Service) Create(
 		reduceOnly,
 		closeOnTrigger,
 		stopOrderType,
+		triggerDirection,
 		now,
 	)
 

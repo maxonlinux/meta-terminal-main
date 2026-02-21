@@ -40,6 +40,7 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		true,
 		false,
 		0,
+		constants.TRIGGER_DIRECTION_NONE,
 	)
 	order2 := eng.store.Build(
 		types.UserID(1),
@@ -55,6 +56,7 @@ func TestReduceOnlyIntegration(t *testing.T) {
 		true,
 		false,
 		0,
+		constants.TRIGGER_DIRECTION_NONE,
 	)
 
 	eng.store.Add(order1)

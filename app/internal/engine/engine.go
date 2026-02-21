@@ -436,6 +436,7 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		req.ReduceOnly,
 		req.CloseOnTrigger,
 		req.StopOrderType,
+		triggerDirectionForOrder(req.StopOrderType, req.Side, req.TriggerPrice),
 	)
 
 	if order.IsConditional {
@@ -452,6 +453,30 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	}
 
 	return e.executeOrder(order, book, writer, true)
+}
+
+func triggerDirectionForOrder(stopOrderType int8, side int8, triggerPrice types.Price) int8 {
+	if triggerPrice.IsZero() {
+		return constants.TRIGGER_DIRECTION_NONE
+	}
+
+	switch stopOrderType {
+	case constants.STOP_ORDER_TYPE_TAKE_PROFIT:
+		if side == constants.ORDER_SIDE_SELL {
+			return constants.TRIGGER_DIRECTION_UP
+		}
+		return constants.TRIGGER_DIRECTION_DOWN
+	case constants.STOP_ORDER_TYPE_STOP_LOSS, constants.STOP_ORDER_TYPE_STOP, constants.STOP_ORDER_TYPE_TRAILING:
+		if side == constants.ORDER_SIDE_SELL {
+			return constants.TRIGGER_DIRECTION_DOWN
+		}
+		return constants.TRIGGER_DIRECTION_UP
+	default:
+		if side == constants.ORDER_SIDE_BUY {
+			return constants.TRIGGER_DIRECTION_DOWN
+		}
+		return constants.TRIGGER_DIRECTION_UP
+	}
 }
 
 func hasSelfMatch(matches []types.Match, userID types.UserID) bool {
@@ -764,6 +789,11 @@ func (c *UpdateTpSlCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 			true,
 			true,
 			constants.STOP_ORDER_TYPE_TAKE_PROFIT,
+			triggerDirectionForOrder(
+				constants.STOP_ORDER_TYPE_TAKE_PROFIT,
+				oppositeSideForPosition(pos.Size),
+				c.TakeProfit,
+			),
 		)
 		pos.TPOrderID = takeProfit.ID
 		pos.TakeProfit = c.TakeProfit
@@ -790,6 +820,11 @@ func (c *UpdateTpSlCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 			true,
 			true,
 			constants.STOP_ORDER_TYPE_STOP_LOSS,
+			triggerDirectionForOrder(
+				constants.STOP_ORDER_TYPE_STOP_LOSS,
+				oppositeSideForPosition(pos.Size),
+				c.StopLoss,
+			),
 		)
 		pos.SLOrderID = stopLoss.ID
 		pos.StopLoss = c.StopLoss
