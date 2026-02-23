@@ -3,7 +3,7 @@ import { UserTabs } from "@/features/users/components/UserTabs";
 export default async function UserPage({
   params,
 }: {
-  params: Promise<{ id: number }>;
+  params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
 

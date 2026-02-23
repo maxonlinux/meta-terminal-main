@@ -1,3 +1,5 @@
+import type { Decimal } from "decimal.js";
+
 type JsonResult<T> = {
   res: Response;
   body: T | null;

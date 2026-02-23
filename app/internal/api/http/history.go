@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
@@ -106,8 +107,8 @@ func (h *HistoryHandler) Fills(c *echo.Context) error {
 
 type PnLResponse struct {
 	// PnLResponse is a single realized PnL record for the user.
-	ID        int64  `json:"id"`
-	OrderID   int64  `json:"orderId"`
+	ID        string `json:"id"`
+	OrderID   string `json:"orderId"`
 	Symbol    string `json:"symbol"`
 	Category  string `json:"category"`
 	Side      string `json:"side"`
@@ -155,8 +156,8 @@ func (h *HistoryHandler) PnL(c *echo.Context) error {
 	resp := make([]PnLResponse, 0, len(items))
 	for _, item := range items {
 		resp = append(resp, PnLResponse{
-			ID:        item.ID,
-			OrderID:   item.OrderID,
+			ID:        strconv.FormatInt(item.ID, 10),
+			OrderID:   strconv.FormatInt(int64(item.OrderID), 10),
 			Symbol:    item.Symbol,
 			Category:  shared.CategoryToString(item.Category),
 			Side:      shared.SideToString(item.Side),

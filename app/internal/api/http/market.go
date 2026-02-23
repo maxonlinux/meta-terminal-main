@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
@@ -107,7 +108,7 @@ func (h *MarketHandler) OrderBook(c *echo.Context) error {
 }
 
 type TradeResponse struct {
-	ID        int64  `json:"id"`
+	ID        string `json:"id"`
 	Symbol    string `json:"symbol"`
 	Category  string `json:"category"`
 	Side      string `json:"side"`
@@ -136,7 +137,7 @@ func (h *MarketHandler) Trades(c *echo.Context) error {
 	resp := make([]TradeResponse, len(trades))
 	for i, t := range trades {
 		resp[i] = TradeResponse{
-			ID:        t.ID,
+			ID:        strconv.FormatInt(t.ID, 10),
 			Symbol:    t.Symbol,
 			Category:  shared.CategoryToString(t.Category),
 			Side:      shared.SideToString(t.Side),

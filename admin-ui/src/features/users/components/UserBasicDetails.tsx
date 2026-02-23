@@ -23,7 +23,7 @@ import { safeString } from "@/lib/utils";
 import { User } from "@/types";
 import { EditUserBasicDetails } from "./EditUserBasicDetails";
 
-export function UserBasicDetails({ id }: { id: number }) {
+export function UserBasicDetails({ id }: { id: string }) {
   const { data, isLoading, isValidating, error, mutate } = useSWR(
     ["admin:user", id],
     () => getUser(id),

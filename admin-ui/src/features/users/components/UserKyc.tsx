@@ -23,7 +23,7 @@ import { Loader } from "@/components/ui/loader";
 import { safeString } from "@/lib/utils";
 import type { KycListItem } from "@/types";
 
-export function UserKyc({ id }: { id: number }) {
+export function UserKyc({ id }: { id: string }) {
   const { data, isLoading, error, mutate, isValidating } = useSWR(
     ["admin:user:kyc", id],
     () => getKycRequests({ userId: id }),
@@ -31,12 +31,12 @@ export function UserKyc({ id }: { id: number }) {
 
   const item = data?.[0];
 
-  const handleApprove = async (kycId: number) => {
+  const handleApprove = async (kycId: string) => {
     await updateKycRequest(kycId, { status: "APPROVED" });
     await mutate();
   };
 
-  const handleReject = async (kycId: number) => {
+  const handleReject = async (kycId: string) => {
     const reason = window.prompt("Reject reason");
     if (!reason) return;
     await updateKycRequest(kycId, { status: "REJECTED", rejectReason: reason });

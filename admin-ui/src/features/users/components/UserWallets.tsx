@@ -32,7 +32,7 @@ import {
 import { safeString } from "@/lib/utils";
 import type { UserWallet, Wallet } from "@/types";
 
-export function UserWallets({ id }: { id: number }) {
+export function UserWallets({ id }: { id: string }) {
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
 
   const {

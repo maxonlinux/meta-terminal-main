@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
@@ -24,7 +25,7 @@ type UserHandler struct {
 }
 
 type UserProfileResponse struct {
-	ID        int64   `json:"id"`
+	ID        string  `json:"id"`
 	Email     string  `json:"email"`
 	Username  string  `json:"username"`
 	Phone     string  `json:"phone"`
@@ -35,8 +36,8 @@ type UserProfileResponse struct {
 }
 
 type UserSettingsResponse struct {
-	ID                      int64  `json:"id"`
-	UserID                  int64  `json:"userId"`
+	ID                      string `json:"id"`
+	UserID                  string `json:"userId"`
 	Is2FAEnabled            bool   `json:"is2FAEnabled"`
 	NewsAndOffers           bool   `json:"newsAndOffers"`
 	AccessToTransactionData bool   `json:"accessToTransactionData"`
@@ -45,8 +46,8 @@ type UserSettingsResponse struct {
 }
 
 type UserAddressResponse struct {
-	ID      int64   `json:"id"`
-	UserID  int64   `json:"userId"`
+	ID      string  `json:"id"`
+	UserID  string  `json:"userId"`
 	Country *string `json:"country"`
 	City    *string `json:"city"`
 	Address *string `json:"address"`
@@ -74,7 +75,7 @@ func (h *UserHandler) Profile(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "profile not found"})
 	}
 	return c.JSON(http.StatusOK, UserProfileResponse{
-		ID:        profile.UserID,
+		ID:        strconv.FormatInt(int64(profile.UserID), 10),
 		Email:     profile.Email,
 		Username:  profile.Username,
 		Phone:     profile.Phone,
@@ -115,8 +116,8 @@ func (h *UserHandler) Settings(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "settings not found"})
 	}
 	return c.JSON(http.StatusOK, UserSettingsResponse{
-		ID:                      settings.UserID,
-		UserID:                  settings.UserID,
+		ID:                      strconv.FormatInt(int64(settings.UserID), 10),
+		UserID:                  strconv.FormatInt(int64(settings.UserID), 10),
 		Is2FAEnabled:            settings.Is2FAEnabled,
 		NewsAndOffers:           settings.NewsAndOffers,
 		AccessToTransactionData: settings.AccessToTransactionData,
@@ -177,8 +178,8 @@ func (h *UserHandler) Address(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "address not found"})
 	}
 	return c.JSON(http.StatusOK, UserAddressResponse{
-		ID:      addr.UserID,
-		UserID:  addr.UserID,
+		ID:      strconv.FormatInt(int64(addr.UserID), 10),
+		UserID:  strconv.FormatInt(int64(addr.UserID), 10),
 		Country: addr.Country,
 		City:    addr.City,
 		Address: addr.Address,
@@ -327,8 +328,8 @@ type DepositRequestBody struct {
 }
 
 type FundingResponse struct {
-	ID          int64  `json:"id"`
-	UserID      int64  `json:"userId"`
+	ID          string `json:"id"`
+	UserID      string `json:"userId"`
 	Type        string `json:"type"`
 	Status      string `json:"status"`
 	Asset       string `json:"asset"`
@@ -360,8 +361,8 @@ func (h *UserHandler) FundingList(c *echo.Context) error {
 	resp := make([]FundingResponse, 0, len(items))
 	for _, item := range items {
 		resp = append(resp, FundingResponse{
-			ID:          item.ID,
-			UserID:      item.UserID,
+			ID:          strconv.FormatInt(item.ID, 10),
+			UserID:      strconv.FormatInt(item.UserID, 10),
 			Type:        item.Type,
 			Status:      item.Status,
 			Asset:       item.Asset,

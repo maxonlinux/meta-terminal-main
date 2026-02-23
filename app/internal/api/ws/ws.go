@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -493,7 +494,7 @@ func (h *wsHub) OnOrderUpdated(order *types.Order) {
 		"event": "orders",
 		"data": map[string]interface{}{
 			"orders": []map[string]interface{}{{
-				"orderId": order.ID,
+				"orderId": strconv.FormatInt(order.ID, 10),
 				"status":  shared.OrderStatusToString(order.Status),
 			}},
 		},

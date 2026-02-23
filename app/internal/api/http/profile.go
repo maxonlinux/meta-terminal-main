@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
@@ -12,7 +13,7 @@ type ProfileHandler struct {
 }
 
 type ProfileResponse struct {
-	ID       int64   `json:"id"`
+	ID       string  `json:"id"`
 	Email    string  `json:"email"`
 	Username string  `json:"username"`
 	Phone    string  `json:"phone"`
@@ -37,7 +38,7 @@ func (h *ProfileHandler) Get(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ProfileResponse{
-		ID:       profile.UserID,
+		ID:       strconv.FormatInt(int64(profile.UserID), 10),
 		Email:    profile.Email,
 		Username: profile.Username,
 		Phone:    profile.Phone,

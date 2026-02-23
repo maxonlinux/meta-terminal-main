@@ -29,7 +29,7 @@ import {
 import { safeString } from "@/lib/utils";
 import { UserTransaction } from "@/types";
 
-export function UserTransactionsTable({ id }: { id: number }) {
+export function UserTransactionsTable({ id }: { id: string }) {
   const { data, isLoading, error } = useSWR(
     ["admin:user:transactions", id],
     () => getUserTransactions(id),

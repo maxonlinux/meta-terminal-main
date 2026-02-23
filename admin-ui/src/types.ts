@@ -1,6 +1,6 @@
 export type UserPlan = {
-  id: number;
-  userId: number;
+  id: string;
+  userId: string;
   plan: string;
   isManual: boolean;
   createdAt: number;
@@ -8,7 +8,7 @@ export type UserPlan = {
 };
 
 export type User = {
-  id: number;
+  id: string;
   email: string;
   username: string;
   phone: string;
@@ -20,7 +20,7 @@ export type User = {
 };
 
 export type UserAddress = {
-  id: number;
+  id: string;
   country?: string;
   city?: string;
   address?: string;
@@ -54,7 +54,7 @@ export type UserPlanProgress = {
 };
 
 export type Wallet = {
-  id: number;
+  id: string;
   name: string;
   address: string;
   network: string;
@@ -66,7 +66,7 @@ export type Wallet = {
 };
 
 export type UserWallet = {
-  id: number;
+  id: string;
   name: string;
   address: string;
   network: string;
@@ -78,7 +78,7 @@ export type UserWallet = {
 };
 
 export type KycFile = {
-  id: number;
+  id: string;
   kind: string;
   filename: string;
   contentType: string;
@@ -86,8 +86,8 @@ export type KycFile = {
 };
 
 export type KycRequest = {
-  id: number;
-  userId: number;
+  id: string;
+  userId: string;
   docType: string;
   country: string;
   status: string;
@@ -99,7 +99,7 @@ export type KycRequest = {
 
 export type KycListItem = KycRequest & {
   user: {
-    id: number;
+    id: string;
     username: string;
     email: string;
     phone: string;

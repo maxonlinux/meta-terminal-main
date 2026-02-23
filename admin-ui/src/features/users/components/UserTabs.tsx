@@ -17,7 +17,7 @@ import { UserPlanSelector } from "./UserPlanSelector";
 import { UserTransactionsTable } from "./UserTransactionsTable";
 import { UserWallets } from "./UserWallets";
 
-export function UserTabs({ id }: { id: number }) {
+export function UserTabs({ id }: { id: string }) {
   const handleImpersonate = async () => {
     const data = await getUserImpersonation(id);
     if (!data?.code) return;

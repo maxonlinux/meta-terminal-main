@@ -57,7 +57,7 @@ const PlanSelect = ({
   );
 };
 
-export function UserPlanSelector({ id }: { id: number }) {
+export function UserPlanSelector({ id }: { id: string }) {
   const [selectedPlan, setSelectedPlan] = useState<string>();
 
   const {

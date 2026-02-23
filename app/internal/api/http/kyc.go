@@ -35,7 +35,7 @@ func NewKYCHandler(repo *kyc.Repository, usersService *users.Service) *KYCHandle
 }
 
 type KYCFileResponse struct {
-	ID          int64  `json:"id"`
+	ID          string `json:"id"`
 	Kind        string `json:"kind"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"contentType"`
@@ -43,8 +43,8 @@ type KYCFileResponse struct {
 }
 
 type KYCResponse struct {
-	ID           int64             `json:"id"`
-	UserID       int64             `json:"userId"`
+	ID           string            `json:"id"`
+	UserID       string            `json:"userId"`
 	DocType      string            `json:"docType"`
 	Country      string            `json:"country"`
 	Status       string            `json:"status"`
@@ -335,8 +335,8 @@ func saveKYCFile(baseDir string, kycID int64, kind string, header *multipart.Fil
 
 func toKYCResponse(rec *kyc.RequestRecord, files []kyc.FileRecord) KYCResponse {
 	resp := KYCResponse{
-		ID:           rec.ID,
-		UserID:       int64(rec.UserID),
+		ID:           strconv.FormatInt(int64(rec.ID), 10),
+		UserID:       strconv.FormatInt(int64(rec.UserID), 10),
 		DocType:      rec.DocType,
 		Country:      rec.Country,
 		Status:       rec.Status,
@@ -347,7 +347,7 @@ func toKYCResponse(rec *kyc.RequestRecord, files []kyc.FileRecord) KYCResponse {
 	}
 	for _, file := range files {
 		resp.Files = append(resp.Files, KYCFileResponse{
-			ID:          file.ID,
+			ID:          strconv.FormatInt(int64(file.ID), 10),
 			Kind:        file.Kind,
 			Filename:    file.Filename,
 			ContentType: file.ContentType,

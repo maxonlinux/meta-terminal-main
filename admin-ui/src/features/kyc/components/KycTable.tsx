@@ -52,12 +52,12 @@ export function KycTable() {
     getKycRequests({ status: status || undefined, q: query || undefined }),
   );
 
-  const handleApprove = async (id: number) => {
+  const handleApprove = async (id: string) => {
     await updateKycRequest(id, { status: "APPROVED" });
     await mutate();
   };
 
-  const handleReject = async (id: number) => {
+  const handleReject = async (id: string) => {
     const reason = window.prompt("Reject reason");
     if (!reason) return;
     await updateKycRequest(id, { status: "REJECTED", rejectReason: reason });

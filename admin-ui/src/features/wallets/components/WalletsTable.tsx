@@ -49,7 +49,7 @@ export function WalletsTable() {
   };
 
   const handleUpdate = async (
-    id: number,
+    id: string,
     payload: {
       name: string;
       address: string;

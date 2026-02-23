@@ -81,7 +81,7 @@ export function TransactionsTable() {
       .map((name) => ({ id: name, name }));
   }, [data]);
 
-  const handleApprove = async (id: number) => {
+  const handleApprove = async (id: string) => {
     try {
       await approveFunding(id);
       toast.success(`Transaction ${id} approved`);
@@ -91,7 +91,7 @@ export function TransactionsTable() {
     }
   };
 
-  const handleCancel = async (id: number) => {
+  const handleCancel = async (id: string) => {
     try {
       await cancelFunding(id);
       toast.success(`Transaction ${id} cancelled`);

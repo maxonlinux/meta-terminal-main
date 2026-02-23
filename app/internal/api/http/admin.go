@@ -42,8 +42,8 @@ func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walle
 }
 
 type AdminUserPlan struct {
-	ID        int64  `json:"id"`
-	UserID    int64  `json:"userId"`
+	ID        string `json:"id"`
+	UserID    string `json:"userId"`
 	Plan      string `json:"plan"`
 	IsManual  bool   `json:"isManual"`
 	CreatedAt int64  `json:"createdAt"`
@@ -51,7 +51,7 @@ type AdminUserPlan struct {
 }
 
 type AdminUser struct {
-	ID        int64          `json:"id"`
+	ID        string         `json:"id"`
 	Email     string         `json:"email"`
 	Username  string         `json:"username"`
 	Phone     string         `json:"phone"`
@@ -67,7 +67,7 @@ type AdminUserActiveRequest struct {
 }
 
 type AdminUserAddress struct {
-	ID      int64   `json:"id"`
+	ID      string  `json:"id"`
 	Country *string `json:"country"`
 	City    *string `json:"city"`
 	Address *string `json:"address"`
@@ -89,8 +89,8 @@ type AdminUserProfileUpdateRequest struct {
 }
 
 type AdminTransaction struct {
-	ID          int64  `json:"id"`
-	UserID      int64  `json:"userId"`
+	ID          string `json:"id"`
+	UserID      string `json:"userId"`
 	Type        string `json:"type"`
 	Status      string `json:"status"`
 	Amount      string `json:"amount"`
@@ -106,8 +106,8 @@ type AdminFundingUser struct {
 }
 
 type AdminFunding struct {
-	ID          int64            `json:"id"`
-	UserID      int64            `json:"userId"`
+	ID          string           `json:"id"`
+	UserID      string           `json:"userId"`
 	Type        string           `json:"type"`
 	Status      string           `json:"status"`
 	Amount      string           `json:"amount"`
@@ -154,7 +154,7 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 	res := make([]AdminUser, 0, len(profiles))
 	for _, profile := range profiles {
 		user := AdminUser{
-			ID:        profile.UserID,
+			ID:        strconv.FormatInt(int64(profile.UserID), 10),
 			Email:     profile.Email,
 			Username:  profile.Username,
 			Phone:     profile.Phone,
@@ -169,8 +169,8 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 		}
 		if record != nil {
 			user.Plan = &AdminUserPlan{
-				ID:        profile.UserID,
-				UserID:    profile.UserID,
+				ID:        strconv.FormatInt(int64(profile.UserID), 10),
+				UserID:    strconv.FormatInt(int64(profile.UserID), 10),
 				Plan:      record.Plan,
 				IsManual:  record.IsManual,
 				CreatedAt: int64(record.CreatedAt),
@@ -195,7 +195,7 @@ func (h *AdminHandler) User(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 	}
 	user := AdminUser{
-		ID:        profile.UserID,
+		ID:        strconv.FormatInt(int64(profile.UserID), 10),
 		Email:     profile.Email,
 		Username:  profile.Username,
 		Phone:     profile.Phone,
@@ -210,8 +210,8 @@ func (h *AdminHandler) User(c *echo.Context) error {
 	}
 	if record != nil {
 		user.Plan = &AdminUserPlan{
-			ID:        profile.UserID,
-			UserID:    profile.UserID,
+			ID:        strconv.FormatInt(int64(profile.UserID), 10),
+			UserID:    strconv.FormatInt(int64(profile.UserID), 10),
 			Plan:      record.Plan,
 			IsManual:  record.IsManual,
 			CreatedAt: int64(record.CreatedAt),
@@ -267,7 +267,7 @@ func (h *AdminHandler) UserAddress(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "address not found"})
 	}
 	return c.JSON(http.StatusOK, AdminUserAddress{
-		ID:      addr.UserID,
+		ID:      strconv.FormatInt(int64(addr.UserID), 10),
 		Country: addr.Country,
 		City:    addr.City,
 		Address: addr.Address,
@@ -310,8 +310,8 @@ func (h *AdminHandler) UserTransactions(c *echo.Context) error {
 	res := make([]AdminTransaction, 0, len(items))
 	for _, item := range items {
 		res = append(res, AdminTransaction{
-			ID:          item.ID,
-			UserID:      item.UserID,
+			ID:          strconv.FormatInt(int64(item.ID), 10),
+			UserID:      strconv.FormatInt(int64(item.UserID), 10),
 			Type:        item.Type,
 			Status:      item.Status,
 			Amount:      item.Amount,
@@ -347,8 +347,8 @@ func (h *AdminHandler) Funding(c *echo.Context) error {
 			}
 		}
 		res = append(res, AdminFunding{
-			ID:          item.ID,
-			UserID:      item.UserID,
+			ID:          strconv.FormatInt(item.ID, 10),
+			UserID:      strconv.FormatInt(item.UserID, 10),
 			Type:        item.Type,
 			Status:      item.Status,
 			Amount:      item.Amount,

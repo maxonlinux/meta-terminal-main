@@ -24,7 +24,7 @@ export function EditUserAddressDetails({
   address,
   onSaved,
 }: {
-  userId: number;
+  userId: string;
   address: UserAddress;
   onSaved: () => Promise<void>;
 }) {
