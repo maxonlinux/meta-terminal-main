@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
@@ -50,14 +51,15 @@ type AdminUserPlan struct {
 }
 
 type AdminUser struct {
-	ID       int64          `json:"id"`
-	Email    string         `json:"email"`
-	Username string         `json:"username"`
-	Phone    string         `json:"phone"`
-	Name     *string        `json:"name"`
-	Surname  *string        `json:"surname"`
-	IsActive bool           `json:"isActive"`
-	Plan     *AdminUserPlan `json:"Plan,omitempty"`
+	ID        int64          `json:"id"`
+	Email     string         `json:"email"`
+	Username  string         `json:"username"`
+	Phone     string         `json:"phone"`
+	Name      *string        `json:"name"`
+	Surname   *string        `json:"surname"`
+	IsActive  bool           `json:"isActive"`
+	LastLogin int64          `json:"lastLogin"`
+	Plan      *AdminUserPlan `json:"Plan,omitempty"`
 }
 
 type AdminUserActiveRequest struct {
@@ -77,6 +79,13 @@ type AdminAddressUpdateRequest struct {
 	City    *string `json:"city"`
 	Address *string `json:"address"`
 	Zip     *string `json:"zip"`
+}
+
+type AdminUserProfileUpdateRequest struct {
+	Email   string  `json:"email"`
+	Phone   string  `json:"phone"`
+	Name    *string `json:"name"`
+	Surname *string `json:"surname"`
 }
 
 type AdminTransaction struct {
@@ -145,13 +154,14 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 	res := make([]AdminUser, 0, len(profiles))
 	for _, profile := range profiles {
 		user := AdminUser{
-			ID:       profile.UserID,
-			Email:    profile.Email,
-			Username: profile.Username,
-			Phone:    profile.Phone,
-			Name:     profile.Name,
-			Surname:  profile.Surname,
-			IsActive: profile.IsActive,
+			ID:        profile.UserID,
+			Email:     profile.Email,
+			Username:  profile.Username,
+			Phone:     profile.Phone,
+			Name:      profile.Name,
+			Surname:   profile.Surname,
+			IsActive:  profile.IsActive,
+			LastLogin: shared.UnixMilliFromNano(profile.LastLogin),
 		}
 		record, err := h.planRepo.GetUserPlan(profile.UserID)
 		if err != nil {
@@ -185,13 +195,14 @@ func (h *AdminHandler) User(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 	}
 	user := AdminUser{
-		ID:       profile.UserID,
-		Email:    profile.Email,
-		Username: profile.Username,
-		Phone:    profile.Phone,
-		Name:     profile.Name,
-		Surname:  profile.Surname,
-		IsActive: profile.IsActive,
+		ID:        profile.UserID,
+		Email:     profile.Email,
+		Username:  profile.Username,
+		Phone:     profile.Phone,
+		Name:      profile.Name,
+		Surname:   profile.Surname,
+		IsActive:  profile.IsActive,
+		LastLogin: shared.UnixMilliFromNano(profile.LastLogin),
 	}
 	record, err := h.planRepo.GetUserPlan(profile.UserID)
 	if err != nil {
@@ -208,6 +219,24 @@ func (h *AdminHandler) User(c *echo.Context) error {
 		}
 	}
 	return c.JSON(http.StatusOK, user)
+}
+
+func (h *AdminHandler) UpdateUserProfile(c *echo.Context) error {
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	var req AdminUserProfileUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Phone) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email and phone are required"})
+	}
+	if err := h.users.UpdateProfileDetails(userID, req.Email, req.Phone, req.Name, req.Surname); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update user"})
+	}
+	return c.NoContent(http.StatusOK)
 }
 
 func (h *AdminHandler) SetUserActive(c *echo.Context) error {

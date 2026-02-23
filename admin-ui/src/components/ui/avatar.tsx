@@ -53,7 +53,7 @@ const Avatar = ({
         isSquare
           ? "rounded-(--avatar-radius) *:rounded-(--avatar-radius)"
           : "rounded-full *:rounded-full",
-        className
+        className,
       )}
     >
       {initials && (

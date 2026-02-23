@@ -3,8 +3,8 @@ export type UserPlan = {
   userId: number;
   plan: string;
   isManual: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type User = {
@@ -14,8 +14,8 @@ export type User = {
   phone: string;
   name?: string;
   surname?: string;
-  password: string;
   isActive: boolean;
+  lastLogin: number;
   Plan?: UserPlan;
 };
 
@@ -28,24 +28,80 @@ export type UserAddress = {
 };
 
 export type UserTransaction = {
-  id: number;
-  userId: number;
-  balanceId: number;
+  id: string;
+  userId: string;
   type: string;
   status: string;
-  amount: number;
-  fee: number;
+  amount: string;
   destination?: string;
-  reference?: string;
   message?: string;
-  metadata?: JSON;
   createdBy?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type Transaction = UserTransaction & {
   User: {
     username: string;
+  };
+};
+
+export type UserPlanProgress = {
+  current: string | null;
+  next: string | null;
+  remaining: string;
+  netDeposits: string;
+};
+
+export type Wallet = {
+  id: number;
+  name: string;
+  address: string;
+  network: string;
+  currency: string;
+  custom: boolean;
+  active: boolean;
+  created: number;
+  updated: number;
+};
+
+export type UserWallet = {
+  id: number;
+  name: string;
+  address: string;
+  network: string;
+  currency: string;
+  custom: boolean;
+  active: boolean;
+  assigned: number;
+  by: string;
+};
+
+export type KycFile = {
+  id: number;
+  kind: string;
+  filename: string;
+  contentType: string;
+  size: number;
+};
+
+export type KycRequest = {
+  id: number;
+  userId: number;
+  docType: string;
+  country: string;
+  status: string;
+  rejectReason?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  files: KycFile[];
+};
+
+export type KycListItem = KycRequest & {
+  user: {
+    id: number;
+    username: string;
+    email: string;
+    phone: string;
   };
 };

@@ -41,6 +41,9 @@ type Config struct {
 	AdminCookieMaxAge int
 	OutboxSegmentSize int64
 	SnowflakeNode     int64
+	BotUserID         int64
+	BotMinBalance     int64
+	BotMaxBalance     int64
 	LogLevel          string
 	LogFormat         string
 }
@@ -83,6 +86,9 @@ func Load() Config {
 			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
 			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
 			SnowflakeNode:     envInt64("SNOWFLAKE_NODE", 0),
+			BotUserID:         envInt64("BOT_USER_ID", 999999999),
+			BotMinBalance:     envInt64("BOT_MIN_BALANCE", 10000000),
+			BotMaxBalance:     envInt64("BOT_MAX_BALANCE", 20000000),
 			LogLevel:          envString("LOG_LEVEL", "info"),
 			LogFormat:         envString("LOG_FORMAT", "text"),
 		}

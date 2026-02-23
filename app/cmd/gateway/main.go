@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -128,9 +129,14 @@ func main() {
 	}
 	eng.RebuildBooks()
 
-	mmaker := mm.New(eng, reg, mm.Config{})
+	mmaker := mm.New(eng, reg, mm.Config{
+		BotUserID:  types.UserID(cfg.BotUserID),
+		MinBalance: cfg.BotMinBalance,
+		MaxBalance: cfg.BotMaxBalance,
+	})
 	mmaker.Start(ctx)
 	startSystemOrderCleanup(ctx, persistenceStore, 2*time.Minute)
+	startBotDataCleanup(ctx, persistenceStore, cfg.BotUserID, 2*time.Minute)
 	natsConn, err := startPriceSubscriber(ctx, cfg, eng, mmaker)
 	if err != nil {
 		log.Fatalf("nats price subscriber: %v", err)
@@ -176,10 +182,44 @@ func startSystemOrderCleanup(ctx context.Context, store *persistence.Store, inte
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				cleanupMu.Lock()
 				cutoff := utils.NowNano() - uint64(interval)
 				if _, err := store.CleanupSystemOrders(cutoff); err != nil {
 					logging.Log().Error().Err(err).Msg("system order cleanup failed")
 				}
+				cleanupMu.Unlock()
+			}
+		}
+	}()
+}
+
+var cleanupMu sync.Mutex
+
+// startBotDataCleanup periodically removes old bot data from all tables.
+func startBotDataCleanup(ctx context.Context, store *persistence.Store, botUserID int64, interval time.Duration) {
+	if store == nil || botUserID == 0 {
+		return
+	}
+	if interval <= 0 {
+		interval = 2 * time.Minute
+	}
+	botID := types.UserID(botUserID)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanupMu.Lock()
+				cutoff := utils.NowNano() - uint64(interval)
+				if count, err := store.CleanupBotData(botID, cutoff); err != nil {
+					logging.Log().Error().Err(err).Int64("bot_id", botUserID).Msg("bot data cleanup failed")
+				} else if count > 0 {
+					logging.Log().Info().Int64("bot_id", botUserID).Int64("deleted", count).Msg("bot data cleaned up")
+				}
+				cleanupMu.Unlock()
 			}
 		}
 	}()

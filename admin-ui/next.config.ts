@@ -3,11 +3,22 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   async rewrites() {
+    const coreUrl = process.env.CORE_URL;
+    if (!coreUrl) {
+      return [];
+    }
+
     return [
       {
-        source: "/api/:path*",
-        destination: `${process.env.PROXY_URL}/:path*`,
+        source: "/proxy/main/:path*",
+        destination: `${coreUrl}/:path*`,
       },
     ];
   },

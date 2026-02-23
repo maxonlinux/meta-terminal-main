@@ -12,7 +12,7 @@ const DescriptionList = ({
       ref={ref}
       className={twMerge(
         "grid grid-cols-1 text-base/6 sm:grid-cols-[min(50%,calc(var(--spacing)*80))_auto] sm:text-sm/6",
-        className
+        className,
       )}
       {...props}
     />
@@ -29,7 +29,7 @@ const DescriptionTerm = ({
       ref={ref}
       className={twMerge(
         "col-start-1 border-t pt-3 text-muted-fg first:border-none sm:py-3",
-        className
+        className,
       )}
       {...props}
     />
@@ -46,7 +46,7 @@ const DescriptionDetails = ({
       data-slot="description-details"
       className={twMerge(
         "pt-1 pb-3 text-fg sm:border-t sm:nth-2:border-none sm:py-3",
-        className
+        className,
       )}
     />
   );

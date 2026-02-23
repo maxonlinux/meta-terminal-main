@@ -81,8 +81,8 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 
 	newTail, err := replayLog(log, tail, opts.EventSink, tailPath)
 	if err != nil {
-		_ = log.Close()
-		return nil, err
+		logging.Log().Error().Err(err).Msg("outbox: replay failed, continuing with last good tail")
+		newTail = tail
 	}
 
 	queue := newQueue(opts)
@@ -579,8 +579,7 @@ func (w *worker) run() {
 			}
 		case logRecordCommit:
 			if err := applyTx(rec.txID, rec.endOffset); err != nil {
-				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Int64("end_offset", rec.endOffset).Msg("outbox: apply tx failed, worker stopped")
-				return
+				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Int64("end_offset", rec.endOffset).Msg("outbox: apply tx failed, will retry on restart")
 			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
@@ -623,7 +622,8 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 	}
 	segments, err := listSegments(log.basePath)
 	if err != nil {
-		return 0, err
+		logging.Log().Error().Err(err).Msg("outbox: replay list segments failed")
+		return offset, nil
 	}
 	if len(segments) == 0 {
 		return offset, nil
@@ -663,7 +663,8 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 		}
 		file, err := os.Open(seg.path)
 		if err != nil {
-			return appliedOffset, err
+			logging.Log().Error().Err(err).Str("path", seg.path).Msg("outbox: replay open segment failed, skipping")
+			continue
 		}
 		seekOffset := int64(0)
 		if offset > segStart {
@@ -671,7 +672,8 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 		}
 		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
 			_ = file.Close()
-			return appliedOffset, err
+			logging.Log().Error().Err(err).Msg("outbox: replay seek failed, skipping segment")
+			continue
 		}
 		reader := bufio.NewReaderSize(file, 1<<20)
 		pos := segStart + seekOffset
@@ -680,9 +682,10 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 			if err == io.EOF {
 				break
 			}
-			if err != nil {
+			if err != nil && err != io.EOF {
 				_ = file.Close()
-				return appliedOffset, err
+				logging.Log().Error().Err(err).Msg("outbox: replay read record failed, stopping segment")
+				break
 			}
 			pos += int64(size)
 			lastOffset = pos
@@ -695,15 +698,13 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 				pending[rec.txID] = append(pending[rec.txID], rec)
 			case logRecordCommit:
 				if err := applyTx(rec.txID); err != nil {
-					_ = file.Close()
-					return lastOffset, err
+					logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Msg("outbox: replay apply tx failed, skipping")
 				}
 			case logRecordAbort:
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
 				if err := storeTail(tailPath, appliedOffset); err != nil {
-					_ = file.Close()
-					return lastOffset, err
+					logging.Log().Error().Err(err).Msg("outbox: replay store tail failed on abort")
 				}
 			}
 		}

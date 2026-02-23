@@ -21,7 +21,7 @@ const Link = ({ className, ref, ...props }: LinkProps) => {
           "disabled:cursor-default disabled:text-muted-fg forced-colors:disabled:text-[GrayText]",
           "href" in props && "cursor-pointer",
         ],
-        className
+        className,
       )}
       {...props}
     />

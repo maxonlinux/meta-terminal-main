@@ -11,13 +11,14 @@ type User struct {
 }
 
 type UserProfile struct {
-	UserID   types.UserID
-	Username string
-	Email    string
-	Phone    string
-	Name     *string
-	Surname  *string
-	IsActive bool
+	UserID    types.UserID
+	Username  string
+	Email     string
+	Phone     string
+	Name      *string
+	Surname   *string
+	IsActive  bool
+	LastLogin uint64
 }
 
 type UserSettings struct {
@@ -46,6 +47,8 @@ type UserStore interface {
 	GetProfile(userID types.UserID) (*UserProfile, error)
 	UpdateProfile(userID types.UserID, name *string, surname *string) error
 	SetActive(userID types.UserID, active bool) error
+	UpdateLastLogin(userID types.UserID, lastLogin uint64) error
+	UpdateProfileDetails(userID types.UserID, email, phone string, name *string, surname *string) error
 	GetSettings(userID types.UserID) (*UserSettings, error)
 	UpdateSettings(userID types.UserID, settings UserSettings) error
 	GetAddress(userID types.UserID) (*UserAddress, error)

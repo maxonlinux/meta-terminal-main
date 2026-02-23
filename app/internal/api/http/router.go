@@ -184,9 +184,9 @@ func (r *Router) Register(e *echo.Echo) {
 
 	fundingGroup := authenticated.Group("/user/funding")
 	fundingGroup.GET("", r.UserHandler.FundingList)
+	fundingGroup.POST("/deposit", r.UserHandler.FundingDeposit)
 
 	fundingOtpGroup := otpRequired.Group("/user/funding")
-	fundingOtpGroup.POST("/deposit", r.UserHandler.FundingDeposit)
 	fundingOtpGroup.POST("/withdraw", r.UserHandler.FundingWithdraw)
 
 	historyGroup := authenticated.Group("/user/history")
@@ -221,6 +221,7 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.PATCH("/kyc/:id", r.KYCHandler.UpdateRequest)
 	adminGroup.GET("/users", r.AdminHandler.Users)
 	adminGroup.GET("/users/:id", r.AdminHandler.User)
+	adminGroup.PATCH("/users/:id/profile", r.AdminHandler.UpdateUserProfile)
 	adminGroup.PATCH("/users/:id/active", r.AdminHandler.SetUserActive)
 	adminGroup.GET("/users/:id/address", r.AdminHandler.UserAddress)
 	adminGroup.PATCH("/users/:id/address", r.AdminHandler.UpdateUserAddress)

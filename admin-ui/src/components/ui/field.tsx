@@ -76,7 +76,7 @@ const Fieldset = ({
     <fieldset
       className={twMerge(
         "*:data-[slot=text]:mt-1 [&>*+[data-slot=control]]:mt-6",
-        className
+        className,
       )}
       {...props}
     />
@@ -90,7 +90,7 @@ const Legend = ({ className, ...props }: React.ComponentProps<"legend">) => {
       {...props}
       className={twMerge(
         "font-semibold text-base/6 data-disabled:opacity-50",
-        className
+        className,
       )}
     />
   );

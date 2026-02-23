@@ -34,10 +34,10 @@ const generateCompoundVariants = (sides: Array<Sides>) => {
       side === "top"
         ? "top-2 inset-x-2 rounded-lg ring-1 border-b-0"
         : side === "bottom"
-        ? "bottom-2 inset-x-2 rounded-lg ring-1 border-t-0"
-        : side === "left"
-        ? "left-2 inset-y-2 rounded-lg ring-1 border-r-0"
-        : "right-2 inset-y-2 rounded-lg ring-1 border-l-0",
+          ? "bottom-2 inset-x-2 rounded-lg ring-1 border-t-0"
+          : side === "left"
+            ? "left-2 inset-y-2 rounded-lg ring-1 border-r-0"
+            : "right-2 inset-y-2 rounded-lg ring-1 border-l-0",
   }));
 };
 
@@ -110,7 +110,7 @@ const SheetContent = ({
           "fixed inset-0 z-50 h-(--visual-viewport-height,100vh) w-screen overflow-hidden bg-black/15",
           isEntering && "fade-in animate-in duration-500",
           isExiting && "fade-out animate-out duration-300",
-          isBlurred && "backdrop-blur-[1px] backdrop-filter"
+          isBlurred && "backdrop-blur-[1px] backdrop-filter",
         )
       }
       {...props}
@@ -122,7 +122,7 @@ const SheetContent = ({
             side,
             isFloat,
             className,
-          })
+          }),
         )}
       >
         <Dialog aria-label={props["aria-label"]} role={role}>

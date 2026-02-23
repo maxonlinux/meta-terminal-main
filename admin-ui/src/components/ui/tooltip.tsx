@@ -68,7 +68,7 @@ const TooltipContent = ({
           ...renderProps,
           inverse,
           className,
-        })
+        }),
       )}
     >
       {arrow && (
@@ -82,7 +82,7 @@ const TooltipContent = ({
               "group-placement-left:-rotate-90 block group-placement-bottom:rotate-180 group-placement-right:rotate-90 forced-colors:fill-[Canvas] forced-colors:stroke-[ButtonBorder]",
               inverse
                 ? "fill-fg stroke-transparent"
-                : "fill-overlay stroke-(--tooltip-border)"
+                : "fill-overlay stroke-(--tooltip-border)",
             )}
           >
             <path d="M0 0 L6 6 L12 0" />

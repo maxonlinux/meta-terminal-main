@@ -6,10 +6,10 @@ import {
   CheckboxGroup as CheckboxGroupPrimitive,
   Checkbox as CheckboxPrimitive,
   composeRenderProps,
+  Label,
 } from "react-aria-components";
 import { twMerge } from "tailwind-merge";
 import { cx } from "@/lib/primitive";
-import { Label } from "react-aria-components";
 
 export function CheckboxGroup({ className, ...props }: CheckboxGroupProps) {
   return (
@@ -18,7 +18,7 @@ export function CheckboxGroup({ className, ...props }: CheckboxGroupProps) {
       data-slot="control"
       className={cx(
         "space-y-3 has-[[slot=description]]:space-y-6 has-[[slot=description]]:**:data-[slot=label]:font-medium **:[[slot=description]]:block",
-        className
+        className,
       )}
     />
   );
@@ -30,7 +30,7 @@ export function Checkbox({ className, children, ...props }: CheckboxProps) {
       data-slot="control"
       className={cx(
         "group block [--indicator-mt:--spacing(0.75)] disabled:opacity-50 sm:[--indicator-mt:--spacing(1)]",
-        className
+        className,
       )}
       {...props}
     >
@@ -38,7 +38,7 @@ export function Checkbox({ className, children, ...props }: CheckboxProps) {
         children,
         (
           children,
-          { isSelected, isIndeterminate, isFocusVisible, isInvalid }
+          { isSelected, isIndeterminate, isFocusVisible, isInvalid },
         ) => {
           const isStringChild = typeof children === "string";
           const indicator = isIndeterminate ? (
@@ -60,7 +60,7 @@ export function Checkbox({ className, children, ...props }: CheckboxProps) {
                 "*:data-[slot=indicator]:col-start-1 *:data-[slot=indicator]:row-start-1 *:data-[slot=indicator]:mt-(--indicator-mt)",
                 "*:data-[slot=label]:col-start-2 *:data-[slot=label]:row-start-1",
                 "*:[[slot=description]]:col-start-2 *:[[slot=description]]:row-start-2",
-                "has-[[slot=description]]:**:data-[slot=label]:font-medium"
+                "has-[[slot=description]]:**:data-[slot=label]:font-medium",
               )}
             >
               <span
@@ -86,7 +86,7 @@ export function Checkbox({ className, children, ...props }: CheckboxProps) {
               {content}
             </div>
           );
-        }
+        },
       )}
     </CheckboxPrimitive>
   );

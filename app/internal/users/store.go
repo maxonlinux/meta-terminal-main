@@ -56,7 +56,8 @@ func initDB(db *sql.DB) error {
 			phone TEXT NOT NULL,
 			name TEXT,
 			surname TEXT,
-			is_active INTEGER NOT NULL
+			is_active INTEGER NOT NULL,
+			last_login INTEGER NOT NULL DEFAULT 0
 		);
 
 		CREATE TABLE IF NOT EXISTS user_settings (
@@ -75,8 +76,20 @@ func initDB(db *sql.DB) error {
 			address TEXT,
 			zip TEXT
 		);
-	`)
-	return err
+  `)
+	if err != nil {
+		return err
+	}
+
+	_, alterErr := db.Exec(`alter table user_profiles add column last_login integer not null default 0;`)
+	if alterErr != nil && !isDuplicateColumnError(alterErr) {
+		return alterErr
+	}
+	_, updateErr := db.Exec(`update user_profiles set last_login = 0 where last_login is null;`)
+	if updateErr != nil {
+		return updateErr
+	}
+	return nil
 }
 
 func (s *SQLiteStore) CreateUser(username, passwordHash, email, phone string) (types.UserID, error) {
@@ -155,21 +168,25 @@ func (s *SQLiteStore) UpdatePassword(userID types.UserID, passwordHash string) e
 }
 
 func (s *SQLiteStore) GetProfile(userID types.UserID) (*UserProfile, error) {
-	row := s.db.QueryRow(`select u.id, u.username, p.email, p.phone, p.name, p.surname, p.is_active from users u join user_profiles p on u.id = p.user_id where u.id = ?`, userID)
+	row := s.db.QueryRow(`select u.id, u.username, p.email, p.phone, p.name, p.surname, p.is_active, p.last_login from users u join user_profiles p on u.id = p.user_id where u.id = ?`, userID)
 	var profile UserProfile
 	var isActive int
-	if err := row.Scan(&profile.UserID, &profile.Username, &profile.Email, &profile.Phone, &profile.Name, &profile.Surname, &isActive); err != nil {
+	var lastLogin sql.NullInt64
+	if err := row.Scan(&profile.UserID, &profile.Username, &profile.Email, &profile.Phone, &profile.Name, &profile.Surname, &isActive, &lastLogin); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
 	profile.IsActive = isActive == 1
+	if lastLogin.Valid {
+		profile.LastLogin = uint64(lastLogin.Int64)
+	}
 	return &profile, nil
 }
 
 func (s *SQLiteStore) ListProfiles(limit, offset int, search string) ([]UserProfile, error) {
-	query := `select u.id, u.username, p.email, p.phone, p.name, p.surname, p.is_active
+	query := `select u.id, u.username, p.email, p.phone, p.name, p.surname, p.is_active, p.last_login
 		from users u join user_profiles p on u.id = p.user_id`
 	args := []interface{}{}
 	if search != "" {
@@ -197,9 +214,10 @@ func (s *SQLiteStore) ListProfiles(limit, offset int, search string) ([]UserProf
 	for rows.Next() {
 		var profile UserProfile
 		var isActive int
+		var lastLogin sql.NullInt64
 		var name sql.NullString
 		var surname sql.NullString
-		if err := rows.Scan(&profile.UserID, &profile.Username, &profile.Email, &profile.Phone, &name, &surname, &isActive); err != nil {
+		if err := rows.Scan(&profile.UserID, &profile.Username, &profile.Email, &profile.Phone, &name, &surname, &isActive, &lastLogin); err != nil {
 			return nil, err
 		}
 		if name.Valid {
@@ -209,6 +227,9 @@ func (s *SQLiteStore) ListProfiles(limit, offset int, search string) ([]UserProf
 			profile.Surname = &surname.String
 		}
 		profile.IsActive = isActive == 1
+		if lastLogin.Valid {
+			profile.LastLogin = uint64(lastLogin.Int64)
+		}
 		res = append(res, profile)
 	}
 	return res, nil
@@ -219,12 +240,22 @@ func (s *SQLiteStore) UpdateProfile(userID types.UserID, name *string, surname *
 	return err
 }
 
+func (s *SQLiteStore) UpdateProfileDetails(userID types.UserID, email, phone string, name *string, surname *string) error {
+	_, err := s.db.Exec(`update user_profiles set email = ?, phone = ?, name = ?, surname = ? where user_id = ?`, email, phone, name, surname, userID)
+	return err
+}
+
 func (s *SQLiteStore) SetActive(userID types.UserID, active bool) error {
 	flag := 0
 	if active {
 		flag = 1
 	}
 	_, err := s.db.Exec(`update user_profiles set is_active = ? where user_id = ?`, flag, userID)
+	return err
+}
+
+func (s *SQLiteStore) UpdateLastLogin(userID types.UserID, lastLogin uint64) error {
+	_, err := s.db.Exec(`update user_profiles set last_login = ? where user_id = ?`, lastLogin, userID)
 	return err
 }
 
@@ -279,4 +310,11 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "duplicate column name")
 }

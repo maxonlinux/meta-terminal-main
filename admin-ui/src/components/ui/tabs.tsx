@@ -36,7 +36,7 @@ const Tabs = ({
         className={cx(
           orientation === "vertical" ? "w-full flex-row" : "flex-col",
           "group/tabs flex gap-4 forced-color-adjust-none",
-          className
+          className,
         )}
         ref={ref}
         {...props}
@@ -67,7 +67,7 @@ const TabList = <T extends object>({
           orientation === "vertical" &&
             "min-w-56 shrink-0 flex-col items-start gap-y-(--tab-list-gutter) border-l px-(--tab-list-gutter) [--tab-list-gutter:--spacing(2)]",
           className,
-        ])
+        ]),
       )}
     />
   );
@@ -94,7 +94,7 @@ const Tab = ({ children, className, ref, ...props }: TabProps) => {
         "selected:text-primary text-muted-fg hover:bg-secondary selected:hover:bg-primary/20 hover:text-fg selected:hover:text-primary-subtle-fg focus:ring-0",
         "disabled:opacity-50",
         "href" in props ? "cursor-pointer" : "cursor-default",
-        className
+        className,
       )}
     >
       {(values) => (
@@ -106,7 +106,7 @@ const Tab = ({ children, className, ref, ...props }: TabProps) => {
               "absolute bg-primary transition-[translate,width,height] duration-200",
               orientation === "horizontal"
                 ? "-bottom-[calc(var(--tab-gutter-y)+1px)] right-(--tab-gutter-x) left-(--tab-gutter-x) h-0.5"
-                : "-left-[calc(var(--tab-gutter-x)-var(--tab-list-gutter)+1px)] top-(--tab-gutter-y) bottom-(--tab-gutter-y) w-0.5"
+                : "-left-[calc(var(--tab-gutter-x)-var(--tab-list-gutter)+1px)] top-(--tab-gutter-y) bottom-(--tab-gutter-y) w-0.5",
             )}
           />
         </>
@@ -126,7 +126,7 @@ const TabPanel = ({ className, ref, ...props }: TabPanelProps) => {
       data-slot="tab-panel"
       className={cx(
         "flex-1 text-fg text-sm/6 focus-visible:outline-hidden",
-        className
+        className,
       )}
     />
   );

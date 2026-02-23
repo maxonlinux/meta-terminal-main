@@ -53,7 +53,7 @@ const MenuTrigger = ({ className, ref, ...props }: MenuTriggerProps) => (
     className={cx(
       "relative inline text-left outline-hidden focus-visible:ring-1 focus-visible:ring-primary",
       "*:data-[slot=chevron]:size-5 sm:*:data-[slot=chevron]:size-4",
-      className
+      className,
     )}
     {...props}
   />
@@ -127,10 +127,10 @@ const MenuItem = ({ className, intent, children, ...props }: MenuItemProps) => {
                     "open:bg-warning-subtle open:text-warning-subtle-fg",
                   intent === undefined &&
                     "open:bg-accent open:text-accent-fg open:*:data-[slot=icon]:text-accent-fg open:*:[.text-muted-fg]:text-accent-fg",
-                  className
+                  className,
                 )
               : className,
-          })
+          }),
       )}
       textValue={textValue}
       {...props}
@@ -141,7 +141,7 @@ const MenuItem = ({ className, intent, children, ...props }: MenuItemProps) => {
             <span
               className={twJoin(
                 "group-has-data-[slot=avatar]:absolute group-has-data-[slot=avatar]:right-0",
-                "group-has-data-[slot=icon]:absolute group-has-data-[slot=icon]:right-0"
+                "group-has-data-[slot=icon]:absolute group-has-data-[slot=icon]:right-0",
               )}
             >
               {values.selectionMode === "single" && (
@@ -186,7 +186,7 @@ const MenuHeader = ({
     className={twMerge(
       "col-span-full px-2.5 py-2 font-medium text-base sm:text-sm",
       separator && "-mx-1 mb-1 border-b sm:px-3 sm:pb-[0.625rem]",
-      className
+      className,
     )}
     {...props}
   />

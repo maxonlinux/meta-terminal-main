@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
-import { useTheme } from "@/components/theme-provider"
-import { Toaster as ToasterPrimitive, type ToasterProps } from "sonner"
+import { Toaster as ToasterPrimitive, type ToasterProps } from "sonner";
+import { useTheme } from "@/components/theme-provider";
 
 const Toast = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  const { theme = "system" } = useTheme();
   return (
     <ToasterPrimitive
       theme={theme as ToasterProps["theme"]}
@@ -39,8 +39,8 @@ const Toast = ({ ...props }: ToasterProps) => {
       }
       {...props}
     />
-  )
-}
+  );
+};
 
-export type { ToasterProps }
-export { Toast }
+export type { ToasterProps };
+export { Toast };

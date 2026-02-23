@@ -28,7 +28,7 @@ export function Input({ className, ref, ...props }: InputProps) {
           "disabled:bg-muted disabled:opacity-50 forced-colors:in-disabled:text-[GrayText]",
           "in-disabled:bg-muted in-disabled:opacity-50 forced-colors:in-disabled:text-[GrayText]",
           "dark:scheme-dark",
-          className
+          className,
         )}
         {...props}
       />
@@ -69,7 +69,7 @@ export function InputGroup({ className, ...props }: GroupProps) {
         "[&>button:first-child]:left-0 [&>button:last-child]:right-0",
 
         "[&>[data-slot='icon']:not([class*='text-'])]:text-muted-fg [&>[data-slot='loader']:not([class*='text-'])]:text-muted-fg [&>[data-slot='text']:not([class*='text-'])]:text-muted-fg",
-        className
+        className,
       )}
       {...props}
     />

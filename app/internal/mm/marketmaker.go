@@ -36,6 +36,7 @@ type Config struct {
 	SkipPercent   float64
 	BotUserID     types.UserID
 	MinBalance    int64
+	MaxBalance    int64
 }
 
 type MarketMaker struct {
@@ -82,6 +83,9 @@ func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
 	}
 	if cfg.MinBalance <= 0 {
 		cfg.MinBalance = defaultMinBalance
+	}
+	if cfg.MaxBalance <= 0 {
+		cfg.MaxBalance = cfg.MinBalance * 2
 	}
 
 	return &MarketMaker{
@@ -467,7 +471,9 @@ func (m *MarketMaker) ensureBalance(userID types.UserID, asset string, minBalanc
 	if math.Cmp(current, minBalance) >= 0 {
 		return
 	}
-	delta := math.Sub(minBalance, current)
+	targetBalance := m.cfg.MaxBalance
+	delta := fixed.NewI(targetBalance, 0)
+	delta = delta.Sub(current)
 	if math.Sign(delta) <= 0 {
 		return
 	}

@@ -112,7 +112,7 @@ export function Button({
           size,
           isCircle,
         }),
-        className
+        className,
       )}
     />
   );

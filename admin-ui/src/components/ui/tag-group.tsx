@@ -21,7 +21,7 @@ export function TagGroup({ className, ...props }: TagGroupProps) {
       data-slot="control"
       className={twMerge(
         "flex flex-col gap-y-1 *:data-[slot=label]:font-medium",
-        className
+        className,
       )}
       {...props}
     />
@@ -53,7 +53,7 @@ export function Tag({ children, className, ...props }: TagProps) {
         "cursor-default rounded-full px-2",
         "selected:inset-ring-ring/70 selected:bg-primary-subtle selected:text-primary-subtle-fg",
         "disabled:opacity-50 disabled:forced-colors:text-[GrayText]",
-        className
+        className,
       )}
       {...props}
     >

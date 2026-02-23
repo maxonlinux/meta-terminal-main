@@ -11,6 +11,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/config"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 )
 
 type AuthHandler struct {
@@ -111,6 +112,9 @@ func (h *AuthHandler) Login(c *echo.Context) error {
 
 	if !h.authService.ValidatePassword(user, req.Password) {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+	}
+	if err := h.authService.UpdateLastLogin(user.UserID, utils.NowNano()); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update last login"})
 	}
 
 	token, err := h.jwtService.CreateToken(user.UserID, user.Username)

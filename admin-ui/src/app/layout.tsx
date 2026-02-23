@@ -3,9 +3,6 @@ import { IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Toast } from "@/components/ui/toast";
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
-import AppSidebar from "./components/AppSidebar";
-import AppSidebarNav from "./components/AppSidebarNav";
 
 const ibmPlexSans = IBM_Plex_Sans({
   weight: ["200", "300", "400", "500", "600", "700"],
@@ -31,13 +28,7 @@ export default function RootLayout({
       <body className={`${ibmPlexSans.variable} antialiased dark`}>
         <Providers>
           <Toast />
-          <SidebarProvider>
-            <AppSidebar collapsible="dock" />
-            <SidebarInset>
-              <AppSidebarNav />
-              <main className="p-4 lg:p-6">{children}</main>
-            </SidebarInset>
-          </SidebarProvider>
+          {children}
         </Providers>
       </body>
     </html>

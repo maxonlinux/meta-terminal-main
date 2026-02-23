@@ -62,6 +62,59 @@ func (s *Store) CleanupSystemOrders(cutoff uint64) (int64, error) {
 	return count, nil
 }
 
+// CleanupBotData removes all data for a specific bot user ID across all tables.
+func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	var totalCount int64
+
+	tables := []string{
+		"orders",
+		"fills",
+		"positions",
+		"rpnl_events",
+		"balances",
+	}
+
+	for _, table := range tables {
+		var res sql.Result
+		var err error
+
+		switch table {
+		case "orders":
+			res, err = s.db.Exec(
+				`delete from orders where user_id = ? and status in (?, ?, ?, ?) and updated_at <= ?`,
+				botUserID,
+				constants.ORDER_STATUS_FILLED,
+				constants.ORDER_STATUS_CANCELED,
+				constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED,
+				constants.ORDER_STATUS_DEACTIVATED,
+				cutoff,
+			)
+		case "fills":
+			res, err = s.db.Exec(`delete from fills where user_id = ?`, botUserID)
+		case "positions":
+			res, err = s.db.Exec(`delete from positions where user_id = ?`, botUserID)
+		case "rpnl_events":
+			res, err = s.db.Exec(`delete from rpnl_events where user_id = ?`, botUserID)
+		case "balances":
+			res, err = s.db.Exec(`delete from balances where user_id = ?`, botUserID)
+		}
+
+		if err != nil {
+			return totalCount, fmt.Errorf("cleanup %s: %w", table, err)
+		}
+		count, err := res.RowsAffected()
+		if err != nil {
+			return totalCount, err
+		}
+		totalCount += count
+	}
+
+	return totalCount, nil
+}
+
 type positionKey struct {
 	userID types.UserID
 	symbol string
@@ -418,6 +471,26 @@ func (s *Store) ListFundings(userID types.UserID, limit int, offset int) ([]Fund
 	return res, nil
 }
 
+func (s *Store) GetPendingFundings() ([]FundingRecord, error) {
+	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings where status = 'PENDING'`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	res := make([]FundingRecord, 0)
+	for rows.Next() {
+		var r FundingRecord
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Type, &r.Status, &r.Asset, &r.Amount, &r.Destination, &r.CreatedBy, &r.Message, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	return res, nil
+}
+
 func (s *Store) ListFundingsAll(limit int, offset int, search string) ([]FundingRecord, error) {
 	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings`
 	args := []interface{}{}
@@ -619,6 +692,58 @@ func (s *Store) loadCore(store *oms.Service, portfolio *portfolio.Service) error
 	}
 	if err := loadOpenOrders(s.db, store); err != nil {
 		return err
+	}
+	if err := loadPendingFundings(s.db, portfolio); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadPendingFundings(db *sql.DB, portfolio *portfolio.Service) error {
+	query := `select id, user_id, type, status, asset, amount, destination, created_by, message, created_at, updated_at from fundings where status = 'PENDING'`
+	rows, err := db.Query(query)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r struct {
+			ID          types.FundingID
+			UserID      types.UserID
+			Type        string
+			Status      string
+			Asset       string
+			Amount      string
+			Destination string
+			CreatedBy   string
+			Message     string
+			CreatedAt   uint64
+			UpdatedAt   uint64
+		}
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Type, &r.Status, &r.Asset, &r.Amount, &r.Destination, &r.CreatedBy, &r.Message, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return err
+		}
+		amount, err := fixed.Parse(r.Amount)
+		if err != nil {
+			continue
+		}
+		if portfolio.Fundings == nil {
+			portfolio.Fundings = make(map[types.FundingID]*types.FundingRequest)
+		}
+		portfolio.Fundings[r.ID] = &types.FundingRequest{
+			ID:          r.ID,
+			UserID:      r.UserID,
+			Type:        types.FundingType(r.Type),
+			Status:      types.FundingStatus(r.Status),
+			Asset:       r.Asset,
+			Amount:      types.Quantity(amount),
+			Destination: r.Destination,
+			CreatedBy:   types.FundingCreatedBy(r.CreatedBy),
+			Message:     r.Message,
+			CreatedAt:   r.CreatedAt,
+			UpdatedAt:   r.UpdatedAt,
+		}
 	}
 	return nil
 }

@@ -24,13 +24,14 @@ type UserHandler struct {
 }
 
 type UserProfileResponse struct {
-	ID       int64   `json:"id"`
-	Email    string  `json:"email"`
-	Username string  `json:"username"`
-	Phone    string  `json:"phone"`
-	Name     *string `json:"name"`
-	Surname  *string `json:"surname"`
-	IsActive bool    `json:"isActive"`
+	ID        int64   `json:"id"`
+	Email     string  `json:"email"`
+	Username  string  `json:"username"`
+	Phone     string  `json:"phone"`
+	Name      *string `json:"name"`
+	Surname   *string `json:"surname"`
+	IsActive  bool    `json:"isActive"`
+	LastLogin int64   `json:"lastLogin"`
 }
 
 type UserSettingsResponse struct {
@@ -73,13 +74,14 @@ func (h *UserHandler) Profile(c *echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "profile not found"})
 	}
 	return c.JSON(http.StatusOK, UserProfileResponse{
-		ID:       profile.UserID,
-		Email:    profile.Email,
-		Username: profile.Username,
-		Phone:    profile.Phone,
-		Name:     profile.Name,
-		Surname:  profile.Surname,
-		IsActive: profile.IsActive,
+		ID:        profile.UserID,
+		Email:     profile.Email,
+		Username:  profile.Username,
+		Phone:     profile.Phone,
+		Name:      profile.Name,
+		Surname:   profile.Surname,
+		IsActive:  profile.IsActive,
+		LastLogin: shared.UnixMilliFromNano(profile.LastLogin),
 	})
 }
 

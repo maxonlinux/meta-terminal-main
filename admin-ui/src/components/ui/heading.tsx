@@ -19,7 +19,7 @@ const Heading = ({ className, level = 1, ...props }: HeadingProps) => {
         level === 2 && "font-semibold text-lg/6 sm:text-xl/8",
         level === 3 && "font-semibold text-base/6 sm:text-lg/6",
         level === 4 && "font-semibold text-base/6",
-        className
+        className,
       )}
       {...props}
     />

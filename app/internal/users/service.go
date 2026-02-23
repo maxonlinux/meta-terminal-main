@@ -86,6 +86,14 @@ func (s *Service) SetActive(userID types.UserID, active bool) error {
 	return s.store.SetActive(userID, active)
 }
 
+func (s *Service) UpdateLastLogin(userID types.UserID, lastLogin uint64) error {
+	return s.store.UpdateLastLogin(userID, lastLogin)
+}
+
+func (s *Service) UpdateProfileDetails(userID types.UserID, email, phone string, name *string, surname *string) error {
+	return s.store.UpdateProfileDetails(userID, email, phone, name, surname)
+}
+
 func (s *Service) GetSettings(userID types.UserID) (*UserSettings, error) {
 	return s.store.GetSettings(userID)
 }

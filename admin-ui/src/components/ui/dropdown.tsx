@@ -109,7 +109,7 @@ const DropdownItem = ({
     <ListBoxItemPrimitive
       textValue={textValue}
       className={composeRenderProps(className, (className, renderProps) =>
-        dropdownItemStyles({ ...renderProps, intent, className })
+        dropdownItemStyles({ ...renderProps, intent, className }),
       )}
       {...props}
     >
@@ -120,7 +120,7 @@ const DropdownItem = ({
               className={twJoin(
                 "-ml-0.5 mr-1.5 h-lh w-4 shrink-0",
                 "group-has-data-[slot=icon]:-translate-y-1/2 group-has-data-[slot=icon]:absolute group-has-data-[slot=icon]:top-1/2 group-has-data-[slot=icon]:right-0.5",
-                "group-has-data-[slot=avatar]:-translate-y-1/2 group-has-data-[slot=avatar]:absolute group-has-data-[slot=avatar]:top-1/2 group-has-data-[slot=avatar]:right-0.5"
+                "group-has-data-[slot=avatar]:-translate-y-1/2 group-has-data-[slot=avatar]:absolute group-has-data-[slot=avatar]:top-1/2 group-has-data-[slot=avatar]:right-0.5",
               )}
               data-slot="check-indicator"
             />
@@ -163,7 +163,7 @@ const DropdownDescription = ({
     ref={ref}
     className={twMerge(
       "col-start-2 font-normal text-muted-fg text-sm",
-      className
+      className,
     )}
     {...props}
   />
@@ -186,7 +186,7 @@ const DropdownKeyboard = ({ className, ...props }: DropdownKeyboardProps) => {
     <Keyboard
       className={twMerge(
         "absolute right-2 pl-2 group-hover:text-primary-fg group-focus:text-primary-fg",
-        className
+        className,
       )}
       {...props}
     />

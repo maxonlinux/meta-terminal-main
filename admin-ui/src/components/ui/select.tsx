@@ -26,7 +26,7 @@ import { PopoverContent } from "./popover";
 
 interface SelectProps<
   T extends object,
-  M extends "single" | "multiple" = "single"
+  M extends "single" | "multiple" = "single",
 > extends SelectPrimitiveProps<T, M> {
   items?: Iterable<T, M>;
 }
@@ -61,7 +61,7 @@ const SelectContent = <T extends object>({
       placement={popover?.placement ?? "bottom"}
       className={cx(
         "min-w-(--trigger-width) scroll-py-1 overflow-y-auto overscroll-contain",
-        popover?.className
+        popover?.className,
       )}
       {...popover}
     >
@@ -70,7 +70,7 @@ const SelectContent = <T extends object>({
         orientation="vertical"
         className={cx(
           "grid max-h-96 w-full grid-cols-[auto_1fr] flex-col gap-y-1 p-1 outline-hidden *:[[role='group']+[role=group]]:mt-4 *:[[role='group']+[role=separator]]:mt-1",
-          className
+          className,
         )}
         items={items}
         {...props}
@@ -104,7 +104,7 @@ const SelectTrigger = ({
           "group-disabled/select:bg-muted group-disabled/select:opacity-50 forced-colors:group-disabled/select:border-[GrayText] forced-colors:group-disabled/select:text-[GrayText]",
           "in-disabled:bg-muted in-disabled:opacity-50 forced-colors:in-disabled:border-[GrayText] forced-colors:in-disabled:text-[GrayText]",
           "dark:scheme-dark",
-          className
+          className,
         )}
       >
         {(values) => (

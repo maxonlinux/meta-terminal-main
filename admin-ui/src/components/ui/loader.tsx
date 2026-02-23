@@ -98,7 +98,7 @@ export function Loader({ isIndeterminate = true, ref, ...props }: LoaderProps) {
           "size-4",
           ["ring"].includes(variant) && "animate-spin",
           variant === "spin" && "stroke-current",
-          className
+          className,
         )}
         ref={ref}
         {...spinnerProps}

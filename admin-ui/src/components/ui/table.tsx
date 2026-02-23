@@ -68,13 +68,13 @@ const Table = ({
         <div
           className={twMerge(
             "-mx-(--gutter) relative overflow-x-auto whitespace-nowrap [--gutter-y:--spacing(2)] has-data-[slot=table-resizable-container]:overflow-auto",
-            className
+            className,
           )}
         >
           <div
             className={twJoin(
               "inline-block min-w-full align-middle",
-              !bleed && "sm:px-(--gutter)"
+              !bleed && "sm:px-(--gutter)",
             )}
           >
             {allowResize ? (
@@ -96,7 +96,7 @@ const ColumnResizer = ({ className, ...props }: ColumnResizerProps) => (
     {...props}
     className={cx(
       "absolute top-0 right-0 bottom-0 grid w-px &[data-resizable-direction=left]:cursor-e-resize &[data-resizable-direction=right]:cursor-w-resize touch-none place-content-center px-1 data-[resizable-direction=both]:cursor-ew-resize [&[data-resizing]>div]:bg-primary",
-      className
+      className,
     )}
   >
     <div className="h-full w-px bg-border py-(--gutter-y)" />
@@ -131,7 +131,7 @@ const TableColumn = ({
           grid && "border-l first:border-l-0",
           isResizable && "overflow-hidden truncate",
         ],
-        className
+        className,
       )}
     >
       {(values) => (
@@ -147,7 +147,7 @@ const TableColumn = ({
             <span
               className={twJoin(
                 "grid size-[1.15rem] flex-none shrink-0 place-content-center rounded bg-secondary text-fg *:data-[slot=icon]:size-3.5 *:data-[slot=icon]:shrink-0 *:data-[slot=icon]:transition-transform *:data-[slot=icon]:duration-200",
-                values.isHovered ? "bg-secondary-fg/10" : ""
+                values.isHovered ? "bg-secondary-fg/10" : "",
               )}
             >
               <ChevronDownIcon
@@ -190,7 +190,7 @@ const TableHeader = <T extends object>({
           data-slot="table-column"
           className={twMerge(
             "first:pl-(--gutter,--spacing(2))",
-            !bleed && "sm:last:pr-1 sm:first:pl-1"
+            !bleed && "sm:last:pr-1 sm:first:pl-1",
           )}
         />
       )}
@@ -199,7 +199,7 @@ const TableHeader = <T extends object>({
           data-slot="table-column"
           className={twMerge(
             "first:pl-(--gutter,--spacing(2))",
-            !bleed && "sm:last:pr-1 sm:first:pl-1"
+            !bleed && "sm:last:pr-1 sm:first:pl-1",
           )}
         >
           {selectionMode === "multiple" && <Checkbox slot="selection" />}
@@ -241,7 +241,7 @@ const TableRow = <T extends object>({
             isDragging,
             isDisabled,
             isFocusVisible,
-          }
+          },
         ) =>
           twMerge(
             "group relative cursor-default text-muted-fg outline outline-transparent",
@@ -258,8 +258,8 @@ const TableRow = <T extends object>({
               isFocusVisibleWithin &&
               "bg-(--table-selected-bg)/50 selected:bg-(--table-selected-bg)/50 text-fg",
             isDisabled && "opacity-50",
-            className
-          )
+            className,
+          ),
       )}
     >
       {allowsDragging && (
@@ -318,9 +318,9 @@ const TableCell = ({ className, ref, ...props }: TableCellProps) => {
           !striped && "border-b",
           grid && "border-l first:border-l-0",
           !bleed && "sm:last:pr-1 sm:first:pl-1",
-          allowResize && "overflow-hidden truncate"
+          allowResize && "overflow-hidden truncate",
         ),
-        className
+        className,
       )}
     />
   );

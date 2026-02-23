@@ -6,10 +6,10 @@ import { type ClassNameValue, twMerge } from "tailwind-merge";
 /** @deprecated Use cx */
 export function composeTailwindRenderProps<T>(
   className: string | ((v: T) => string) | undefined,
-  tailwind: ClassNameValue
+  tailwind: ClassNameValue,
 ): string | ((v: T) => string) {
   return composeRenderProps(className, (className) =>
-    twMerge(tailwind, className)
+    twMerge(tailwind, className),
   );
 }
 
