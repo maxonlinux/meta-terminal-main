@@ -2,6 +2,7 @@
 
 import { Plus, RotateCw, Settings2 } from "lucide-react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import { createWallet, getWallets, updateWallet } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -44,8 +45,13 @@ export function WalletsTable() {
     custom: boolean;
     active: boolean;
   }) => {
-    await createWallet(payload);
-    await mutate();
+    try {
+      await createWallet(payload);
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create wallet");
+      await mutate();
+    }
   };
 
   const handleUpdate = async (
@@ -59,8 +65,13 @@ export function WalletsTable() {
       active: boolean;
     },
   ) => {
-    await updateWallet(id, payload);
-    await mutate();
+    try {
+      await updateWallet(id, payload);
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update wallet");
+      await mutate();
+    }
   };
 
   if (!data) {

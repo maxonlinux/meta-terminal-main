@@ -88,6 +88,7 @@ export function TransactionsTable() {
       await mutate();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to approve");
+      await mutate();
     }
   };
 
@@ -98,6 +99,7 @@ export function TransactionsTable() {
       await mutate();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to cancel");
+      await mutate();
     }
   };
 

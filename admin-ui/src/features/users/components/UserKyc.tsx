@@ -2,6 +2,7 @@
 
 import { Check, RotateCw, X } from "lucide-react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import { getKycFileUrl, getKycRequests, updateKycRequest } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -32,15 +33,25 @@ export function UserKyc({ id }: { id: string }) {
   const item = data?.[0];
 
   const handleApprove = async (kycId: string) => {
-    await updateKycRequest(kycId, { status: "APPROVED" });
-    await mutate();
+    try {
+      await updateKycRequest(kycId, { status: "APPROVED" });
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to approve");
+      await mutate();
+    }
   };
 
   const handleReject = async (kycId: string) => {
     const reason = window.prompt("Reject reason");
     if (!reason) return;
-    await updateKycRequest(kycId, { status: "REJECTED", rejectReason: reason });
-    await mutate();
+    try {
+      await updateKycRequest(kycId, { status: "REJECTED", rejectReason: reason });
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to reject");
+      await mutate();
+    }
   };
 
   return (

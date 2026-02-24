@@ -50,6 +50,7 @@ export function EditUserAddressDetails({
       close();
     } catch (err) {
       setError(err instanceof Error ? err.message : "SAVE_FAILED");
+      await onSaved();
     } finally {
       setSaving(false);
     }

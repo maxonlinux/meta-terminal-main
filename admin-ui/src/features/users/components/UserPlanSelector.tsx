@@ -3,6 +3,7 @@
 import { Check, RotateCcw, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import {
   getUser,
   getPlans,
@@ -76,14 +77,24 @@ export function UserPlanSelector({ id }: { id: string }) {
   );
 
   const submit = async () => {
-    await updateUserPlan(id, selectedPlan ?? "");
-    await Promise.all([mutatePlan(), mutateUser()]);
+    try {
+      await updateUserPlan(id, selectedPlan ?? "");
+      await Promise.all([mutatePlan(), mutateUser()]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update plan");
+      await Promise.all([mutatePlan(), mutateUser()]);
+    }
   };
 
   const reset = async () => {
-    await resetUserPlan(id);
-    setSelectedPlan(undefined);
-    await Promise.all([mutatePlan(), mutateUser()]);
+    try {
+      await resetUserPlan(id);
+      setSelectedPlan(undefined);
+      await Promise.all([mutatePlan(), mutateUser()]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to reset plan");
+      await Promise.all([mutatePlan(), mutateUser()]);
+    }
   };
 
   useEffect(() => {

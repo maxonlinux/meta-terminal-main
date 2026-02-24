@@ -3,6 +3,7 @@
 import { Check, RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import { assignUserWallet, getUserWallets, getWallets } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -53,8 +54,13 @@ export function UserWallets({ id }: { id: string }) {
 
   const handleAssign = async () => {
     if (!selectedWallet) return;
-    await assignUserWallet(id, Number(selectedWallet));
-    await mutate();
+    try {
+      await assignUserWallet(id, selectedWallet);
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to assign wallet");
+      await mutate();
+    }
   };
 
   return (
