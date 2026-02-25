@@ -192,21 +192,24 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 	}
 
 	path := filepath.Join(dir, "trading.db")
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite3", path+"?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open history db: %w", err)
 	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping history db: %w", err)
 	}
 
-	if _, err := db.Exec("pragma journal_mode=WAL"); err != nil {
+	if _, err := db.Exec("pragma journal_mode=DELETE"); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("enable wal: %w", err)
+		return nil, fmt.Errorf("enable journal mode: %w", err)
 	}
-	if _, err := db.Exec("pragma synchronous=normal"); err != nil {
+	if _, err := db.Exec("pragma synchronous=FULL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable sync: %w", err)
 	}

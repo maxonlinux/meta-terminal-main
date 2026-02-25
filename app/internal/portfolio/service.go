@@ -96,18 +96,16 @@ func (s *Service) executeSpotTrade(match *types.Match) error {
 	}
 	baseAsset, quoteAsset := inst.BaseAsset, inst.QuoteAsset
 
-	takerGets, takerPays := baseAsset, quoteAsset
-	makerGets, makerPays := quoteAsset, baseAsset
-	if match.TakerOrder.Side == constants.ORDER_SIDE_SELL {
-		takerGets, takerPays = quoteAsset, baseAsset
-		makerGets, makerPays = baseAsset, quoteAsset
-	}
-
 	amountBase := match.Quantity
 	amountQuote := types.Quantity(math.Mul(match.Price, match.Quantity))
 
-	s.applySpotLeg(match.TakerOrder.UserID, takerGets, takerPays, amountBase, amountQuote)
-	s.applySpotLeg(match.MakerOrder.UserID, makerGets, makerPays, amountQuote, amountBase)
+	if match.TakerOrder.Side == constants.ORDER_SIDE_BUY {
+		s.applySpotLeg(match.TakerOrder.UserID, baseAsset, quoteAsset, amountBase, amountQuote)
+		s.applySpotLeg(match.MakerOrder.UserID, quoteAsset, baseAsset, amountQuote, amountBase)
+	} else {
+		s.applySpotLeg(match.TakerOrder.UserID, quoteAsset, baseAsset, amountQuote, amountBase)
+		s.applySpotLeg(match.MakerOrder.UserID, baseAsset, quoteAsset, amountBase, amountQuote)
+	}
 	return nil
 }
 

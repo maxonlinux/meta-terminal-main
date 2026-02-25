@@ -135,8 +135,8 @@ func main() {
 		MaxBalance: cfg.BotMaxBalance,
 	})
 	mmaker.Start(ctx)
-	startSystemOrderCleanup(ctx, persistenceStore, 2*time.Minute)
-	startBotDataCleanup(ctx, persistenceStore, cfg.BotUserID, 2*time.Minute)
+	startSystemOrderCleanup(ctx, persistenceStore, 1*time.Minute)
+	startBotDataCleanup(ctx, persistenceStore, cfg.BotUserID, 1*time.Minute)
 	natsConn, err := startPriceSubscriber(ctx, cfg, eng, mmaker)
 	if err != nil {
 		log.Fatalf("nats price subscriber: %v", err)
@@ -172,7 +172,7 @@ func startSystemOrderCleanup(ctx context.Context, store *persistence.Store, inte
 		return
 	}
 	if interval <= 0 {
-		interval = 2 * time.Minute
+		interval = 1 * time.Minute
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -201,7 +201,7 @@ func startBotDataCleanup(ctx context.Context, store *persistence.Store, botUserI
 		return
 	}
 	if interval <= 0 {
-		interval = 2 * time.Minute
+		interval = 1 * time.Minute
 	}
 	botID := types.UserID(botUserID)
 	go func() {
