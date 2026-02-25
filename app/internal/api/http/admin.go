@@ -397,10 +397,8 @@ func (h *AdminHandler) PendingCount(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load counts"})
 	}
 	walletCount := 0
-	if h.wallets != nil {
-		if count, err := h.wallets.CountWallets(); err == nil {
-			walletCount = count
-		}
+	if count, err := h.wallets.CountWallets(); err == nil {
+		walletCount = count
 	}
 	return c.JSON(http.StatusOK, AdminPendingCount{
 		Users:        0,
@@ -420,9 +418,6 @@ type WalletRequest struct {
 }
 
 func (h *AdminHandler) ListWallets(c *echo.Context) error {
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	items, err := h.wallets.ListWallets()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallets"})
@@ -445,9 +440,6 @@ func (h *AdminHandler) ListWallets(c *echo.Context) error {
 }
 
 func (h *AdminHandler) CreateWallet(c *echo.Context) error {
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	var req WalletRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -473,9 +465,6 @@ func (h *AdminHandler) CreateWallet(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UpdateWallet(c *echo.Context) error {
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	id, err := parseWalletIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wallet id"})
@@ -505,9 +494,6 @@ type WalletAssignRequest struct {
 }
 
 func (h *AdminHandler) AssignUserWallet(c *echo.Context) error {
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
@@ -526,9 +512,6 @@ func (h *AdminHandler) AssignUserWallet(c *echo.Context) error {
 }
 
 func (h *AdminHandler) ListUserWallets(c *echo.Context) error {
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	userID, err := parseUserIDParam(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})

@@ -2,7 +2,6 @@ package persistence
 
 import (
 	"database/sql"
-	"strings"
 )
 
 func initSchema(db *sql.DB) error {
@@ -44,6 +43,7 @@ func initSchema(db *sql.DB) error {
       counterparty_order_id integer not null,
       symbol text not null,
       category integer not null,
+      order_type integer not null,
       side integer not null,
       role text not null,
       price text not null,
@@ -122,16 +122,5 @@ func initSchema(db *sql.DB) error {
 		return err
 	}
 
-	_, alterErr := db.Exec(`alter table orders add column trigger_direction integer not null default 0;`)
-	if alterErr != nil && !isDuplicateColumnError(alterErr) {
-		return alterErr
-	}
 	return nil
-}
-
-func isDuplicateColumnError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "duplicate column name")
 }

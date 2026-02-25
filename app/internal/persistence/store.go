@@ -343,7 +343,7 @@ func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, l
 }
 
 func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]FillRecord, error) {
-	query := `select id, user_id, order_id, counterparty_order_id, symbol, category, side, role, price, qty, ts from fills where user_id = ?`
+	query := `select id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts from fills where user_id = ?`
 	args := []any{userID}
 	if symbol != "" {
 		query += " and symbol = ?"
@@ -381,6 +381,7 @@ func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, li
 			&rec.CounterpartyOrderID,
 			&rec.Symbol,
 			&rec.Category,
+			&rec.OrderType,
 			&rec.Side,
 			&rec.Role,
 			&rec.Price,
@@ -389,8 +390,6 @@ func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, li
 		); err != nil {
 			return nil, err
 		}
-		// Fills table does not store order type; default to LIMIT until backfilled.
-		rec.OrderType = constants.ORDER_TYPE_LIMIT
 		result = append(result, rec)
 	}
 	return result, nil
@@ -821,10 +820,19 @@ func applyTrade(tx *sql.Tx, stmts *statements, trade events.TradeEvent) error {
 	qty := trade.Quantity.String()
 	makerSide := oppositeSide(trade.TakerSide)
 
-	if err := insertFill(tx, stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
+	makerOrderType, err := selectOrderType(tx, trade.MakerUserID, trade.MakerOrderID)
+	if err != nil {
 		return err
 	}
-	if err := insertFill(tx, stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
+	takerOrderType, err := selectOrderType(tx, trade.TakerUserID, trade.TakerOrderID)
+	if err != nil {
+		return err
+	}
+
+	if err := insertFill(tx, stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, makerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
+		return err
+	}
+	if err := insertFill(tx, stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, takerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
 		return err
 	}
 
@@ -837,13 +845,22 @@ func applyTrade(tx *sql.Tx, stmts *statements, trade events.TradeEvent) error {
 	return nil
 }
 
-func insertFill(tx *sql.Tx, stmts *statements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, side int8, role string, price string, qty string, ts uint64) error {
+func insertFill(tx *sql.Tx, stmts *statements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, orderType int8, side int8, role string, price string, qty string, ts uint64) error {
 	stmt := stmts.insertFill
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(id, userID, orderID, counterparty, symbol, category, side, role, price, qty, ts)
+	_, err := tx.Stmt(stmt).Exec(id, userID, orderID, counterparty, symbol, category, orderType, side, role, price, qty, ts)
 	return err
+}
+
+func selectOrderType(tx *sql.Tx, userID types.UserID, orderID types.OrderID) (int8, error) {
+	row := tx.QueryRow(`select type from orders where id = ? and user_id = ?`, orderID, userID)
+	var orderType int8
+	if err := row.Scan(&orderType); err != nil {
+		return 0, err
+	}
+	return orderType, nil
 }
 
 func addFillToOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {

@@ -113,12 +113,6 @@ func main() {
 		log.Fatalf("plan service: %v", err)
 	}
 
-	walletRepo, err := wallets.NewRepository(persistenceStore.DB())
-	if err != nil {
-		log.Fatalf("wallet repo: %v", err)
-	}
-	walletService := wallets.NewService(walletRepo)
-
 	eng, err := engine.NewEngine(ob, reg, nil)
 	if err != nil {
 		log.Fatalf("engine: %v", err)
@@ -156,7 +150,7 @@ func main() {
 	}
 
 	go func() {
-		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, walletService, kycRepo); err != nil {
+		if err := runServer(eng, cfg, persistenceStore, planService, planRepo, kycRepo); err != nil {
 			logging.Log().Error().Err(err).Msg("gateway error")
 		}
 	}()
@@ -294,7 +288,7 @@ func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.En
 	return nc, nil
 }
 
-func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository) error {
+func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persistence.Store, planService *plan.Service, planRepo *plan.Repository, kycRepo *kyc.Repository) error {
 	userStore, err := users.NewSQLiteStore(cfg.DataDir)
 	if err != nil {
 		return err
@@ -302,6 +296,12 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 	defer func() {
 		_ = userStore.Close()
 	}()
+
+	walletRepo, err := wallets.NewRepository(userStore.DB())
+	if err != nil {
+		return err
+	}
+	walletService := wallets.NewService(walletRepo)
 
 	jwtService, err := auth.NewJWTService(cfg)
 	if err != nil {

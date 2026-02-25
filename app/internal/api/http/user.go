@@ -393,9 +393,6 @@ func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	if req.WalletID == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletId is required"})
 	}
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
-	}
 	wallet, err := h.wallets.GetUserWallet(claims.UserID, req.WalletID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallet"})
@@ -414,9 +411,6 @@ func (h *UserHandler) Wallets(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-	}
-	if h.wallets == nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "wallet service unavailable"})
 	}
 	items, err := h.wallets.ListUserWallets(claims.UserID, true)
 	if err != nil {

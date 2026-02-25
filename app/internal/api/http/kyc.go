@@ -84,9 +84,6 @@ func (h *KYCHandler) SubmitKYC(c *echo.Context) error {
 	if claims == nil {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
-	if h.repo == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "store unavailable"})
-	}
 	if existing, _, err := h.repo.GetRequestByUser(claims.UserID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load kyc"})
 	} else if existing != nil {

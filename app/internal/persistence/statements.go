@@ -79,8 +79,8 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 		return nil, err
 	}
 	if err := prepare(&stmts.insertFill, `
-    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, side, role, price, qty, ts)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `); err != nil {
 		return nil, err
 	}

@@ -41,6 +41,13 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *SQLiteStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 func initDB(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
@@ -79,15 +86,6 @@ func initDB(db *sql.DB) error {
   `)
 	if err != nil {
 		return err
-	}
-
-	_, alterErr := db.Exec(`alter table user_profiles add column last_login integer not null default 0;`)
-	if alterErr != nil && !isDuplicateColumnError(alterErr) {
-		return alterErr
-	}
-	_, updateErr := db.Exec(`update user_profiles set last_login = 0 where last_login is null;`)
-	if updateErr != nil {
-		return updateErr
 	}
 	return nil
 }
@@ -310,11 +308,4 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
-}
-
-func isDuplicateColumnError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "duplicate column name")
 }

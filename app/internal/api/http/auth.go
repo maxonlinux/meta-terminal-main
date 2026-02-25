@@ -79,10 +79,8 @@ func (h *AuthHandler) Register(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	if h.walletService != nil {
-		if err := h.walletService.AssignDefaultWallets(userID); err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assign wallets"})
-		}
+	if err := h.walletService.AssignDefaultWallets(userID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assign wallets"})
 	}
 	_, _ = h.otpService.Generate(req.Username, req.Email, req.Phone)
 	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": userID})
