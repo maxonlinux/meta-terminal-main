@@ -56,7 +56,8 @@ type Options struct {
 
 type segmentInfo struct {
 	path  string
-	start int64
+	start uint64
+	end   uint64
 	size  int64
 }
 
@@ -106,7 +107,7 @@ func (o *Outbox) Begin() *Tx {
 	if err != nil {
 		return nil
 	}
-	o.worker.Enqueue(record{recordType: logRecordBegin, txID: txID, endOffset: offset})
+	o.worker.Enqueue(record{recordType: logRecordBegin, txID: txID, endSeq: offset})
 	return &Tx{outbox: o, id: txID}
 }
 
@@ -160,7 +161,7 @@ func (t *Tx) Record(event events.Event) error {
 	if err != nil {
 		return err
 	}
-	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, value: data, endOffset: offset})
+	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, value: data, endSeq: offset})
 	return nil
 }
 
@@ -170,7 +171,7 @@ func (t *Tx) Commit() error {
 	}
 	offset, err := t.outbox.log.Append(logRecordCommit, t.id, nil)
 	if err == nil {
-		t.outbox.worker.Enqueue(record{recordType: logRecordCommit, txID: t.id, endOffset: offset})
+		t.outbox.worker.Enqueue(record{recordType: logRecordCommit, txID: t.id, endSeq: offset})
 	}
 	t.closed = true
 	return err
@@ -182,7 +183,7 @@ func (t *Tx) Abort() error {
 	}
 	offset, err := t.outbox.log.Append(logRecordAbort, t.id, nil)
 	if err == nil {
-		t.outbox.worker.Enqueue(record{recordType: logRecordAbort, txID: t.id, endOffset: offset})
+		t.outbox.worker.Enqueue(record{recordType: logRecordAbort, txID: t.id, endSeq: offset})
 	}
 	t.closed = true
 	return err
@@ -194,11 +195,13 @@ type appendLog struct {
 	writer      *bufio.Writer
 	pending     int
 	size        int64
-	segmentBase int64
+	segmentBase uint64
 	segmentSize int64
 	basePath    string
 	flushTicker *time.Ticker
 	quit        chan struct{}
+	lastSeq     uint64
+	nextSeq     uint64
 }
 
 func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
@@ -210,7 +213,7 @@ func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
 		return nil, err
 	}
 	if len(segments) == 0 {
-		if err := createSegment(path, 0); err != nil {
+		if err := createSegment(path, 1, 0); err != nil {
 			return nil, err
 		}
 		segments, err = listSegments(path)
@@ -219,7 +222,19 @@ func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
 		}
 	}
 	last := segments[len(segments)-1]
-	file, err := os.OpenFile(last.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	current := last
+	if last.end > 0 {
+		start := last.end + 1
+		if err := createSegment(path, start, 0); err != nil {
+			return nil, err
+		}
+		segments, err = listSegments(path)
+		if err != nil {
+			return nil, err
+		}
+		current = segments[len(segments)-1]
+	}
+	file, err := os.OpenFile(current.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -228,19 +243,40 @@ func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
 		_ = file.Close()
 		return nil, err
 	}
+	lastSeq := uint64(0)
+	if current.end > 0 {
+		lastSeq = current.end
+	} else if info.Size() > 0 {
+		seq, err := scanLastSeq(file)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		lastSeq = seq
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 	if segmentSize <= 0 {
 		segmentSize = defaultSegmentSize
+	}
+	nextSeq := lastSeq + 1
+	if nextSeq < current.start {
+		nextSeq = current.start
 	}
 	log := &appendLog{
 		file:        file,
 		writer:      bufio.NewWriterSize(file, 1<<20),
 		pending:     0,
 		size:        info.Size(),
-		segmentBase: last.start,
+		segmentBase: current.start,
 		segmentSize: segmentSize,
 		basePath:    path,
 		flushTicker: time.NewTicker(100 * time.Millisecond),
 		quit:        make(chan struct{}),
+		lastSeq:     lastSeq,
+		nextSeq:     nextSeq,
 	}
 	go log.flushLoop()
 	return log, nil
@@ -256,7 +292,7 @@ func ensureSegments(basePath string) error {
 			return segErr
 		}
 		if len(segments) == 0 {
-			if err := os.Rename(basePath, segmentPath(basePath, 0)); err != nil {
+			if err := os.Rename(basePath, segmentPath(basePath, 1, 0)); err != nil {
 				return err
 			}
 		}
@@ -278,7 +314,7 @@ func listSegments(basePath string) ([]segmentInfo, error) {
 			continue
 		}
 		suffix := strings.TrimPrefix(name, base)
-		start, err := parseSegmentStart(suffix)
+		start, end, err := parseSegmentRange(suffix)
 		if err != nil {
 			continue
 		}
@@ -287,7 +323,7 @@ func listSegments(basePath string) ([]segmentInfo, error) {
 		if err != nil {
 			continue
 		}
-		segments = append(segments, segmentInfo{path: path, start: start, size: info.Size()})
+		segments = append(segments, segmentInfo{path: path, start: start, end: end, size: info.Size()})
 	}
 	slices.SortFunc(segments, func(a, b segmentInfo) int {
 		if a.start < b.start {
@@ -301,26 +337,57 @@ func listSegments(basePath string) ([]segmentInfo, error) {
 	return segments, nil
 }
 
-func parseSegmentStart(value string) (int64, error) {
+func parseSegmentRange(value string) (uint64, uint64, error) {
 	if value == "" {
-		return 0, errors.New("empty segment start")
+		return 0, 0, errors.New("empty segment range")
 	}
-	var start int64
+	parts := strings.Split(value, "-")
+	if len(parts) > 2 {
+		return 0, 0, errors.New("invalid segment range")
+	}
+	start, err := parseSegmentNumber(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(parts) == 1 {
+		return start, 0, nil
+	}
+	if parts[1] == "" {
+		return 0, 0, errors.New("empty segment end")
+	}
+	end, err := parseSegmentNumber(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if end < start {
+		return 0, 0, errors.New("invalid segment range order")
+	}
+	return start, end, nil
+}
+
+func parseSegmentNumber(value string) (uint64, error) {
+	if value == "" {
+		return 0, errors.New("empty segment number")
+	}
+	var start uint64
 	for _, ch := range value {
 		if ch < '0' || ch > '9' {
-			return 0, errors.New("invalid segment start")
+			return 0, errors.New("invalid segment number")
 		}
-		start = start*10 + int64(ch-'0')
+		start = start*10 + uint64(ch-'0')
 	}
 	return start, nil
 }
 
-func segmentPath(basePath string, start int64) string {
-	return fmt.Sprintf("%s.%020d", basePath, start)
+func segmentPath(basePath string, start uint64, end uint64) string {
+	if end == 0 {
+		return fmt.Sprintf("%s.%020d", basePath, start)
+	}
+	return fmt.Sprintf("%s.%020d-%020d", basePath, start, end)
 }
 
-func createSegment(basePath string, start int64) error {
-	path := segmentPath(basePath, start)
+func createSegment(basePath string, start uint64, end uint64) error {
+	path := segmentPath(basePath, start, end)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -328,7 +395,29 @@ func createSegment(basePath string, start int64) error {
 	return file.Close()
 }
 
-func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (int64, error) {
+func scanLastSeq(file *os.File) (uint64, error) {
+	if file == nil {
+		return 0, errors.New("nil log file")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	reader := bufio.NewReaderSize(file, 1<<20)
+	var last uint64
+	for {
+		rec, _, err := readLogRecord(reader)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return last, err
+		}
+		last = rec.seq
+	}
+	return last, nil
+}
+
+func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (uint64, error) {
 	if l == nil {
 		return 0, errors.New("log is closed")
 	}
@@ -336,29 +425,38 @@ func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (int64, e
 	defer l.mu.Unlock()
 	var buf [10]byte
 	if err := l.writer.WriteByte(recordType); err != nil {
-		return l.size, err
+		return l.lastSeq, err
 	}
 	l.size++
+	seq := l.nextSeq
+	l.nextSeq++
+	l.lastSeq = seq
 
-	n := binary.PutUvarint(buf[:], txID)
+	n := binary.PutUvarint(buf[:], seq)
 	if _, err := l.writer.Write(buf[:n]); err != nil {
-		return l.size, err
+		return l.lastSeq, err
+	}
+	l.size += int64(n)
+
+	n = binary.PutUvarint(buf[:], txID)
+	if _, err := l.writer.Write(buf[:n]); err != nil {
+		return l.lastSeq, err
 	}
 	l.size += int64(n)
 
 	n = binary.PutUvarint(buf[:], uint64(len(value)))
 	if _, err := l.writer.Write(buf[:n]); err != nil {
-		return l.size, err
+		return l.lastSeq, err
 	}
 	l.size += int64(n)
 
 	if _, err := l.writer.Write(value); err != nil {
-		return l.size, err
+		return l.lastSeq, err
 	}
 	l.size += int64(len(value))
 
 	l.pending++
-	endOffset := l.segmentBase + l.size
+	endOffset := l.lastSeq
 	if l.size >= l.segmentSize {
 		if err := l.rotateLocked(); err != nil {
 			return endOffset, err
@@ -407,7 +505,7 @@ func (l *appendLog) Close() error {
 	return l.file.Close()
 }
 
-func (l *appendLog) CompactApplied(offset int64) (int64, error) {
+func (l *appendLog) CompactApplied(offset uint64) (uint64, error) {
 	if l == nil {
 		return offset, errors.New("log is closed")
 	}
@@ -418,13 +516,19 @@ func (l *appendLog) CompactApplied(offset int64) (int64, error) {
 	if err != nil {
 		return offset, err
 	}
+	deleted := 0
 	for _, seg := range segments {
-		if seg.start+seg.size <= offset {
-			_ = os.Remove(seg.path)
+		if seg.end > 0 && seg.end <= offset {
+			if err := os.Remove(seg.path); err == nil {
+				deleted++
+			}
 			continue
 		}
 	}
-	if l.segmentBase+l.size <= offset {
+	if deleted > 0 {
+		logging.Log().Info().Int("deleted", deleted).Uint64("offset", offset).Msg("outbox: deleted old segments")
+	}
+	if l.size > 0 && l.lastSeq > 0 && l.lastSeq <= offset {
 		if err := l.rotateLocked(); err != nil {
 			return offset, err
 		}
@@ -439,9 +543,15 @@ func (l *appendLog) rotateLocked() error {
 	if l.file != nil {
 		_ = l.file.Close()
 	}
-	l.segmentBase = l.segmentBase + l.size
-	l.size = 0
-	if err := createSegment(l.basePath, l.segmentBase); err != nil {
+	if l.size > 0 && l.lastSeq >= l.segmentBase {
+		currentPath := segmentPath(l.basePath, l.segmentBase, 0)
+		finalPath := segmentPath(l.basePath, l.segmentBase, l.lastSeq)
+		if err := os.Rename(currentPath, finalPath); err != nil {
+			return err
+		}
+	}
+	start := l.lastSeq + 1
+	if err := createSegment(l.basePath, start, 0); err != nil {
 		return err
 	}
 	segments, err := listSegments(l.basePath)
@@ -456,6 +566,8 @@ func (l *appendLog) rotateLocked() error {
 	l.file = file
 	l.writer = bufio.NewWriterSize(file, 1<<20)
 	l.pending = 0
+	l.segmentBase = start
+	l.size = 0
 	return nil
 }
 
@@ -463,7 +575,7 @@ type record struct {
 	recordType byte
 	txID       uint64
 	value      []byte
-	endOffset  int64
+	endSeq     uint64
 }
 
 type worker struct {
@@ -473,11 +585,11 @@ type worker struct {
 	done       chan struct{}
 	startOnce  sync.Once
 	stopOnce   sync.Once
-	lastOffset int64
+	lastOffset uint64
 	sink       EventSink
 }
 
-func newWorker(log *appendLog, tailPath string, offset int64, queue queue, sink EventSink) *worker {
+func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink) *worker {
 	return &worker{
 		log:        log,
 		tailPath:   tailPath,
@@ -514,13 +626,10 @@ func (w *worker) run() {
 	defer close(w.done)
 	lastCommitted := w.lastOffset
 	pending := make(map[uint64][]record)
-	pendingOffsets := make(map[uint64]int64)
+	pendingOffsets := make(map[uint64]uint64)
 
-	applyTx := func(txID uint64, offset int64) error {
+	applyTx := func(txID uint64, offset uint64) error {
 		records := pending[txID]
-		delete(pending, txID)
-		delete(pendingOffsets, txID)
-		lastCommitted = offset
 		if w.sink != nil && len(records) > 0 {
 			eventsBatch := make([]events.Event, 0, len(records))
 			for i := range records {
@@ -537,6 +646,9 @@ func (w *worker) run() {
 				}
 			}
 		}
+		delete(pending, txID)
+		delete(pendingOffsets, txID)
+		lastCommitted = offset
 		if w.log != nil {
 			cutoff := lastCommitted
 			if len(pendingOffsets) > 0 {
@@ -551,9 +663,11 @@ func (w *worker) run() {
 				}
 			}
 			if cutoff > 0 {
-				if _, err := w.log.CompactApplied(cutoff); err != nil {
-					logging.Log().Error().Err(err).Int64("cutoff", cutoff).Msg("outbox: compact failed")
+				if newOffset, err := w.log.CompactApplied(cutoff); err != nil {
+					logging.Log().Error().Err(err).Uint64("cutoff", cutoff).Msg("outbox: compact failed")
 					return err
+				} else if newOffset > 0 {
+					logging.Log().Info().Uint64("cutoff", cutoff).Uint64("compacted_to", newOffset).Msg("outbox: compacted")
 				}
 			}
 		}
@@ -571,26 +685,26 @@ func (w *worker) run() {
 			if _, ok := pending[rec.txID]; !ok {
 				pending[rec.txID] = nil
 			}
-			pendingOffsets[rec.txID] = rec.endOffset
+			pendingOffsets[rec.txID] = rec.endSeq
 		case logRecordData:
 			pending[rec.txID] = append(pending[rec.txID], rec)
-			if off, ok := pendingOffsets[rec.txID]; !ok || rec.endOffset < off {
-				pendingOffsets[rec.txID] = rec.endOffset
+			if off, ok := pendingOffsets[rec.txID]; !ok || rec.endSeq < off {
+				pendingOffsets[rec.txID] = rec.endSeq
 			}
 		case logRecordCommit:
-			if err := applyTx(rec.txID, rec.endOffset); err != nil {
-				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Int64("end_offset", rec.endOffset).Msg("outbox: apply tx failed, will retry on restart")
+			if err := applyTx(rec.txID, rec.endSeq); err != nil {
+				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Uint64("end_seq", rec.endSeq).Msg("outbox: apply tx failed, will retry on restart")
 			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
 			delete(pendingOffsets, rec.txID)
-			lastCommitted = rec.endOffset
+			lastCommitted = rec.endSeq
 			_ = storeTail(w.tailPath, lastCommitted)
 		}
 	}
 }
 
-func loadTail(path string) (int64, error) {
+func loadTail(path string) (uint64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -601,10 +715,10 @@ func loadTail(path string) (int64, error) {
 	if len(data) < 8 {
 		return 0, nil
 	}
-	return int64(binary.BigEndian.Uint64(data)), nil
+	return binary.BigEndian.Uint64(data), nil
 }
 
-func storeTail(path string, offset int64) error {
+func storeTail(path string, offset uint64) error {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(offset))
 	return os.WriteFile(path, buf[:], 0o600)
@@ -612,11 +726,12 @@ func storeTail(path string, offset int64) error {
 
 type logRecord struct {
 	recordType byte
+	seq        uint64
 	txID       uint64
 	value      []byte
 }
 
-func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (int64, error) {
+func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (uint64, error) {
 	if log == nil {
 		return offset, nil
 	}
@@ -656,9 +771,7 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 	}
 
 	for _, seg := range segments {
-		segStart := seg.start
-		segEnd := seg.start + seg.size
-		if offset >= segEnd {
+		if seg.end > 0 && seg.end <= offset {
 			continue
 		}
 		file, err := os.Open(seg.path)
@@ -666,17 +779,7 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 			logging.Log().Error().Err(err).Str("path", seg.path).Msg("outbox: replay open segment failed, skipping")
 			continue
 		}
-		seekOffset := int64(0)
-		if offset > segStart {
-			seekOffset = offset - segStart
-		}
-		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
-			_ = file.Close()
-			logging.Log().Error().Err(err).Msg("outbox: replay seek failed, skipping segment")
-			continue
-		}
 		reader := bufio.NewReaderSize(file, 1<<20)
-		pos := segStart + seekOffset
 		for {
 			rec, size, err := readLogRecord(reader)
 			if err == io.EOF {
@@ -687,8 +790,11 @@ func replayLog(log *appendLog, offset int64, sink EventSink, tailPath string) (i
 				logging.Log().Error().Err(err).Msg("outbox: replay read record failed, stopping segment")
 				break
 			}
-			pos += int64(size)
-			lastOffset = pos
+			_ = size
+			if rec.seq <= offset {
+				continue
+			}
+			lastOffset = rec.seq
 			switch rec.recordType {
 			case logRecordBegin:
 				if _, ok := pending[rec.txID]; !ok {
@@ -728,23 +834,28 @@ func readLogRecord(r *bufio.Reader) (logRecord, int, error) {
 		return logRecord{}, 0, err
 	}
 
+	seq, seqBytes, err := readUvarint(r)
+	if err != nil {
+		return logRecord{}, 1 + seqBytes, err
+	}
+
 	txID, txBytes, err := readUvarint(r)
 	if err != nil {
-		return logRecord{}, 1 + txBytes, err
+		return logRecord{}, 1 + seqBytes + txBytes, err
 	}
 
 	valLen, valBytes, err := readUvarint(r)
 	if err != nil {
-		return logRecord{}, 1 + txBytes + valBytes, err
+		return logRecord{}, 1 + seqBytes + txBytes + valBytes, err
 	}
 
 	value := make([]byte, valLen)
 	if _, err := io.ReadFull(r, value); err != nil {
-		return logRecord{}, 1 + txBytes + valBytes, err
+		return logRecord{}, 1 + seqBytes + txBytes + valBytes, err
 	}
 
-	size := 1 + txBytes + valBytes + int(valLen)
-	return logRecord{recordType: recordType, txID: txID, value: value}, size, nil
+	size := 1 + seqBytes + txBytes + valBytes + int(valLen)
+	return logRecord{recordType: recordType, seq: seq, txID: txID, value: value}, size, nil
 }
 
 func readUvarint(r *bufio.Reader) (uint64, int, error) {
