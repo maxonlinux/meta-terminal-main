@@ -43,17 +43,19 @@ type OrderCanceledEvent struct {
 }
 
 type TradeEvent struct {
-	TradeID      types.TradeID
-	MakerUserID  types.UserID
-	TakerUserID  types.UserID
-	MakerOrderID types.OrderID
-	TakerOrderID types.OrderID
-	Symbol       string
-	Category     int8
-	Price        types.Price
-	Quantity     types.Quantity
-	TakerSide    int8
-	Timestamp    uint64
+	TradeID        types.TradeID
+	MakerUserID    types.UserID
+	TakerUserID    types.UserID
+	MakerOrderID   types.OrderID
+	TakerOrderID   types.OrderID
+	MakerOrderType int8
+	TakerOrderType int8
+	Symbol         string
+	Category       int8
+	Price          types.Price
+	Quantity       types.Quantity
+	TakerSide      int8
+	Timestamp      uint64
 }
 
 type LeverageEvent struct {
@@ -170,7 +172,7 @@ func EncodeTrade(ev TradeEvent) Event {
 	data = appendU64(data, uint64(ev.TakerUserID))
 	data = appendU64(data, uint64(ev.MakerOrderID))
 	data = appendU64(data, uint64(ev.TakerOrderID))
-	data = append(data, byte(ev.Category), byte(ev.TakerSide))
+	data = append(data, byte(ev.Category), byte(ev.TakerSide), byte(ev.MakerOrderType), byte(ev.TakerOrderType))
 	data = appendU64(data, ev.Timestamp)
 	data = appendString(data, ev.Symbol)
 	data = appendBytes(data, priceBytes)
@@ -180,7 +182,7 @@ func EncodeTrade(ev TradeEvent) Event {
 
 func DecodeTrade(data []byte) (TradeEvent, error) {
 	var ev TradeEvent
-	if len(data) < 42 {
+	if len(data) < 44 {
 		return ev, errors.New("invalid trade payload")
 	}
 	off := 0
@@ -191,7 +193,9 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 	ev.TakerOrderID = types.OrderID(readU64(data, &off))
 	ev.Category = int8(data[off])
 	ev.TakerSide = int8(data[off+1])
-	off += 2
+	ev.MakerOrderType = int8(data[off+2])
+	ev.TakerOrderType = int8(data[off+3])
+	off += 4
 	ev.Timestamp = readU64(data, &off)
 	symbol, err := readStringAt(data, &off)
 	if err != nil {

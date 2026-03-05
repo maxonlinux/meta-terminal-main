@@ -548,6 +548,11 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	}
 	defer func() {
 		if err != nil {
+			_ = s.loadState()
+		}
+	}()
+	defer func() {
+		if err != nil {
 			_ = tx.Rollback()
 		} else {
 			_ = tx.Commit()
@@ -820,19 +825,10 @@ func applyTrade(tx *sql.Tx, stmts *statements, trade events.TradeEvent) error {
 	qty := trade.Quantity.String()
 	makerSide := oppositeSide(trade.TakerSide)
 
-	makerOrderType, err := selectOrderType(tx, trade.MakerUserID, trade.MakerOrderID)
-	if err != nil {
+	if err := insertFill(tx, stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
 		return err
 	}
-	takerOrderType, err := selectOrderType(tx, trade.TakerUserID, trade.TakerOrderID)
-	if err != nil {
-		return err
-	}
-
-	if err := insertFill(tx, stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, makerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
-		return err
-	}
-	if err := insertFill(tx, stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, takerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
+	if err := insertFill(tx, stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
 		return err
 	}
 
@@ -852,15 +848,6 @@ func insertFill(tx *sql.Tx, stmts *statements, id types.TradeID, userID types.Us
 	}
 	_, err := tx.Stmt(stmt).Exec(id, userID, orderID, counterparty, symbol, category, orderType, side, role, price, qty, ts)
 	return err
-}
-
-func selectOrderType(tx *sql.Tx, userID types.UserID, orderID types.OrderID) (int8, error) {
-	row := tx.QueryRow(`select type from orders where id = ? and user_id = ?`, orderID, userID)
-	var orderType int8
-	if err := row.Scan(&orderType); err != nil {
-		return 0, err
-	}
-	return orderType, nil
 }
 
 func addFillToOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {

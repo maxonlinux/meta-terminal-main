@@ -47,17 +47,7 @@ func main() {
 	}
 	defer store.Close()
 
-	batchSink := outbox.NewBatchSink(store, outbox.BatchOptions{
-		BatchSize:  1000,
-		FlushEvery: 100 * time.Millisecond,
-	})
-	defer func() {
-		if err := batchSink.Stop(); err != nil {
-			panic(err)
-		}
-	}()
-
-	ob, err := outbox.OpenWithOptions(workdir, outbox.Options{EventSink: batchSink, SegmentSize: 16 << 20})
+	ob, err := outbox.OpenWithOptions(workdir, outbox.Options{EventSink: store, SegmentSize: 16 << 20})
 	if err != nil {
 		panic(err)
 	}

@@ -88,15 +88,7 @@ func main() {
 		_ = persistenceStore.Close()
 	}()
 
-	batchSink := outbox.NewBatchSink(persistenceStore, outbox.BatchOptions{
-		BatchSize:  1000,
-		FlushEvery: 100 * time.Millisecond,
-	})
-	defer func() {
-		_ = batchSink.Stop()
-	}()
-
-	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{EventSink: batchSink, SegmentSize: cfg.OutboxSegmentSize})
+	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{EventSink: persistenceStore, SegmentSize: cfg.OutboxSegmentSize})
 	if err != nil {
 		log.Fatalf("outbox open: %v", err)
 	}

@@ -67,17 +67,19 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 
 	if writer != nil {
 		_ = writer.Record(events.EncodeTrade(events.TradeEvent{
-			TradeID:      match.ID,
-			MakerUserID:  match.MakerOrder.UserID,
-			TakerUserID:  match.TakerOrder.UserID,
-			MakerOrderID: match.MakerOrder.ID,
-			TakerOrderID: match.TakerOrder.ID,
-			Symbol:       match.Symbol,
-			Category:     match.Category,
-			Price:        match.Price,
-			Quantity:     match.Quantity,
-			TakerSide:    match.TakerOrder.Side,
-			Timestamp:    match.Timestamp,
+			TradeID:        match.ID,
+			MakerUserID:    match.MakerOrder.UserID,
+			TakerUserID:    match.TakerOrder.UserID,
+			MakerOrderID:   match.MakerOrder.ID,
+			TakerOrderID:   match.TakerOrder.ID,
+			MakerOrderType: match.MakerOrder.Type,
+			TakerOrderType: match.TakerOrder.Type,
+			Symbol:         match.Symbol,
+			Category:       match.Category,
+			Price:          match.Price,
+			Quantity:       match.Quantity,
+			TakerSide:      match.TakerOrder.Side,
+			Timestamp:      match.Timestamp,
 		}))
 	}
 	return nil

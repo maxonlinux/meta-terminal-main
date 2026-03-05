@@ -583,6 +583,7 @@ type worker struct {
 	tailPath   string
 	queue      queue
 	done       chan struct{}
+	stop       chan struct{}
 	startOnce  sync.Once
 	stopOnce   sync.Once
 	lastOffset uint64
@@ -595,6 +596,7 @@ func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink
 		tailPath:   tailPath,
 		queue:      queue,
 		done:       make(chan struct{}),
+		stop:       make(chan struct{}),
 		lastOffset: offset,
 		sink:       sink,
 	}
@@ -615,6 +617,7 @@ func (w *worker) Enqueue(rec record) {
 
 func (w *worker) Stop() {
 	w.stopOnce.Do(func() {
+		close(w.stop)
 		if w.queue != nil {
 			w.queue.Close()
 		}
@@ -675,6 +678,31 @@ func (w *worker) run() {
 		return nil
 	}
 
+	applyTxWithRetry := func(txID uint64, offset uint64) error {
+		backoff := 100 * time.Millisecond
+		maxBackoff := 5 * time.Second
+		for {
+			if err := applyTx(txID, offset); err == nil {
+				return nil
+			} else {
+				logging.Log().Error().Err(err).Uint64("tx_id", txID).Uint64("end_seq", offset).Msg("outbox: apply tx failed, retrying")
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-w.stop:
+				timer.Stop()
+				return errors.New("worker stopped")
+			}
+			if backoff < maxBackoff {
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+		}
+	}
+
 	for {
 		rec, ok := w.queue.Dequeue()
 		if !ok {
@@ -692,9 +720,7 @@ func (w *worker) run() {
 				pendingOffsets[rec.txID] = rec.endSeq
 			}
 		case logRecordCommit:
-			if err := applyTx(rec.txID, rec.endSeq); err != nil {
-				logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Uint64("end_seq", rec.endSeq).Msg("outbox: apply tx failed, will retry on restart")
-			}
+			_ = applyTxWithRetry(rec.txID, rec.endSeq)
 		case logRecordAbort:
 			delete(pending, rec.txID)
 			delete(pendingOffsets, rec.txID)
@@ -750,8 +776,6 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 
 	applyTx := func(txID uint64) error {
 		records := pending[txID]
-		delete(pending, txID)
-		appliedOffset = lastOffset
 		if sink != nil && len(records) > 0 {
 			eventsBatch := make([]events.Event, 0, len(records))
 			for i := range records {
@@ -767,7 +791,28 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 				}
 			}
 		}
+		delete(pending, txID)
+		appliedOffset = lastOffset
 		return storeTail(tailPath, appliedOffset)
+	}
+
+	applyTxWithRetry := func(txID uint64) error {
+		backoff := 100 * time.Millisecond
+		maxBackoff := 5 * time.Second
+		for {
+			if err := applyTx(txID); err == nil {
+				return nil
+			} else {
+				logging.Log().Error().Err(err).Uint64("tx_id", txID).Msg("outbox: replay apply tx failed, retrying")
+			}
+			time.Sleep(backoff)
+			if backoff < maxBackoff {
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+		}
 	}
 
 	for _, seg := range segments {
@@ -803,9 +848,7 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 			case logRecordData:
 				pending[rec.txID] = append(pending[rec.txID], rec)
 			case logRecordCommit:
-				if err := applyTx(rec.txID); err != nil {
-					logging.Log().Error().Err(err).Uint64("tx_id", rec.txID).Msg("outbox: replay apply tx failed, skipping")
-				}
+				_ = applyTxWithRetry(rec.txID)
 			case logRecordAbort:
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
