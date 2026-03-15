@@ -133,6 +133,12 @@ func (e *Engine) SetPublisher(publisher EventPublisher) {
 }
 
 func (e *Engine) Shutdown() {
+	if e == nil {
+		return
+	}
+	if e.outbox != nil {
+		e.outbox.Stop()
+	}
 }
 
 func (e *Engine) Registry() *registry.Registry {
@@ -299,6 +305,9 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 			recorded = true
 			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt}))
 		}
+		if tx != nil {
+			recorded = true
+		}
 		_ = e.activateConditional(order, tx)
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(order)
@@ -308,6 +317,9 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 		}
 	})
 	_ = e.withBookLock(symbol, constants.CATEGORY_LINEAR, func() CommandResult {
+		if tx != nil {
+			recorded = true
+		}
 		e.checkLiquidations(symbol, price, tx)
 		return CommandResult{}
 	})
@@ -442,7 +454,10 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 	if order.IsConditional {
 		e.store.Add(order)
 		if writer != nil {
-			_ = writer.Record(events.EncodeOrderPlaced(order))
+			_ = writer.Record(events.EncodeOrderPlaced(events.OrderPlacedEvent{
+				Order:      order,
+				Instrument: e.registry.GetInstrument(order.Symbol),
+			}))
 		}
 		return CommandResult{Order: order}
 	}
@@ -531,7 +546,10 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 	if persist {
 		e.store.Add(order)
 		if writer != nil {
-			_ = writer.Record(events.EncodeOrderPlaced(order))
+			_ = writer.Record(events.EncodeOrderPlaced(events.OrderPlacedEvent{
+				Order:      order,
+				Instrument: e.registry.GetInstrument(order.Symbol),
+			}))
 		}
 	} else {
 		e.store.Add(order)
@@ -798,7 +816,10 @@ func (c *UpdateTpSlCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		pos.TPOrderID = takeProfit.ID
 		pos.TakeProfit = c.TakeProfit
 		if writer != nil {
-			_ = writer.Record(events.EncodeOrderPlaced(takeProfit))
+			_ = writer.Record(events.EncodeOrderPlaced(events.OrderPlacedEvent{
+				Order:      takeProfit,
+				Instrument: e.registry.GetInstrument(takeProfit.Symbol),
+			}))
 		}
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(takeProfit)
@@ -829,7 +850,10 @@ func (c *UpdateTpSlCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		pos.SLOrderID = stopLoss.ID
 		pos.StopLoss = c.StopLoss
 		if writer != nil {
-			_ = writer.Record(events.EncodeOrderPlaced(stopLoss))
+			_ = writer.Record(events.EncodeOrderPlaced(events.OrderPlacedEvent{
+				Order:      stopLoss,
+				Instrument: e.registry.GetInstrument(stopLoss.Symbol),
+			}))
 		}
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(stopLoss)

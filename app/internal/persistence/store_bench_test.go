@@ -21,6 +21,7 @@ func BenchmarkHistoryApply(b *testing.B) {
 		TickSize:   types.Price(fixed.NewI(1, 0)),
 		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
+	inst := reg.GetInstrument("BTCUSDT")
 
 	store, err := Open(filepath.Join(b.TempDir(), "history"), reg)
 	if err != nil {
@@ -56,7 +57,7 @@ func BenchmarkHistoryApply(b *testing.B) {
 	for i := 0; i < cap(batch); i++ {
 		ord := *order
 		ord.ID = types.OrderID(i + 1)
-		batch = append(batch, events.EncodeOrderPlaced(&ord))
+		batch = append(batch, events.EncodeOrderPlaced(events.OrderPlacedEvent{Order: &ord, Instrument: inst}))
 	}
 
 	b.ResetTimer()
@@ -84,6 +85,7 @@ func BenchmarkHistoryApplyDefault(b *testing.B) {
 		TickSize:   types.Price(fixed.NewI(1, 0)),
 		StepSize:   types.Quantity(fixed.NewI(1, 0)),
 	})
+	inst := reg.GetInstrument("BTCUSDT")
 
 	store, err := Open(filepath.Join(b.TempDir(), "history"), reg)
 	if err != nil {
@@ -113,7 +115,7 @@ func BenchmarkHistoryApplyDefault(b *testing.B) {
 	for i := 0; i < cap(batch); i++ {
 		ord := *order
 		ord.ID = types.OrderID(i + 1)
-		batch = append(batch, events.EncodeOrderPlaced(&ord))
+		batch = append(batch, events.EncodeOrderPlaced(events.OrderPlacedEvent{Order: &ord, Instrument: inst}))
 	}
 
 	b.ResetTimer()

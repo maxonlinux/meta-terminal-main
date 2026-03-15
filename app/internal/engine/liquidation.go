@@ -68,7 +68,10 @@ func (e *Engine) liquidatePosition(userID types.UserID, pos *types.Position, wri
 		constants.TRIGGER_DIRECTION_NONE,
 	)
 	if writer != nil {
-		_ = writer.Record(events.EncodeOrderPlaced(order))
+		_ = writer.Record(events.EncodeOrderPlaced(events.OrderPlacedEvent{
+			Order:      order,
+			Instrument: e.registry.GetInstrument(order.Symbol),
+		}))
 	}
 	if e.publisher != nil {
 		price := types.Price{}

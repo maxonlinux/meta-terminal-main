@@ -21,13 +21,19 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", path+"/users.db")
+	db, err := sql.Open("sqlite3", path+"/users.db?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	if _, err := db.Exec("pragma busy_timeout=5000"); err != nil {
+		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	if err := initDB(db); err != nil {
@@ -93,25 +99,46 @@ func initDB(db *sql.DB) error {
 func (s *SQLiteStore) CreateUser(username, passwordHash, email, phone string) (types.UserID, error) {
 	userID := types.UserID(snowflake.Next())
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin user tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		} else {
+			_ = tx.Commit()
+		}
+	}()
+
+	_, err = tx.Exec(
 		"INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
 		userID, username, passwordHash, utils.NowNano(),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert user: %w", err)
 	}
-	_, _ = s.db.Exec(
+	_, err = tx.Exec(
 		"INSERT INTO user_profiles (user_id, email, phone, name, surname, is_active) VALUES (?, ?, ?, ?, ?, ?)",
 		userID, email, phone, nil, nil, 0,
 	)
-	_, _ = s.db.Exec(
+	if err != nil {
+		return 0, fmt.Errorf("insert profile: %w", err)
+	}
+	_, err = tx.Exec(
 		"INSERT INTO user_settings (user_id, is_2fa_enabled, news_and_offers, access_to_transaction_data, access_to_geolocation, preferences) VALUES (?, ?, ?, ?, ?, ?)",
 		userID, 0, 0, 0, 0, "{}",
 	)
-	_, _ = s.db.Exec(
+	if err != nil {
+		return 0, fmt.Errorf("insert settings: %w", err)
+	}
+	_, err = tx.Exec(
 		"INSERT INTO user_addresses (user_id, country, city, address, zip) VALUES (?, ?, ?, ?, ?)",
 		userID, nil, nil, nil, nil,
 	)
+	if err != nil {
+		return 0, fmt.Errorf("insert address: %w", err)
+	}
 
 	return userID, nil
 }

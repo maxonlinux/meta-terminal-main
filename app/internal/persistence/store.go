@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -36,6 +37,35 @@ type Store struct {
 // DB returns the underlying database handle for feature repositories.
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+// IntegrityCheck runs a guarded SQLite integrity check.
+// Do not run integrity_check from the host against a hot database file; use this method
+// or stop the container first to avoid false errors from concurrent writes/journal state.
+// It acquires an immediate transaction to avoid running on a hot writer.
+func (s *Store) IntegrityCheck(ctx context.Context) (string, error) {
+	if s == nil || s.db == nil {
+		return "", nil
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, "begin immediate"); err != nil {
+		return "", err
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "rollback")
+	}()
+	row := conn.QueryRowContext(ctx, "pragma integrity_check")
+	var res string
+	if err := row.Scan(&res); err != nil {
+		return "", err
+	}
+	return res, nil
 }
 
 // CleanupSystemOrders removes closed system-origin orders older than cutoff.
@@ -203,6 +233,10 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping history db: %w", err)
+	}
+	if _, err := db.Exec("pragma busy_timeout=5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	if _, err := db.Exec("pragma journal_mode=DELETE"); err != nil {
@@ -573,12 +607,15 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		}
 		switch event.Type {
 		case events.OrderPlaced:
-			order, decErr := events.DecodeOrderPlaced(event.Data)
+			placed, decErr := events.DecodeOrderPlaced(event.Data)
 			if decErr != nil {
 				return decErr
 			}
-			err = upsertOrder(tx, s.stmts, order)
-			addBalance(order.UserID)
+			if placed.Instrument != nil && s.registry.GetInstrument(placed.Order.Symbol) == nil {
+				s.registry.SetInstrument(placed.Order.Symbol, placed.Instrument)
+			}
+			err = upsertOrder(tx, s.stmts, placed.Order)
+			addBalance(placed.Order.UserID)
 		case events.OrderAmended:
 			amend, decErr := events.DecodeOrderAmended(event.Data)
 			if decErr != nil {
@@ -601,6 +638,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			trade, decErr := events.DecodeTrade(event.Data)
 			if decErr != nil {
 				return decErr
+			}
+			if trade.Instrument != nil && s.registry.GetInstrument(trade.Symbol) == nil {
+				s.registry.SetInstrument(trade.Symbol, trade.Instrument)
 			}
 			err = applyTrade(tx, s.stmts, trade)
 			addBalance(trade.MakerUserID)
@@ -733,7 +773,7 @@ func loadPendingFundings(db *sql.DB, portfolio *portfolio.Service) error {
 		}
 		amount, err := fixed.Parse(r.Amount)
 		if err != nil {
-			continue
+			return fmt.Errorf("parse funding amount: %w", err)
 		}
 		if portfolio.Fundings == nil {
 			portfolio.Fundings = make(map[types.FundingID]*types.FundingRequest)
@@ -1056,10 +1096,11 @@ func loadOpenOrders(db *sql.DB, store *oms.Service) error {
 	rows, err := db.Query(
 		`select id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, trigger_direction, is_conditional, created_at, updated_at
      from orders
-     where status in (?, ?, ?)`,
+     where status in (?, ?, ?, ?)`,
 		constants.ORDER_STATUS_NEW,
 		constants.ORDER_STATUS_PARTIALLY_FILLED,
 		constants.ORDER_STATUS_UNTRIGGERED,
+		constants.ORDER_STATUS_TRIGGERED,
 	)
 	if err != nil {
 		return err

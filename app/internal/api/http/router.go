@@ -112,7 +112,6 @@ func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store,
 func (r *Router) Register(e *echo.Echo) {
 	e.Use(echomw.Recover())
 	e.Use(echomw.RequestID())
-	// Use RequestLogger to avoid deprecated Logger middleware.
 	e.Use(echomw.RequestLogger())
 	e.Use(r.CORSMiddleware())
 
@@ -304,10 +303,16 @@ func (r *Router) AdminMiddleware() echo.MiddlewareFunc {
 func (r *Router) CORSMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+			origin := c.Request().Header.Get("Origin")
+			if origin != "" {
+				c.Response().Header().Set("Access-Control-Allow-Origin", origin)
+				c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+				c.Response().Header().Set("Vary", "Origin")
+			} else {
+				c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+			}
 			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 
 			if c.Request().Method == "OPTIONS" {
 				return c.NoContent(http.StatusNoContent)

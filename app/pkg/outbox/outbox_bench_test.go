@@ -68,7 +68,7 @@ func buildPreparedRecords() []preparedRecord {
 
 	records := make([]preparedRecord, 0, 3)
 	records = append(records, preparedRecord{recordType: logRecordBegin, txID: txID})
-	event := events.EncodeOrderPlaced(order)
+	event := events.EncodeOrderPlaced(events.OrderPlacedEvent{Order: order})
 	value := append([]byte{byte(event.Type)}, event.Data...)
 	records = append(records, preparedRecord{
 		recordType: logRecordData,

@@ -169,7 +169,7 @@ func (m *MarketMaker) refreshSymbol(symbol string, price types.Price) {
 
 func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price types.Price) {
 	key := marketKey{symbol: inst.Symbol, category: category}
-	existing, stale := m.rebuildExisting(inst, category, price)
+	existing, stale := m.rebuildExisting(key, inst, category, price)
 	m.orders[key] = make(map[string]types.OrderID, len(existing))
 
 	desired := make(map[string]types.PlaceOrderRequest, m.cfg.Levels*2)
@@ -286,7 +286,7 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 	}
 }
 
-func (m *MarketMaker) rebuildExisting(inst *types.Instrument, category int8, mark types.Price) (map[string]*types.Order, []*types.Order) {
+func (m *MarketMaker) rebuildExisting(key marketKey, inst *types.Instrument, category int8, mark types.Price) (map[string]*types.Order, []*types.Order) {
 	store := m.eng.Store()
 	if store == nil {
 		return make(map[string]*types.Order), nil
@@ -297,6 +297,30 @@ func (m *MarketMaker) rebuildExisting(inst *types.Instrument, category int8, mar
 	}
 	result := make(map[string]*types.Order)
 	stale := make([]*types.Order, 0)
+	if existingLevels, ok := m.orders[key]; ok {
+		for level, id := range existingLevels {
+			order, ok := store.GetUserOrder(m.cfg.BotUserID, id)
+			if !ok || order == nil {
+				continue
+			}
+			if order.Symbol != inst.Symbol || order.Category != category {
+				continue
+			}
+			if order.Origin != constants.ORDER_ORIGIN_SYSTEM {
+				continue
+			}
+			switch order.Status {
+			case constants.ORDER_STATUS_NEW, constants.ORDER_STATUS_PARTIALLY_FILLED:
+			default:
+				continue
+			}
+			result[level] = order
+		}
+	}
+	levelByID := make(map[types.OrderID]string)
+	for level, order := range result {
+		levelByID[order.ID] = level
+	}
 	for _, order := range orders {
 		if order == nil {
 			continue
@@ -312,22 +336,25 @@ func (m *MarketMaker) rebuildExisting(inst *types.Instrument, category int8, mar
 		default:
 			continue
 		}
-		level, ok := m.orderLevel(inst, mark, order.Price, order.Side)
+		levelKeyValue, ok := levelByID[order.ID]
 		if !ok {
-			stale = append(stale, order)
-			continue
+			level, levelOk := m.orderLevel(inst, mark, order.Price, order.Side)
+			if !levelOk {
+				stale = append(stale, order)
+				continue
+			}
+			levelKeyValue = levelKey(order.Side, level)
 		}
-		key := levelKey(order.Side, level)
-		if prev, ok := result[key]; ok {
+		if prev, ok := result[levelKeyValue]; ok {
 			if order.UpdatedAt > prev.UpdatedAt {
 				stale = append(stale, prev)
-				result[key] = order
+				result[levelKeyValue] = order
 			} else {
 				stale = append(stale, order)
 			}
 			continue
 		}
-		result[key] = order
+		result[levelKeyValue] = order
 	}
 	return result, stale
 }

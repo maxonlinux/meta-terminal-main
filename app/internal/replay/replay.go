@@ -36,10 +36,14 @@ func (r *Replayer) ApplyEvent(ev events.Event) error {
 func (r *Replayer) applyEvent(ev events.Event) error {
 	switch ev.Type {
 	case events.OrderPlaced:
-		order, err := events.DecodeOrderPlaced(ev.Data)
+		placed, err := events.DecodeOrderPlaced(ev.Data)
 		if err != nil {
 			return err
 		}
+		if placed.Instrument != nil && r.registry.GetInstrument(placed.Order.Symbol) == nil {
+			r.registry.SetInstrument(placed.Order.Symbol, placed.Instrument)
+		}
+		order := placed.Order
 		r.store.Load(order)
 		if order.IsConditional {
 			return nil
@@ -112,6 +116,9 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		if err != nil {
 			return err
 		}
+		if trade.Instrument != nil && r.registry.GetInstrument(trade.Symbol) == nil {
+			r.registry.SetInstrument(trade.Symbol, trade.Instrument)
+		}
 		maker, _ := r.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
 		taker, _ := r.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
 		if maker == nil || taker == nil {
@@ -140,8 +147,12 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		if err := r.clearing.ExecuteTrade(&match); err != nil {
 			return err
 		}
-		_ = r.store.Fill(maker.UserID, maker.ID, trade.Quantity)
-		_ = r.store.Fill(taker.UserID, taker.ID, trade.Quantity)
+		if err := r.store.Fill(maker.UserID, maker.ID, trade.Quantity); err != nil {
+			return err
+		}
+		if err := r.store.Fill(taker.UserID, taker.ID, trade.Quantity); err != nil {
+			return err
+		}
 	case events.LeverageSet:
 		lev, err := events.DecodeLeverage(ev.Data)
 		if err != nil {

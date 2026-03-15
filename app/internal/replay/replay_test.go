@@ -59,7 +59,7 @@ func TestReplayOrderAmendedWithPrice(t *testing.T) {
 		UpdatedAt: 1,
 	}
 
-	if err := player.ApplyEvent(events.EncodeOrderPlaced(order)); err != nil {
+	if err := player.ApplyEvent(events.EncodeOrderPlaced(events.OrderPlacedEvent{Order: order, Instrument: reg.GetInstrument(order.Symbol)})); err != nil {
 		t.Fatalf("apply placed: %v", err)
 	}
 	if err := player.ApplyEvent(events.EncodeOrderAmended(events.OrderAmendedEvent{

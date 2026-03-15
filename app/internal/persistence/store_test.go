@@ -54,7 +54,7 @@ func TestApplyOrderAmendedWithPrice(t *testing.T) {
 		UpdatedAt: 1,
 	}
 	batch := []events.Event{
-		events.EncodeOrderPlaced(order),
+		events.EncodeOrderPlaced(events.OrderPlacedEvent{Order: order, Instrument: reg.GetInstrument(order.Symbol)}),
 		events.EncodeOrderAmended(events.OrderAmendedEvent{
 			UserID:    order.UserID,
 			OrderID:   order.ID,

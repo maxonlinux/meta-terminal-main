@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"errors"
 	"sync"
 
 	orderbook "github.com/maxonlinux/meta-terminal-go/internal/orderbook"
+	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/outbox"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -26,9 +28,13 @@ func putTrade(t *types.Trade) {
 
 func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer outbox.Writer) error {
 	if match.MakerOrder == nil || match.TakerOrder == nil {
-		return nil
+		return errors.New("match missing orders")
 	}
 
+	inst := e.registry.GetInstrument(match.Symbol)
+	if inst == nil {
+		return constants.ErrInstrumentNotFound
+	}
 	if err := e.clearing.ExecuteTrade(&match); err != nil {
 		return err
 	}
@@ -74,6 +80,7 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 			TakerOrderID:   match.TakerOrder.ID,
 			MakerOrderType: match.MakerOrder.Type,
 			TakerOrderType: match.TakerOrder.Type,
+			Instrument:     inst,
 			Symbol:         match.Symbol,
 			Category:       match.Category,
 			Price:          match.Price,

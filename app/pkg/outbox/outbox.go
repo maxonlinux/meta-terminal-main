@@ -19,12 +19,21 @@ import (
 )
 
 const (
-	logRecordBegin     byte = 1
-	logRecordData      byte = 2
-	logRecordCommit    byte = 3
-	logRecordAbort     byte = 4
-	defaultSegmentSize      = 16 << 20
+	logRecordFlush       byte = 0
+	logRecordBegin       byte = 1
+	logRecordData        byte = 2
+	logRecordCommit      byte = 3
+	logRecordAbort       byte = 4
+	defaultSegmentSize        = 16 << 20
+	retryAttempts             = 20
+	applyBatchSize            = 2000
+	applyBatchFlushEvery      = 200 * time.Millisecond
 )
+
+var retryBackoffStart = 100 * time.Millisecond
+var retryBackoffMax = 5 * time.Second
+var retrySleep = time.Sleep
+var retryTimer = time.NewTimer
 
 type Writer interface {
 	Record(events.Event) error
@@ -630,25 +639,26 @@ func (w *worker) run() {
 	lastCommitted := w.lastOffset
 	pending := make(map[uint64][]record)
 	pendingOffsets := make(map[uint64]uint64)
-
-	applyTx := func(txID uint64, offset uint64) error {
-		records := pending[txID]
-		if w.sink != nil && len(records) > 0 {
-			eventsBatch := make([]events.Event, 0, len(records))
-			for i := range records {
-				value := records[i].value
-				if len(value) == 0 {
-					continue
-				}
-				eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
-			}
-			if len(eventsBatch) > 0 {
-				if err := w.sink.Apply(eventsBatch); err != nil {
-					logging.Log().Error().Err(err).Uint64("tx_id", txID).Int("events", len(eventsBatch)).Msg("outbox: sink apply failed")
-					return err
-				}
+	type committedTx struct {
+		txID   uint64
+		endSeq uint64
+	}
+	batchEvents := make([]events.Event, 0, applyBatchSize)
+	batchTxs := make([]committedTx, 0, applyBatchSize)
+	flushTicker := time.NewTicker(applyBatchFlushEvery)
+	defer flushTicker.Stop()
+	go func() {
+		for {
+			select {
+			case <-flushTicker.C:
+				w.queue.Enqueue(record{recordType: logRecordFlush})
+			case <-w.stop:
+				return
 			}
 		}
+	}()
+
+	finalizeTx := func(txID uint64, offset uint64) error {
 		delete(pending, txID)
 		delete(pendingOffsets, txID)
 		lastCommitted = offset
@@ -678,37 +688,90 @@ func (w *worker) run() {
 		return nil
 	}
 
-	applyTxWithRetry := func(txID uint64, offset uint64) error {
-		backoff := 100 * time.Millisecond
-		maxBackoff := 5 * time.Second
-		for {
-			if err := applyTx(txID, offset); err == nil {
-				return nil
-			} else {
-				logging.Log().Error().Err(err).Uint64("tx_id", txID).Uint64("end_seq", offset).Msg("outbox: apply tx failed, retrying")
+	buildEvents := func(txID uint64) []events.Event {
+		records := pending[txID]
+		if len(records) == 0 {
+			return nil
+		}
+		eventsBatch := make([]events.Event, 0, len(records))
+		for i := range records {
+			value := records[i].value
+			if len(value) == 0 {
+				continue
 			}
-			timer := time.NewTimer(backoff)
-			select {
-			case <-timer.C:
-			case <-w.stop:
-				timer.Stop()
-				return errors.New("worker stopped")
+			eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+		}
+		return eventsBatch
+	}
+
+	finalizeBatch := func(txs []committedTx) error {
+		if len(txs) == 0 {
+			return nil
+		}
+		for i := range txs {
+			delete(pending, txs[i].txID)
+			delete(pendingOffsets, txs[i].txID)
+		}
+		lastCommitted = txs[len(txs)-1].endSeq
+		if w.log != nil {
+			cutoff := lastCommitted
+			if len(pendingOffsets) > 0 {
+				minPending := cutoff
+				for _, off := range pendingOffsets {
+					if off < minPending {
+						minPending = off
+					}
+				}
+				if minPending > 0 && minPending-1 < cutoff {
+					cutoff = minPending - 1
+				}
 			}
-			if backoff < maxBackoff {
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
+			if cutoff > 0 {
+				if newOffset, err := w.log.CompactApplied(cutoff); err != nil {
+					logging.Log().Error().Err(err).Uint64("cutoff", cutoff).Msg("outbox: compact failed")
+					return err
+				} else if newOffset > 0 {
+					logging.Log().Info().Uint64("cutoff", cutoff).Uint64("compacted_to", newOffset).Msg("outbox: compacted")
 				}
 			}
 		}
+		_ = storeTail(w.tailPath, lastCommitted)
+		return nil
+	}
+
+	flushBatch := func() error {
+		if len(batchTxs) == 0 {
+			return nil
+		}
+		lastTx := batchTxs[len(batchTxs)-1]
+		apply := func() error {
+			if w.sink == nil || len(batchEvents) == 0 {
+				return nil
+			}
+			if err := w.sink.Apply(batchEvents); err != nil {
+				logging.Log().Error().Err(err).Int("events", len(batchEvents)).Int("tx_count", len(batchTxs)).Msg("outbox: sink apply failed")
+				return err
+			}
+			return nil
+		}
+		finalize := func() error {
+			err := finalizeBatch(batchTxs)
+			batchTxs = batchTxs[:0]
+			batchEvents = batchEvents[:0]
+			return err
+		}
+		return applyWithRetry(lastTx.txID, lastTx.endSeq, w.stop, apply, finalize, "live")
 	}
 
 	for {
 		rec, ok := w.queue.Dequeue()
 		if !ok {
+			_ = flushBatch()
 			return
 		}
 		switch rec.recordType {
+		case logRecordFlush:
+			_ = flushBatch()
 		case logRecordBegin:
 			if _, ok := pending[rec.txID]; !ok {
 				pending[rec.txID] = nil
@@ -720,7 +783,16 @@ func (w *worker) run() {
 				pendingOffsets[rec.txID] = rec.endSeq
 			}
 		case logRecordCommit:
-			_ = applyTxWithRetry(rec.txID, rec.endSeq)
+			eventsBatch := buildEvents(rec.txID)
+			if len(eventsBatch) == 0 {
+				_ = finalizeTx(rec.txID, rec.endSeq)
+				continue
+			}
+			batchEvents = append(batchEvents, eventsBatch...)
+			batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.endSeq})
+			if len(batchEvents) >= applyBatchSize {
+				_ = flushBatch()
+			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
 			delete(pendingOffsets, rec.txID)
@@ -791,28 +863,21 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 				}
 			}
 		}
+		return nil
+	}
+
+	finalizeTx := func(txID uint64) error {
 		delete(pending, txID)
 		appliedOffset = lastOffset
 		return storeTail(tailPath, appliedOffset)
 	}
 
-	applyTxWithRetry := func(txID uint64) error {
-		backoff := 100 * time.Millisecond
-		maxBackoff := 5 * time.Second
-		for {
-			if err := applyTx(txID); err == nil {
-				return nil
-			} else {
-				logging.Log().Error().Err(err).Uint64("tx_id", txID).Msg("outbox: replay apply tx failed, retrying")
-			}
-			time.Sleep(backoff)
-			if backoff < maxBackoff {
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			}
-		}
+	applyTxWithRetry := func(txID uint64, endSeq uint64) error {
+		return applyWithRetry(txID, endSeq, nil, func() error {
+			return applyTx(txID)
+		}, func() error {
+			return finalizeTx(txID)
+		}, "replay")
 	}
 
 	for _, seg := range segments {
@@ -848,7 +913,7 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 			case logRecordData:
 				pending[rec.txID] = append(pending[rec.txID], rec)
 			case logRecordCommit:
-				_ = applyTxWithRetry(rec.txID)
+				_ = applyTxWithRetry(rec.txID, rec.seq)
 			case logRecordAbort:
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
@@ -918,4 +983,40 @@ func readUvarint(r *bufio.Reader) (uint64, int, error) {
 		x |= uint64(b&0x7f) << s
 		s += 7
 	}
+}
+
+func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func() error, finalize func() error, scope string) error {
+	backoff := retryBackoffStart
+	maxBackoff := retryBackoffMax
+	var lastErr error
+	for attempt := 1; attempt <= retryAttempts; attempt++ {
+		if err := apply(); err == nil {
+			return finalize()
+		} else {
+			lastErr = err
+			logging.Log().Error().Err(err).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Int("attempt", attempt).Str("scope", scope).Msg("outbox: apply failed, retrying")
+		}
+		if attempt == retryAttempts {
+			break
+		}
+		if stop != nil {
+			timer := retryTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-stop:
+				timer.Stop()
+				return errors.New("worker stopped")
+			}
+		} else {
+			retrySleep(backoff)
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+	logging.Log().Error().Err(lastErr).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Str("scope", scope).Msg("outbox: apply failed, dropping transaction")
+	return finalize()
 }

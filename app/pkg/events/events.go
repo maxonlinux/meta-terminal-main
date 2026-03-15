@@ -50,6 +50,7 @@ type TradeEvent struct {
 	TakerOrderID   types.OrderID
 	MakerOrderType int8
 	TakerOrderType int8
+	Instrument     *types.Instrument
 	Symbol         string
 	Category       int8
 	Price          types.Price
@@ -72,6 +73,11 @@ type FundingStatusEvent struct {
 	FundingID types.FundingID
 }
 
+type OrderPlacedEvent struct {
+	Order      *types.Order
+	Instrument *types.Instrument
+}
+
 type OrderTriggeredEvent struct {
 	UserID    types.UserID
 	OrderID   types.OrderID
@@ -90,12 +96,42 @@ type RPNLEvent struct {
 	Timestamp uint64
 }
 
-func EncodeOrderPlaced(order *types.Order) Event {
-	return Event{Type: OrderPlaced, Data: codec.EncodeOrder(order)}
+func EncodeOrderPlaced(ev OrderPlacedEvent) Event {
+	orderBytes := codec.EncodeOrder(ev.Order)
+	data := make([]byte, 0, len(orderBytes)+64)
+	data = appendBytes(data, orderBytes)
+	instBytes := encodeInstrument(ev.Instrument)
+	data = appendBytes(data, instBytes)
+	return Event{Type: OrderPlaced, Data: data}
 }
 
-func DecodeOrderPlaced(data []byte) (*types.Order, error) {
-	return codec.DecodeOrder(data)
+func DecodeOrderPlaced(data []byte) (OrderPlacedEvent, error) {
+	if len(data) < 4 {
+		return OrderPlacedEvent{}, errors.New("invalid order placed payload")
+	}
+	off := 0
+	orderBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderPlacedEvent{}, err
+	}
+	order, err := codec.DecodeOrder(orderBytes)
+	if err != nil {
+		return OrderPlacedEvent{}, err
+	}
+	ev := OrderPlacedEvent{Order: order}
+	instBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderPlacedEvent{}, err
+	}
+	inst, err := decodeInstrument(instBytes)
+	if err != nil {
+		return OrderPlacedEvent{}, err
+	}
+	if inst == nil {
+		return OrderPlacedEvent{}, errors.New("missing order instrument")
+	}
+	ev.Instrument = inst
+	return ev, nil
 }
 
 func EncodeOrderAmended(ev OrderAmendedEvent) Event {
@@ -177,12 +213,14 @@ func EncodeTrade(ev TradeEvent) Event {
 	data = appendString(data, ev.Symbol)
 	data = appendBytes(data, priceBytes)
 	data = appendBytes(data, qtyBytes)
+	instBytes := encodeInstrument(ev.Instrument)
+	data = appendBytes(data, instBytes)
 	return Event{Type: TradeExecuted, Data: data}
 }
 
 func DecodeTrade(data []byte) (TradeEvent, error) {
 	var ev TradeEvent
-	if len(data) < 44 {
+	if len(data) < 48 {
 		return ev, errors.New("invalid trade payload")
 	}
 	off := 0
@@ -216,6 +254,18 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 	if err := ev.Quantity.UnmarshalBinary(qtyBytes); err != nil {
 		return ev, err
 	}
+	instBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, err
+	}
+	inst, err := decodeInstrument(instBytes)
+	if err != nil {
+		return ev, err
+	}
+	if inst == nil {
+		return ev, errors.New("missing trade instrument")
+	}
+	ev.Instrument = inst
 	return ev, nil
 }
 
@@ -437,6 +487,101 @@ func readBytesAt(data []byte, off *int) ([]byte, error) {
 	return data[start:*off], nil
 }
 
+func encodeInstrument(inst *types.Instrument) []byte {
+	if inst == nil {
+		return nil
+	}
+	minQty, _ := inst.MinQty.MarshalBinary()
+	minNotional, _ := inst.MinNotional.MarshalBinary()
+	tickSize, _ := inst.TickSize.MarshalBinary()
+	stepSize, _ := inst.StepSize.MarshalBinary()
+	data := make([]byte, 0, 64+len(inst.Symbol)+len(inst.BaseAsset)+len(inst.QuoteAsset)+len(inst.AssetType)+len(minQty)+len(minNotional)+len(tickSize)+len(stepSize))
+	data = appendString(data, inst.Symbol)
+	data = appendString(data, inst.BaseAsset)
+	data = appendString(data, inst.QuoteAsset)
+	data = appendString(data, inst.AssetType)
+	data = append(data, byte(inst.PricePrec), byte(inst.QtyPrec))
+	data = appendBytes(data, minQty)
+	data = appendBytes(data, minNotional)
+	data = appendBytes(data, tickSize)
+	data = appendBytes(data, stepSize)
+	return data
+}
+
+func decodeInstrument(data []byte) (*types.Instrument, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	off := 0
+	symbol, err := readStringAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	base, err := readStringAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	quote, err := readStringAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	assetType, err := readStringAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	if off+2 > len(data) {
+		return nil, errors.New("invalid instrument payload")
+	}
+	pricePrec := int8(data[off])
+	qtyPrec := int8(data[off+1])
+	off += 2
+	minQtyBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	minNotionalBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	tickBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	stepBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return nil, err
+	}
+	inst := &types.Instrument{
+		Symbol:     symbol,
+		BaseAsset:  base,
+		QuoteAsset: quote,
+		AssetType:  assetType,
+		PricePrec:  pricePrec,
+		QtyPrec:    qtyPrec,
+	}
+	if len(minQtyBytes) > 0 {
+		if err := inst.MinQty.UnmarshalBinary(minQtyBytes); err != nil {
+			return nil, err
+		}
+	}
+	if len(minNotionalBytes) > 0 {
+		if err := inst.MinNotional.UnmarshalBinary(minNotionalBytes); err != nil {
+			return nil, err
+		}
+	}
+	if len(tickBytes) > 0 {
+		if err := inst.TickSize.UnmarshalBinary(tickBytes); err != nil {
+			return nil, err
+		}
+	}
+	if len(stepBytes) > 0 {
+		if err := inst.StepSize.UnmarshalBinary(stepBytes); err != nil {
+			return nil, err
+		}
+	}
+	return inst, nil
+}
+
 func DecodeEvent(event Event) (interface{}, error) {
 	switch event.Type {
 	case OrderPlaced:
@@ -453,6 +598,10 @@ func DecodeEvent(event Event) (interface{}, error) {
 		return DecodeFundingCreated(event.Data)
 	case FundingApproved, FundingRejected:
 		return DecodeFundingStatus(event.Data)
+	case OrderTriggered:
+		return DecodeOrderTriggered(event.Data)
+	case RPNLRecorded:
+		return DecodeRPNL(event.Data)
 	default:
 		return nil, errors.New("unknown event type")
 	}
