@@ -87,7 +87,7 @@ func (h *AdminAuthHandler) Login(c *echo.Context) error {
 		Value:    token,
 		Path:     adminCookiePath(),
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   isSecureRequest(c.Request()),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   adminCookieMaxAge(),
 	})
@@ -102,7 +102,7 @@ func (h *AdminAuthHandler) Logout(c *echo.Context) error {
 		Value:    "",
 		Path:     adminCookiePath(),
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   isSecureRequest(c.Request()),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

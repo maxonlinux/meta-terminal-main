@@ -456,7 +456,11 @@ func (s *Store) ListRPNL(userID types.UserID, symbol string, category *int8, lim
 	defer func() {
 		_ = rows.Close()
 	}()
-	res := make([]RPNLRecord, 0)
+	capHint := 0
+	if limit > 0 {
+		capHint = limit
+	}
+	res := make([]RPNLRecord, 0, capHint)
 	for rows.Next() {
 		var rec RPNLRecord
 		if err := rows.Scan(
@@ -551,7 +555,11 @@ func (s *Store) ListFundingsAll(limit int, offset int, search string) ([]Funding
 	defer func() {
 		_ = rows.Close()
 	}()
-	res := make([]FundingRecord, 0)
+	capHint := 0
+	if limit > 0 {
+		capHint = limit
+	}
+	res := make([]FundingRecord, 0, capHint)
 	for rows.Next() {
 		var r FundingRecord
 		if err := rows.Scan(&r.ID, &r.UserID, &r.Type, &r.Status, &r.Asset, &r.Amount, &r.Destination, &r.CreatedBy, &r.Message, &r.CreatedAt, &r.UpdatedAt); err != nil {
@@ -575,6 +583,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	if len(eventsBatch) == 0 {
 		return nil
 	}
+	s.balances = make(map[types.UserID]struct{})
+	s.positions = make(map[positionKey]struct{})
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -731,6 +741,12 @@ func (s *Store) loadState() error {
 }
 
 func (s *Store) loadCore(store *oms.Service, portfolio *portfolio.Service) error {
+	if store != nil {
+		store.Reset()
+	}
+	if portfolio != nil {
+		portfolio.Reset()
+	}
 	if err := loadBalances(s.db, portfolio); err != nil {
 		return err
 	}
@@ -929,7 +945,7 @@ func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
 	if stmt == nil {
 		return fmt.Errorf("missing insert rpnl statement")
 	}
-	_, err := stmt.Exec(
+	_, err := tx.Stmt(stmt).Exec(
 		snowflake.Next(),
 		uint64(ev.UserID),
 		uint64(ev.OrderID),

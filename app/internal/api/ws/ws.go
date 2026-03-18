@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,7 +79,20 @@ func getClaims(c *echo.Context, jwtService *auth.JWTService, cookieName string) 
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		if r == nil {
+			return false
+		}
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
+	},
 }
 
 type wsHub struct {
@@ -192,7 +206,7 @@ func buildBookSnapshot(snap orderbook.Snapshot) bookSnapshot {
 }
 
 func diffBookSide(prev map[string]string, next map[string]string) [][2]string {
-	updates := make([][2]string, 0)
+	updates := make([][2]string, 0, len(prev)+len(next))
 	for price, qty := range next {
 		if prevQty, ok := prev[price]; !ok || prevQty != qty {
 			updates = append(updates, [2]string{price, qty})

@@ -296,7 +296,7 @@ func (m *MarketMaker) rebuildExisting(key marketKey, inst *types.Instrument, cat
 		return make(map[string]*types.Order), nil
 	}
 	result := make(map[string]*types.Order)
-	stale := make([]*types.Order, 0)
+	stale := make([]*types.Order, 0, len(orders))
 	if existingLevels, ok := m.orders[key]; ok {
 		for level, id := range existingLevels {
 			order, ok := store.GetUserOrder(m.cfg.BotUserID, id)
@@ -437,6 +437,16 @@ func (m *MarketMaker) buildOrder(inst *types.Instrument, category int8, side int
 	qty = types.Quantity(math.RoundTo(qty, inst.StepSize))
 	if math.Cmp(qty, inst.MinQty) < 0 {
 		qty = inst.MinQty
+	}
+	if math.Sign(inst.MinNotional) > 0 {
+		notionalQty := math.Mul(types.Quantity(price), qty)
+		if math.Cmp(notionalQty, inst.MinNotional) < 0 {
+			qty = types.Quantity(math.Div(inst.MinNotional, types.Quantity(price)))
+			qty = types.Quantity(math.RoundTo(qty, inst.StepSize))
+			if math.Cmp(qty, inst.MinQty) < 0 {
+				qty = inst.MinQty
+			}
+		}
 	}
 	if math.Sign(qty) <= 0 {
 		return nil

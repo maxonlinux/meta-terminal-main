@@ -121,7 +121,7 @@ func (e *Engine) liquidatePosition(userID types.UserID, pos *types.Position, wri
 }
 
 func (e *Engine) allowLiquidation(userID types.UserID, symbol string) bool {
-	key := bookLockKey{symbol: symbol, category: constants.CATEGORY_LINEAR}
+	key := liqKey{userID: userID, symbol: symbol, category: constants.CATEGORY_LINEAR}
 	now := time.Now()
 	e.liqMu.Lock()
 	next, ok := e.liqNext[key]
@@ -134,7 +134,7 @@ func (e *Engine) allowLiquidation(userID types.UserID, symbol string) bool {
 }
 
 func (e *Engine) scheduleLiquidationRetry(userID types.UserID, symbol string) {
-	key := bookLockKey{symbol: symbol, category: constants.CATEGORY_LINEAR}
+	key := liqKey{userID: userID, symbol: symbol, category: constants.CATEGORY_LINEAR}
 	next := time.Now().Add(liquidationRetryDelay)
 	e.liqMu.Lock()
 	e.liqNext[key] = next
@@ -154,7 +154,7 @@ func (e *Engine) scheduleLiquidationRetry(userID types.UserID, symbol string) {
 }
 
 func (e *Engine) clearLiquidationRetry(userID types.UserID, symbol string) {
-	key := bookLockKey{symbol: symbol, category: constants.CATEGORY_LINEAR}
+	key := liqKey{userID: userID, symbol: symbol, category: constants.CATEGORY_LINEAR}
 	e.liqMu.Lock()
 	delete(e.liqNext, key)
 	e.liqMu.Unlock()

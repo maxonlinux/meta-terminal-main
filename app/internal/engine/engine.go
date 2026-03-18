@@ -62,7 +62,7 @@ type Engine struct {
 	locksMu    sync.Mutex
 	locks      map[bookLockKey]*sync.Mutex // symbol & category -> mutex
 	liqMu      sync.Mutex
-	liqNext    map[bookLockKey]time.Time
+	liqNext    map[liqKey]time.Time
 }
 
 func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*Engine, error) {
@@ -78,7 +78,7 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 		registry:  reg,
 		callback:  cb,
 		locks:     make(map[bookLockKey]*sync.Mutex),
-		liqNext:   make(map[bookLockKey]time.Time),
+		liqNext:   make(map[liqKey]time.Time),
 	}
 	portfolioService, err := portfolio.New(func(userID types.UserID, symbol string, size types.Quantity) {
 		e.onPositionReduce(userID, symbol, size)
@@ -257,7 +257,8 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 	}
 	e.store.OnPositionReduce(userID, symbol, size, price)
 	if math.Sign(size) == 0 {
-		ids := make([]types.OrderID, 0)
+		var buf [16]types.OrderID
+		ids := buf[:0]
 		e.store.Iterate(func(order *types.Order) bool {
 			if order == nil {
 				return true
@@ -333,6 +334,12 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 }
 
 type bookLockKey struct {
+	symbol   string
+	category int8
+}
+
+type liqKey struct {
+	userID   types.UserID
 	symbol   string
 	category int8
 }
@@ -551,8 +558,6 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 				Instrument: e.registry.GetInstrument(order.Symbol),
 			}))
 		}
-	} else {
-		e.store.Add(order)
 	}
 
 	for i := range matches {

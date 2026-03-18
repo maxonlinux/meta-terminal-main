@@ -31,6 +31,18 @@ type Service struct {
 	conditional *ConditionalIndex
 }
 
+func (s *Service) Reset() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byUser = make(map[types.UserID]map[types.OrderID]*types.Order)
+	s.reduceonly = NewReduceOnlyIndex()
+	s.conditional = NewConditionalIndex()
+	atomic.StoreInt64(&s.count, 0)
+}
+
 func (s *Service) removeReduceOnly(order *types.Order) {
 	if order.ReduceOnly {
 		s.reduceonly.Remove(order)

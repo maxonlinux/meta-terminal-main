@@ -114,6 +114,7 @@ func (o *Outbox) Begin() *Tx {
 	txID := atomic.AddUint64(&o.seq, 1)
 	offset, err := o.log.Append(logRecordBegin, txID, nil)
 	if err != nil {
+		logging.Log().Error().Err(err).Uint64("tx_id", txID).Msg("outbox: begin failed")
 		return nil
 	}
 	o.worker.Enqueue(record{recordType: logRecordBegin, txID: txID, endSeq: offset})
@@ -688,22 +689,6 @@ func (w *worker) run() {
 		return nil
 	}
 
-	buildEvents := func(txID uint64) []events.Event {
-		records := pending[txID]
-		if len(records) == 0 {
-			return nil
-		}
-		eventsBatch := make([]events.Event, 0, len(records))
-		for i := range records {
-			value := records[i].value
-			if len(value) == 0 {
-				continue
-			}
-			eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
-		}
-		return eventsBatch
-	}
-
 	finalizeBatch := func(txs []committedTx) error {
 		if len(txs) == 0 {
 			return nil
@@ -783,12 +768,20 @@ func (w *worker) run() {
 				pendingOffsets[rec.txID] = rec.endSeq
 			}
 		case logRecordCommit:
-			eventsBatch := buildEvents(rec.txID)
-			if len(eventsBatch) == 0 {
+			records := pending[rec.txID]
+			added := 0
+			for i := range records {
+				value := records[i].value
+				if len(value) == 0 {
+					continue
+				}
+				batchEvents = append(batchEvents, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+				added++
+			}
+			if added == 0 {
 				_ = finalizeTx(rec.txID, rec.endSeq)
 				continue
 			}
-			batchEvents = append(batchEvents, eventsBatch...)
 			batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.endSeq})
 			if len(batchEvents) >= applyBatchSize {
 				_ = flushBatch()
@@ -845,11 +838,12 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 	pending := make(map[uint64][]logRecord)
 	lastOffset := offset
 	appliedOffset := offset
+	eventsBatch := make([]events.Event, 0, 256)
 
 	applyTx := func(txID uint64) error {
 		records := pending[txID]
 		if sink != nil && len(records) > 0 {
-			eventsBatch := make([]events.Event, 0, len(records))
+			eventsBatch = eventsBatch[:0]
 			for i := range records {
 				value := records[i].value
 				if len(value) == 0 {

@@ -26,6 +26,17 @@ type Service struct {
 	registry      *registry.Registry
 }
 
+func (s *Service) Reset() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Balances = make(map[types.UserID]map[string]*types.Balance)
+	s.Positions = make(map[types.UserID]map[string]*types.Position)
+	s.Fundings = make(map[types.FundingID]*types.FundingRequest)
+}
+
 func New(onReduce OnPositionReduce, reg *registry.Registry) (*Service, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required")

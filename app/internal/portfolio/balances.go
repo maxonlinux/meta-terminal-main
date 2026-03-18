@@ -9,7 +9,12 @@ import (
 func (s *Service) GetBalance(userID types.UserID, asset string) *types.Balance {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.balanceForLocked(userID, asset)
+	balance := s.balanceForLocked(userID, asset)
+	if balance == nil {
+		return nil
+	}
+	copy := *balance
+	return &copy
 }
 
 func (s *Service) Reserve(userID types.UserID, asset string, amount types.Quantity) error {

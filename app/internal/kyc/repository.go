@@ -130,8 +130,8 @@ func (r *Repository) GetRequest(id int64) (*RequestRecord, []FileRecord, error) 
 // ListRequests returns KYC requests with optional status and search filter.
 func (r *Repository) ListRequests(status string, limit int, offset int, search string, userID *types.UserID) ([]RequestRecord, error) {
 	query := "select id, user_id, doc_type, country, status, reject_reason, created_at, updated_at from kyc_requests"
-	args := make([]any, 0)
-	clauses := make([]string, 0)
+	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 3)
 	if status != "" {
 		clauses = append(clauses, "status = ?")
 		args = append(args, status)
@@ -164,7 +164,11 @@ func (r *Repository) ListRequests(status string, limit int, offset int, search s
 	defer func() {
 		_ = rows.Close()
 	}()
-	res := make([]RequestRecord, 0)
+	capHint := 0
+	if limit > 0 {
+		capHint = limit
+	}
+	res := make([]RequestRecord, 0, capHint)
 	for rows.Next() {
 		var rec RequestRecord
 		if err := rows.Scan(&rec.ID, &rec.UserID, &rec.DocType, &rec.Country, &rec.Status, &rec.RejectReason, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
@@ -215,7 +219,7 @@ func (r *Repository) ListFiles(kycID int64) ([]FileRecord, error) {
 	defer func() {
 		_ = rows.Close()
 	}()
-	res := make([]FileRecord, 0)
+	res := make([]FileRecord, 0, 4)
 	for rows.Next() {
 		var file FileRecord
 		if err := rows.Scan(&file.ID, &file.KYCID, &file.Kind, &file.Filename, &file.ContentType, &file.Size, &file.Path, &file.CreatedAt); err != nil {

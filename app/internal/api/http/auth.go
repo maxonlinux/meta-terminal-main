@@ -46,7 +46,7 @@ func (h *AuthHandler) setAuthCookie(c *echo.Context, token string) {
 		Path:     h.jwtCookiePath,
 		MaxAge:   h.jwtCookieMaxAge,
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   isSecureRequest(c.Request()),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -59,7 +59,19 @@ func (h *AuthHandler) clearAuthCookie(c *echo.Context) {
 		Path:     h.jwtCookiePath,
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   isSecureRequest(c.Request()),
 	})
+}
+
+func isSecureRequest(req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+	if req.TLS != nil {
+		return true
+	}
+	proto := req.Header.Get("X-Forwarded-Proto")
+	return proto == "https"
 }
 
 type RegisterRequest struct {
