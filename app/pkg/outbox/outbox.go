@@ -317,7 +317,7 @@ func listSegments(basePath string) ([]segmentInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	segments := make([]segmentInfo, 0)
+	segments := make([]segmentInfo, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, base) {
