@@ -835,43 +835,58 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 		return offset, nil
 	}
 
+	type committedTx struct {
+		txID   uint64
+		endSeq uint64
+	}
+
 	pending := make(map[uint64][]logRecord)
 	lastOffset := offset
 	appliedOffset := offset
-	eventsBatch := make([]events.Event, 0, 256)
+	eventsBatch := make([]events.Event, 0, applyBatchSize)
+	batchTxs := make([]committedTx, 0, applyBatchSize)
 
-	applyTx := func(txID uint64) error {
+	appendTxEvents := func(txID uint64) int {
 		records := pending[txID]
-		if sink != nil && len(records) > 0 {
-			eventsBatch = eventsBatch[:0]
-			for i := range records {
-				value := records[i].value
-				if len(value) == 0 {
-					continue
-				}
-				eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+		added := 0
+		for i := range records {
+			value := records[i].value
+			if len(value) == 0 {
+				continue
 			}
-			if len(eventsBatch) > 0 {
-				if err := sink.Apply(eventsBatch); err != nil {
-					return err
-				}
-			}
+			eventsBatch = append(eventsBatch, events.Event{Type: events.Type(value[0]), Data: value[1:]})
+			added++
 		}
-		return nil
+		return added
 	}
 
-	finalizeTx := func(txID uint64) error {
+	finalizeTx := func(txID uint64, endSeq uint64) error {
 		delete(pending, txID)
-		appliedOffset = lastOffset
+		appliedOffset = endSeq
 		return storeTail(tailPath, appliedOffset)
 	}
 
-	applyTxWithRetry := func(txID uint64, endSeq uint64) error {
-		return applyWithRetry(txID, endSeq, nil, func() error {
-			return applyTx(txID)
-		}, func() error {
-			return finalizeTx(txID)
-		}, "replay")
+	flushBatch := func() error {
+		if len(batchTxs) == 0 {
+			return nil
+		}
+		lastTx := batchTxs[len(batchTxs)-1]
+		apply := func() error {
+			if sink == nil || len(eventsBatch) == 0 {
+				return nil
+			}
+			return sink.Apply(eventsBatch)
+		}
+		finalize := func() error {
+			for i := range batchTxs {
+				delete(pending, batchTxs[i].txID)
+			}
+			appliedOffset = lastTx.endSeq
+			batchTxs = batchTxs[:0]
+			eventsBatch = eventsBatch[:0]
+			return storeTail(tailPath, appliedOffset)
+		}
+		return applyWithRetry(lastTx.txID, lastTx.endSeq, nil, apply, finalize, "replay")
 	}
 
 	for _, seg := range segments {
@@ -907,8 +922,17 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 			case logRecordData:
 				pending[rec.txID] = append(pending[rec.txID], rec)
 			case logRecordCommit:
-				_ = applyTxWithRetry(rec.txID, rec.seq)
+				added := appendTxEvents(rec.txID)
+				if added == 0 {
+					_ = finalizeTx(rec.txID, rec.seq)
+					continue
+				}
+				batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.seq})
+				if len(eventsBatch) >= applyBatchSize {
+					_ = flushBatch()
+				}
 			case logRecordAbort:
+				_ = flushBatch()
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
 				if err := storeTail(tailPath, appliedOffset); err != nil {
@@ -917,6 +941,10 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 			}
 		}
 		_ = file.Close()
+	}
+
+	if err := flushBatch(); err != nil {
+		return appliedOffset, err
 	}
 
 	if len(pending) == 0 {
