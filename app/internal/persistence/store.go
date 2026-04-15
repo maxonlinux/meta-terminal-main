@@ -160,6 +160,21 @@ type orderFillAccum struct {
 	ts  uint64
 }
 
+type orderMutationKind uint8
+
+const (
+	orderMutationAmend orderMutationKind = iota + 1
+	orderMutationCancel
+	orderMutationTrigger
+)
+
+type orderMutation struct {
+	kind      orderMutationKind
+	price     types.Price
+	qty       types.Quantity
+	timestamp uint64
+}
+
 type OrderRecord struct {
 	ID               types.OrderID
 	UserID           types.UserID
@@ -629,6 +644,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	}
 
 	pendingOrderFills := make(map[orderKey]orderFillAccum)
+	pendingOrderMutations := make(map[orderKey]orderMutation)
 	flushOrderFills := func() error {
 		if len(pendingOrderFills) == 0 {
 			return nil
@@ -650,11 +666,64 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		}
 		pendingOrderFills[key] = accum
 	}
+	flushOrderMutations := func() error {
+		if len(pendingOrderMutations) == 0 {
+			return nil
+		}
+		for key, mutation := range pendingOrderMutations {
+			switch mutation.kind {
+			case orderMutationAmend:
+				if math.Sign(mutation.price) > 0 {
+					if err := updateOrderPriceQty(tx, s.stmts, key.userID, key.orderID, mutation.price, mutation.qty, mutation.timestamp); err != nil {
+						return err
+					}
+				} else {
+					if err := updateOrderQty(tx, s.stmts, key.userID, key.orderID, mutation.qty, mutation.timestamp); err != nil {
+						return err
+					}
+				}
+			case orderMutationCancel:
+				if err := cancelOrder(tx, s.stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+					return err
+				}
+			case orderMutationTrigger:
+				if err := markOrderTriggered(tx, s.stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+					return err
+				}
+			}
+			delete(pendingOrderMutations, key)
+		}
+		return nil
+	}
+	scheduleOrderMutation := func(key orderKey, mutation orderMutation) {
+		current, ok := pendingOrderMutations[key]
+		if !ok {
+			pendingOrderMutations[key] = mutation
+			return
+		}
+		if mutation.kind == orderMutationAmend && current.kind == orderMutationAmend {
+			if math.Sign(mutation.price) > 0 {
+				current.price = mutation.price
+			}
+			current.qty = mutation.qty
+			if mutation.timestamp > current.timestamp {
+				current.timestamp = mutation.timestamp
+			}
+			pendingOrderMutations[key] = current
+			return
+		}
+		pendingOrderMutations[key] = mutation
+	}
 
 	for i := range eventsBatch {
 		event := eventsBatch[i]
 		if err := s.replayer.ApplyEvent(event); err != nil {
 			return err
+		}
+		if event.Type == events.TradeExecuted {
+			if err := flushOrderMutations(); err != nil {
+				return err
+			}
 		}
 		if event.Type != events.TradeExecuted {
 			if err := flushOrderFills(); err != nil {
@@ -677,18 +746,14 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			if math.Sign(amend.NewPrice) > 0 {
-				err = updateOrderPriceQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewPrice, amend.NewQty, amend.Timestamp)
-			} else {
-				err = updateOrderQty(tx, s.stmts, amend.UserID, amend.OrderID, amend.NewQty, amend.Timestamp)
-			}
+			scheduleOrderMutation(orderKey{userID: amend.UserID, orderID: amend.OrderID}, orderMutation{kind: orderMutationAmend, price: amend.NewPrice, qty: amend.NewQty, timestamp: amend.Timestamp})
 			addBalance(amend.UserID)
 		case events.OrderCanceled:
 			cancel, decErr := events.DecodeOrderCanceled(event.Data)
 			if decErr != nil {
 				return decErr
 			}
-			err = cancelOrder(tx, s.stmts, cancel.UserID, cancel.OrderID, cancel.Timestamp)
+			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
 			trade, decErr := events.DecodeTrade(event.Data)
@@ -748,7 +813,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			err = markOrderTriggered(tx, s.stmts, evt.UserID, evt.OrderID, evt.Timestamp)
+			scheduleOrderMutation(orderKey{userID: evt.UserID, orderID: evt.OrderID}, orderMutation{kind: orderMutationTrigger, timestamp: evt.Timestamp})
 			addBalance(evt.UserID)
 		case events.RPNLRecorded:
 			evt, decErr := events.DecodeRPNL(event.Data)
@@ -764,6 +829,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	}
 
 	if err := flushOrderFills(); err != nil {
+		return err
+	}
+	if err := flushOrderMutations(); err != nil {
 		return err
 	}
 
@@ -934,27 +1002,6 @@ func cancelOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID typ
 		userID,
 	)
 	return err
-}
-
-func applyTrade(tx *sql.Tx, stmts *statements, trade events.TradeEvent) error {
-	price := trade.Price.String()
-	qty := trade.Quantity.String()
-	makerSide := oppositeSide(trade.TakerSide)
-
-	if err := insertFill(tx, stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
-		return err
-	}
-	if err := insertFill(tx, stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
-		return err
-	}
-
-	if err := addFillToOrder(tx, stmts, trade.MakerUserID, trade.MakerOrderID, trade.Quantity, trade.Timestamp); err != nil {
-		return err
-	}
-	if err := addFillToOrder(tx, stmts, trade.TakerUserID, trade.TakerOrderID, trade.Quantity, trade.Timestamp); err != nil {
-		return err
-	}
-	return nil
 }
 
 func insertFill(tx *sql.Tx, stmts *statements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, orderType int8, side int8, role string, price string, qty string, ts uint64) error {
