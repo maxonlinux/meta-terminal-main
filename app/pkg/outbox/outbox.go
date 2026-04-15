@@ -19,15 +19,16 @@ import (
 )
 
 const (
-	logRecordFlush       byte = 0
-	logRecordBegin       byte = 1
-	logRecordData        byte = 2
-	logRecordCommit      byte = 3
-	logRecordAbort       byte = 4
-	defaultSegmentSize        = 16 << 20
-	retryAttempts             = 20
-	applyBatchSize            = 10000
-	applyBatchFlushEvery      = 50 * time.Millisecond
+	logRecordFlush         byte = 0
+	logRecordBegin         byte = 1
+	logRecordData          byte = 2
+	logRecordCommit        byte = 3
+	logRecordAbort         byte = 4
+	defaultSegmentSize          = 16 << 20
+	defaultLogFlushEvery        = 100 * time.Millisecond
+	retryAttempts               = 20
+	defaultApplyBatchSize       = 10000
+	defaultApplyFlushEvery      = 50 * time.Millisecond
 )
 
 var retryBackoffStart = 100 * time.Millisecond
@@ -49,6 +50,7 @@ type Outbox struct {
 	tailPath string
 	seq      uint64
 	sink     EventSink
+	stats    *stats
 }
 
 func Open(dir string) (*Outbox, error) {
@@ -58,9 +60,13 @@ func Open(dir string) (*Outbox, error) {
 const defaultQueueSize = 1 << 18
 
 type Options struct {
-	QueueSize   int
-	EventSink   EventSink
-	SegmentSize int64
+	QueueSize            int
+	EventSink            EventSink
+	SegmentSize          int64
+	LogFlushEvery        time.Duration
+	SyncEveryFlush       bool
+	ApplyBatchSize       int
+	ApplyBatchFlushEvery time.Duration
 }
 
 type segmentInfo struct {
@@ -78,7 +84,19 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 	logPath := filepath.Join(dir, "outbox.aol")
 	tailPath := filepath.Join(dir, "outbox.bin")
 
-	log, err := openAppendLog(logPath, opts.SegmentSize)
+	if opts.LogFlushEvery <= 0 {
+		opts.LogFlushEvery = defaultLogFlushEvery
+	}
+	if opts.ApplyBatchSize <= 0 {
+		opts.ApplyBatchSize = defaultApplyBatchSize
+	}
+	if opts.ApplyBatchFlushEvery <= 0 {
+		opts.ApplyBatchFlushEvery = defaultApplyFlushEvery
+	}
+
+	stats := newStats()
+
+	log, err := openAppendLog(logPath, opts.SegmentSize, opts.LogFlushEvery, opts.SyncEveryFlush, stats)
 	if err != nil {
 		return nil, err
 	}
@@ -89,14 +107,14 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 		return nil, err
 	}
 
-	newTail, err := replayLog(log, tail, opts.EventSink, tailPath)
+	newTail, err := replayLog(log, tail, opts.EventSink, tailPath, opts.ApplyBatchSize, stats)
 	if err != nil {
 		logging.Log().Error().Err(err).Msg("outbox: replay failed, continuing with last good tail")
 		newTail = tail
 	}
 
 	queue := newQueue(opts)
-	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink)
+	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink, opts.ApplyBatchSize, opts.ApplyBatchFlushEvery, stats)
 
 	return &Outbox{
 		log:      log,
@@ -104,6 +122,7 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 		tailPath: tailPath,
 		seq:      uint64(time.Now().UnixNano()),
 		sink:     opts.EventSink,
+		stats:    stats,
 	}, nil
 }
 
@@ -118,6 +137,7 @@ func (o *Outbox) Begin() *Tx {
 		return nil
 	}
 	o.worker.Enqueue(record{recordType: logRecordBegin, txID: txID, endSeq: offset})
+	o.stats.onAppendTx(1)
 	return &Tx{outbox: o, id: txID}
 }
 
@@ -156,6 +176,51 @@ func (o *Outbox) QueueGrowCount() uint64 {
 	return 0
 }
 
+type Snapshot struct {
+	TimestampUnixMilli   int64
+	AppendTxTotal        uint64
+	AppendEventTotal     uint64
+	AppliedBatchTotal    uint64
+	AppliedEventTotal    uint64
+	ApplyRetryTotal      uint64
+	ApplyDroppedTotal    uint64
+	ApplyTotalDurationNs uint64
+	LastApplyDurationNs  uint64
+	QueueDepth           int
+	QueueGrowTotal       uint64
+	LogLastSeq           uint64
+	LogSyncedSeq         uint64
+	AppliedSeq           uint64
+	ReplayAppliedSeq     uint64
+}
+
+func (o *Outbox) Snapshot() Snapshot {
+	if o == nil || o.stats == nil {
+		return Snapshot{TimestampUnixMilli: time.Now().UnixMilli()}
+	}
+	qDepth := 0
+	if rq, ok := o.worker.queue.(*ringQueue); ok {
+		qDepth = rq.Len()
+	}
+	return Snapshot{
+		TimestampUnixMilli:   time.Now().UnixMilli(),
+		AppendTxTotal:        atomic.LoadUint64(&o.stats.appendTxTotal),
+		AppendEventTotal:     atomic.LoadUint64(&o.stats.appendEventTotal),
+		AppliedBatchTotal:    atomic.LoadUint64(&o.stats.appliedBatchTotal),
+		AppliedEventTotal:    atomic.LoadUint64(&o.stats.appliedEventTotal),
+		ApplyRetryTotal:      atomic.LoadUint64(&o.stats.applyRetryTotal),
+		ApplyDroppedTotal:    atomic.LoadUint64(&o.stats.applyDroppedTotal),
+		ApplyTotalDurationNs: atomic.LoadUint64(&o.stats.applyTotalDurationNs),
+		LastApplyDurationNs:  atomic.LoadUint64(&o.stats.lastApplyDurationNs),
+		QueueDepth:           qDepth,
+		QueueGrowTotal:       o.QueueGrowCount(),
+		LogLastSeq:           atomic.LoadUint64(&o.stats.logLastSeq),
+		LogSyncedSeq:         atomic.LoadUint64(&o.stats.logSyncedSeq),
+		AppliedSeq:           atomic.LoadUint64(&o.stats.appliedSeq),
+		ReplayAppliedSeq:     atomic.LoadUint64(&o.stats.replayAppliedSeq),
+	}
+}
+
 type Tx struct {
 	outbox *Outbox
 	id     uint64
@@ -172,6 +237,7 @@ func (t *Tx) Record(event events.Event) error {
 		return err
 	}
 	t.outbox.worker.Enqueue(record{recordType: logRecordData, txID: t.id, value: data, endSeq: offset})
+	t.outbox.stats.onAppendEvent(1)
 	return nil
 }
 
@@ -200,21 +266,24 @@ func (t *Tx) Abort() error {
 }
 
 type appendLog struct {
-	mu          sync.Mutex
-	file        *os.File
-	writer      *bufio.Writer
-	pending     int
-	size        int64
-	segmentBase uint64
-	segmentSize int64
-	basePath    string
-	flushTicker *time.Ticker
-	quit        chan struct{}
-	lastSeq     uint64
-	nextSeq     uint64
+	mu             sync.Mutex
+	file           *os.File
+	writer         *bufio.Writer
+	pending        int
+	size           int64
+	segmentBase    uint64
+	segmentSize    int64
+	basePath       string
+	flushTicker    *time.Ticker
+	quit           chan struct{}
+	lastSeq        uint64
+	nextSeq        uint64
+	flushEvery     time.Duration
+	syncEveryFlush bool
+	stats          *stats
 }
 
-func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
+func openAppendLog(path string, segmentSize int64, flushEvery time.Duration, syncEveryFlush bool, stats *stats) (*appendLog, error) {
 	if err := ensureSegments(path); err != nil {
 		return nil, err
 	}
@@ -271,22 +340,32 @@ func openAppendLog(path string, segmentSize int64) (*appendLog, error) {
 	if segmentSize <= 0 {
 		segmentSize = defaultSegmentSize
 	}
+	if flushEvery <= 0 {
+		flushEvery = defaultLogFlushEvery
+	}
 	nextSeq := lastSeq + 1
 	if nextSeq < current.start {
 		nextSeq = current.start
 	}
 	log := &appendLog{
-		file:        file,
-		writer:      bufio.NewWriterSize(file, 1<<20),
-		pending:     0,
-		size:        info.Size(),
-		segmentBase: current.start,
-		segmentSize: segmentSize,
-		basePath:    path,
-		flushTicker: time.NewTicker(100 * time.Millisecond),
-		quit:        make(chan struct{}),
-		lastSeq:     lastSeq,
-		nextSeq:     nextSeq,
+		file:           file,
+		writer:         bufio.NewWriterSize(file, 1<<20),
+		pending:        0,
+		size:           info.Size(),
+		segmentBase:    current.start,
+		segmentSize:    segmentSize,
+		basePath:       path,
+		flushTicker:    time.NewTicker(flushEvery),
+		quit:           make(chan struct{}),
+		lastSeq:        lastSeq,
+		nextSeq:        nextSeq,
+		flushEvery:     flushEvery,
+		syncEveryFlush: syncEveryFlush,
+		stats:          stats,
+	}
+	if stats != nil {
+		atomic.StoreUint64(&stats.logLastSeq, lastSeq)
+		atomic.StoreUint64(&stats.logSyncedSeq, lastSeq)
 	}
 	go log.flushLoop()
 	return log, nil
@@ -441,6 +520,9 @@ func (l *appendLog) Append(recordType byte, txID uint64, value []byte) (uint64, 
 	seq := l.nextSeq
 	l.nextSeq++
 	l.lastSeq = seq
+	if l.stats != nil {
+		atomic.StoreUint64(&l.stats.logLastSeq, seq)
+	}
 
 	n := binary.PutUvarint(buf[:], seq)
 	if _, err := l.writer.Write(buf[:n]); err != nil {
@@ -500,7 +582,18 @@ func (l *appendLog) flushLocked() error {
 		return nil
 	}
 	l.pending = 0
-	return l.writer.Flush()
+	if err := l.writer.Flush(); err != nil {
+		return err
+	}
+	if l.syncEveryFlush {
+		if err := l.file.Sync(); err != nil {
+			return err
+		}
+	}
+	if l.stats != nil {
+		atomic.StoreUint64(&l.stats.logSyncedSeq, l.lastSeq)
+	}
+	return nil
 }
 
 func (l *appendLog) Close() error {
@@ -588,27 +681,96 @@ type record struct {
 	endSeq     uint64
 }
 
-type worker struct {
-	log        *appendLog
-	tailPath   string
-	queue      queue
-	done       chan struct{}
-	stop       chan struct{}
-	startOnce  sync.Once
-	stopOnce   sync.Once
-	lastOffset uint64
-	sink       EventSink
+type stats struct {
+	appendTxTotal        uint64
+	appendEventTotal     uint64
+	appliedBatchTotal    uint64
+	appliedEventTotal    uint64
+	applyRetryTotal      uint64
+	applyDroppedTotal    uint64
+	applyTotalDurationNs uint64
+	lastApplyDurationNs  uint64
+	logLastSeq           uint64
+	logSyncedSeq         uint64
+	appliedSeq           uint64
+	replayAppliedSeq     uint64
 }
 
-func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink) *worker {
+func newStats() *stats {
+	return &stats{}
+}
+
+func (s *stats) onAppendTx(n uint64) {
+	if s == nil || n == 0 {
+		return
+	}
+	atomic.AddUint64(&s.appendTxTotal, n)
+}
+
+func (s *stats) onAppendEvent(n uint64) {
+	if s == nil || n == 0 {
+		return
+	}
+	atomic.AddUint64(&s.appendEventTotal, n)
+}
+
+func (s *stats) onApplyBatch(events int, duration time.Duration) {
+	if s == nil || events <= 0 {
+		return
+	}
+	atomic.AddUint64(&s.appliedBatchTotal, 1)
+	atomic.AddUint64(&s.appliedEventTotal, uint64(events))
+	atomic.AddUint64(&s.applyTotalDurationNs, uint64(duration.Nanoseconds()))
+	atomic.StoreUint64(&s.lastApplyDurationNs, uint64(duration.Nanoseconds()))
+}
+
+func (s *stats) onApplyRetry() {
+	if s == nil {
+		return
+	}
+	atomic.AddUint64(&s.applyRetryTotal, 1)
+}
+
+func (s *stats) onApplyDropped() {
+	if s == nil {
+		return
+	}
+	atomic.AddUint64(&s.applyDroppedTotal, 1)
+}
+
+type worker struct {
+	log                  *appendLog
+	tailPath             string
+	queue                queue
+	done                 chan struct{}
+	stop                 chan struct{}
+	startOnce            sync.Once
+	stopOnce             sync.Once
+	lastOffset           uint64
+	sink                 EventSink
+	applyBatchSize       int
+	applyBatchFlushEvery time.Duration
+	stats                *stats
+}
+
+func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink, applyBatchSize int, applyBatchFlushEvery time.Duration, stats *stats) *worker {
+	if applyBatchSize <= 0 {
+		applyBatchSize = defaultApplyBatchSize
+	}
+	if applyBatchFlushEvery <= 0 {
+		applyBatchFlushEvery = defaultApplyFlushEvery
+	}
 	return &worker{
-		log:        log,
-		tailPath:   tailPath,
-		queue:      queue,
-		done:       make(chan struct{}),
-		stop:       make(chan struct{}),
-		lastOffset: offset,
-		sink:       sink,
+		log:                  log,
+		tailPath:             tailPath,
+		queue:                queue,
+		done:                 make(chan struct{}),
+		stop:                 make(chan struct{}),
+		lastOffset:           offset,
+		sink:                 sink,
+		applyBatchSize:       applyBatchSize,
+		applyBatchFlushEvery: applyBatchFlushEvery,
+		stats:                stats,
 	}
 }
 
@@ -644,9 +806,9 @@ func (w *worker) run() {
 		txID   uint64
 		endSeq uint64
 	}
-	batchEvents := make([]events.Event, 0, applyBatchSize)
-	batchTxs := make([]committedTx, 0, applyBatchSize)
-	flushTicker := time.NewTicker(applyBatchFlushEvery)
+	batchEvents := make([]events.Event, 0, w.applyBatchSize)
+	batchTxs := make([]committedTx, 0, w.applyBatchSize)
+	flushTicker := time.NewTicker(w.applyBatchFlushEvery)
 	defer flushTicker.Stop()
 	go func() {
 		for {
@@ -686,6 +848,9 @@ func (w *worker) run() {
 			}
 		}
 		_ = storeTail(w.tailPath, lastCommitted)
+		if w.stats != nil {
+			atomic.StoreUint64(&w.stats.appliedSeq, lastCommitted)
+		}
 		return nil
 	}
 
@@ -721,6 +886,9 @@ func (w *worker) run() {
 			}
 		}
 		_ = storeTail(w.tailPath, lastCommitted)
+		if w.stats != nil {
+			atomic.StoreUint64(&w.stats.appliedSeq, lastCommitted)
+		}
 		return nil
 	}
 
@@ -733,10 +901,12 @@ func (w *worker) run() {
 			if w.sink == nil || len(batchEvents) == 0 {
 				return nil
 			}
+			started := time.Now()
 			if err := w.sink.Apply(batchEvents); err != nil {
 				logging.Log().Error().Err(err).Int("events", len(batchEvents)).Int("tx_count", len(batchTxs)).Msg("outbox: sink apply failed")
 				return err
 			}
+			w.stats.onApplyBatch(len(batchEvents), time.Since(started))
 			return nil
 		}
 		finalize := func() error {
@@ -745,7 +915,7 @@ func (w *worker) run() {
 			batchEvents = batchEvents[:0]
 			return err
 		}
-		return applyWithRetry(lastTx.txID, lastTx.endSeq, w.stop, apply, finalize, "live")
+		return applyWithRetry(lastTx.txID, lastTx.endSeq, w.stop, apply, finalize, "live", w.stats)
 	}
 
 	for {
@@ -783,7 +953,7 @@ func (w *worker) run() {
 				continue
 			}
 			batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.endSeq})
-			if len(batchEvents) >= applyBatchSize {
+			if len(batchEvents) >= w.applyBatchSize {
 				_ = flushBatch()
 			}
 		case logRecordAbort:
@@ -822,9 +992,12 @@ type logRecord struct {
 	value      []byte
 }
 
-func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (uint64, error) {
+func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, applyBatchSize int, stats *stats) (uint64, error) {
 	if log == nil {
 		return offset, nil
+	}
+	if applyBatchSize <= 0 {
+		applyBatchSize = defaultApplyBatchSize
 	}
 	segments, err := listSegments(log.basePath)
 	if err != nil {
@@ -863,6 +1036,9 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 	finalizeTx := func(txID uint64, endSeq uint64) error {
 		delete(pending, txID)
 		appliedOffset = endSeq
+		if stats != nil {
+			atomic.StoreUint64(&stats.replayAppliedSeq, appliedOffset)
+		}
 		return storeTail(tailPath, appliedOffset)
 	}
 
@@ -875,18 +1051,26 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 			if sink == nil || len(eventsBatch) == 0 {
 				return nil
 			}
-			return sink.Apply(eventsBatch)
+			started := time.Now()
+			err := sink.Apply(eventsBatch)
+			if err == nil {
+				stats.onApplyBatch(len(eventsBatch), time.Since(started))
+			}
+			return err
 		}
 		finalize := func() error {
 			for i := range batchTxs {
 				delete(pending, batchTxs[i].txID)
 			}
 			appliedOffset = lastTx.endSeq
+			if stats != nil {
+				atomic.StoreUint64(&stats.replayAppliedSeq, appliedOffset)
+			}
 			batchTxs = batchTxs[:0]
 			eventsBatch = eventsBatch[:0]
 			return storeTail(tailPath, appliedOffset)
 		}
-		return applyWithRetry(lastTx.txID, lastTx.endSeq, nil, apply, finalize, "replay")
+		return applyWithRetry(lastTx.txID, lastTx.endSeq, nil, apply, finalize, "replay", stats)
 	}
 
 	for _, seg := range segments {
@@ -935,6 +1119,9 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string) (
 				_ = flushBatch()
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
+				if stats != nil {
+					atomic.StoreUint64(&stats.replayAppliedSeq, appliedOffset)
+				}
 				if err := storeTail(tailPath, appliedOffset); err != nil {
 					logging.Log().Error().Err(err).Msg("outbox: replay store tail failed on abort")
 				}
@@ -1007,7 +1194,7 @@ func readUvarint(r *bufio.Reader) (uint64, int, error) {
 	}
 }
 
-func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func() error, finalize func() error, scope string) error {
+func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func() error, finalize func() error, scope string, stats *stats) error {
 	backoff := retryBackoffStart
 	maxBackoff := retryBackoffMax
 	var lastErr error
@@ -1016,6 +1203,9 @@ func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func
 			return finalize()
 		} else {
 			lastErr = err
+			if stats != nil {
+				stats.onApplyRetry()
+			}
 			logging.Log().Error().Err(err).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Int("attempt", attempt).Str("scope", scope).Msg("outbox: apply failed, retrying")
 		}
 		if attempt == retryAttempts {
@@ -1038,6 +1228,9 @@ func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func
 				backoff = maxBackoff
 			}
 		}
+	}
+	if stats != nil {
+		stats.onApplyDropped()
 	}
 	logging.Log().Error().Err(lastErr).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Str("scope", scope).Msg("outbox: apply failed, dropping transaction")
 	return finalize()

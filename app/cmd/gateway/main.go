@@ -88,7 +88,14 @@ func main() {
 		_ = persistenceStore.Close()
 	}()
 
-	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{EventSink: persistenceStore, SegmentSize: cfg.OutboxSegmentSize})
+	ob, err := outbox.OpenWithOptions(cfg.DataDir, outbox.Options{
+		EventSink:            persistenceStore,
+		SegmentSize:          cfg.OutboxSegmentSize,
+		LogFlushEvery:        cfg.OutboxLogFlushEvery,
+		SyncEveryFlush:       cfg.OutboxSyncEveryFlush,
+		ApplyBatchSize:       cfg.OutboxApplyBatchSize,
+		ApplyBatchFlushEvery: cfg.OutboxApplyFlushEvery,
+	})
 	if err != nil {
 		log.Fatalf("outbox open: %v", err)
 	}
@@ -135,6 +142,7 @@ func main() {
 	}()
 
 	ob.Start()
+	startOutboxMetrics(ctx, ob, cfg.OutboxMetricsInterval)
 
 	kycRepo, err := kyc.NewRepository(persistenceStore.DB())
 	if err != nil {
@@ -150,6 +158,75 @@ func main() {
 	<-ctx.Done()
 	logging.Log().Info().Msg("shutdown signal received")
 	eng.Shutdown()
+}
+
+func startOutboxMetrics(ctx context.Context, ob *outbox.Outbox, interval time.Duration) {
+	if ob == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		prev := ob.Snapshot()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := ob.Snapshot()
+				dtMs := now.TimestampUnixMilli - prev.TimestampUnixMilli
+				if dtMs <= 0 {
+					dtMs = 1
+				}
+
+				appendDelta := now.AppendEventTotal - prev.AppendEventTotal
+				appliedDelta := now.AppliedEventTotal - prev.AppliedEventTotal
+				batchDelta := now.AppliedBatchTotal - prev.AppliedBatchTotal
+				durationDelta := now.ApplyTotalDurationNs - prev.ApplyTotalDurationNs
+
+				appendRate := float64(appendDelta) * 1000.0 / float64(dtMs)
+				appliedRate := float64(appliedDelta) * 1000.0 / float64(dtMs)
+
+				avgBatchSize := 0.0
+				if batchDelta > 0 {
+					avgBatchSize = float64(appliedDelta) / float64(batchDelta)
+				}
+
+				avgApplyMs := 0.0
+				if batchDelta > 0 {
+					avgApplyMs = (float64(durationDelta) / float64(batchDelta)) / float64(time.Millisecond)
+				}
+
+				applyLag := int64(now.AppendEventTotal) - int64(now.AppliedEventTotal)
+				durableLag := int64(now.LogLastSeq) - int64(now.LogSyncedSeq)
+				replayLag := int64(now.LogLastSeq) - int64(now.ReplayAppliedSeq)
+
+				logging.Log().Info().
+					Float64("append_rate_eps", appendRate).
+					Float64("applied_rate_eps", appliedRate).
+					Int64("apply_lag_events", applyLag).
+					Int64("durable_lag_seq", durableLag).
+					Int64("replay_lag_seq", replayLag).
+					Int("queue_depth", now.QueueDepth).
+					Uint64("queue_grow_total", now.QueueGrowTotal).
+					Float64("apply_batch_size_avg", avgBatchSize).
+					Float64("apply_batch_duration_ms_avg", avgApplyMs).
+					Uint64("apply_retry_total", now.ApplyRetryTotal).
+					Uint64("apply_dropped_total", now.ApplyDroppedTotal).
+					Uint64("log_last_seq", now.LogLastSeq).
+					Uint64("log_synced_seq", now.LogSyncedSeq).
+					Uint64("applied_seq", now.AppliedSeq).
+					Uint64("replay_applied_seq", now.ReplayAppliedSeq).
+					Msg("outbox_metrics")
+
+				prev = now
+			}
+		}
+	}()
 }
 
 // startSystemOrderCleanup periodically removes closed system orders from history.

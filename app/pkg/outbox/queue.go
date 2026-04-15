@@ -9,6 +9,7 @@ type queue interface {
 	Enqueue(record)
 	Dequeue() (record, bool)
 	Close()
+	Len() int
 }
 
 type ringQueue struct {
@@ -83,6 +84,12 @@ func (q *ringQueue) grow() {
 
 func (q *ringQueue) GrowCount() uint64 {
 	return atomic.LoadUint64(&q.grows)
+}
+
+func (q *ringQueue) Len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.count
 }
 
 func newQueue(opts Options) queue {

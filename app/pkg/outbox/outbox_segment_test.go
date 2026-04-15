@@ -7,7 +7,7 @@ import (
 
 func TestSegmentRotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "outbox.aol")
-	log, err := openAppendLog(path, 256)
+	log, err := openAppendLog(path, 256, defaultLogFlushEvery, false, nil)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}

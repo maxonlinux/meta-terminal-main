@@ -29,7 +29,7 @@ func TestApplyWithRetryDropsAfterAttempts(t *testing.T) {
 	}, func() error {
 		finalizeCalls++
 		return nil
-	}, "test")
+	}, "test", nil)
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -67,7 +67,7 @@ func TestApplyWithRetrySucceeds(t *testing.T) {
 	}, func() error {
 		finalizeCalls++
 		return nil
-	}, "test")
+	}, "test", nil)
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)

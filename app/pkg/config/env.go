@@ -35,17 +35,22 @@ type Config struct {
 	JwtCookiePath   string
 	JwtCookieMaxAge int
 	// Admin auth config controls admin session signing and cookies.
-	AdminAuthSecret   string
-	AdminCookieName   string
-	AdminCookiePath   string
-	AdminCookieMaxAge int
-	OutboxSegmentSize int64
-	SnowflakeNode     int64
-	BotUserID         int64
-	BotMinBalance     int64
-	BotMaxBalance     int64
-	LogLevel          string
-	LogFormat         string
+	AdminAuthSecret       string
+	AdminCookieName       string
+	AdminCookiePath       string
+	AdminCookieMaxAge     int
+	OutboxSegmentSize     int64
+	OutboxLogFlushEvery   time.Duration
+	OutboxSyncEveryFlush  bool
+	OutboxApplyBatchSize  int
+	OutboxApplyFlushEvery time.Duration
+	OutboxMetricsInterval time.Duration
+	SnowflakeNode         int64
+	BotUserID             int64
+	BotMinBalance         int64
+	BotMaxBalance         int64
+	LogLevel              string
+	LogFormat             string
 }
 
 var (
@@ -56,41 +61,46 @@ var (
 func Load() Config {
 	once.Do(func() {
 		cfg = Config{
-			DataDir:           envString("DATA_DIR", "data"),
-			CoreURL:           envString("CORE_URL", "http://localhost:3030/api"),
-			MultiplexerURL:    envString("MULTIPLEXER_URL", "http://localhost:3333/proxy/multiplexer/prices"),
-			SyncInterval:      envDuration("SYNC_INTERVAL", time.Minute),
-			Port:              envString("PORT", "8080"),
-			RegistryTimeout:   envDuration("REGISTRY_TIMEOUT", 30*time.Second),
-			AdminToken:        envString("ADMIN_TOKEN", ""),
-			NatsURL:           envString("NATS_URL", "nats://localhost:4222"),
-			NatsToken:         envString("NATS_TOKEN", ""),
-			NatsPriceSubject:  envString("NATS_PRICE_SUBJECT", "prices.*"),
-			OtpDisabled:       envBool("OTP_DISABLED", false),
-			SiteName:          envString("SITE_NAME", "Terminal"),
-			SmsAuthToken:      envString("SMS_AUTH_TOKEN", ""),
-			SmtpHost:          envString("SMTP_HOST", ""),
-			SmtpPort:          envInt("SMTP_PORT", 25),
-			SmtpUser:          envString("SMTP_USER", ""),
-			SmtpPassword:      envString("SMTP_PASSWORD", ""),
-			SmtpFrom:          envString("SMTP_FROM", ""),
-			SmtpSkipVerify:    envBool("SMTP_SKIP_VERIFY", true),
-			JwtSecret:         envString("JWT_SECRET", ""),
-			JwtTokenExpiry:    envDuration("JWT_TOKEN_EXPIRY", 24*time.Hour),
-			JwtCookieName:     envString("JWT_COOKIE_NAME", "token"),
-			JwtCookiePath:     envString("JWT_COOKIE_PATH", "/"),
-			JwtCookieMaxAge:   envInt("JWT_COOKIE_MAX_AGE", 86400),
-			AdminAuthSecret:   envString("ADMIN_AUTH_SECRET", ""),
-			AdminCookieName:   envString("ADMIN_COOKIE_NAME", "admin_token"),
-			AdminCookiePath:   envString("ADMIN_COOKIE_PATH", "/"),
-			AdminCookieMaxAge: envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
-			OutboxSegmentSize: envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
-			SnowflakeNode:     envInt64("SNOWFLAKE_NODE", 0),
-			BotUserID:         envInt64("BOT_USER_ID", 999999999),
-			BotMinBalance:     envInt64("BOT_MIN_BALANCE", 10000000),
-			BotMaxBalance:     envInt64("BOT_MAX_BALANCE", 20000000),
-			LogLevel:          envString("LOG_LEVEL", "info"),
-			LogFormat:         envString("LOG_FORMAT", "text"),
+			DataDir:               envString("DATA_DIR", "data"),
+			CoreURL:               envString("CORE_URL", "http://localhost:3030/api"),
+			MultiplexerURL:        envString("MULTIPLEXER_URL", "http://localhost:3333/proxy/multiplexer/prices"),
+			SyncInterval:          envDuration("SYNC_INTERVAL", time.Minute),
+			Port:                  envString("PORT", "8080"),
+			RegistryTimeout:       envDuration("REGISTRY_TIMEOUT", 30*time.Second),
+			AdminToken:            envString("ADMIN_TOKEN", ""),
+			NatsURL:               envString("NATS_URL", "nats://localhost:4222"),
+			NatsToken:             envString("NATS_TOKEN", ""),
+			NatsPriceSubject:      envString("NATS_PRICE_SUBJECT", "prices.*"),
+			OtpDisabled:           envBool("OTP_DISABLED", false),
+			SiteName:              envString("SITE_NAME", "Terminal"),
+			SmsAuthToken:          envString("SMS_AUTH_TOKEN", ""),
+			SmtpHost:              envString("SMTP_HOST", ""),
+			SmtpPort:              envInt("SMTP_PORT", 25),
+			SmtpUser:              envString("SMTP_USER", ""),
+			SmtpPassword:          envString("SMTP_PASSWORD", ""),
+			SmtpFrom:              envString("SMTP_FROM", ""),
+			SmtpSkipVerify:        envBool("SMTP_SKIP_VERIFY", true),
+			JwtSecret:             envString("JWT_SECRET", ""),
+			JwtTokenExpiry:        envDuration("JWT_TOKEN_EXPIRY", 24*time.Hour),
+			JwtCookieName:         envString("JWT_COOKIE_NAME", "token"),
+			JwtCookiePath:         envString("JWT_COOKIE_PATH", "/"),
+			JwtCookieMaxAge:       envInt("JWT_COOKIE_MAX_AGE", 86400),
+			AdminAuthSecret:       envString("ADMIN_AUTH_SECRET", ""),
+			AdminCookieName:       envString("ADMIN_COOKIE_NAME", "admin_token"),
+			AdminCookiePath:       envString("ADMIN_COOKIE_PATH", "/"),
+			AdminCookieMaxAge:     envInt("ADMIN_COOKIE_MAX_AGE", 7*86400),
+			OutboxSegmentSize:     envInt64("OUTBOX_SEGMENT_SIZE", 16<<20),
+			OutboxLogFlushEvery:   envDuration("OUTBOX_LOG_FLUSH_EVERY", 100*time.Millisecond),
+			OutboxSyncEveryFlush:  envBool("OUTBOX_SYNC_EVERY_FLUSH", true),
+			OutboxApplyBatchSize:  envInt("OUTBOX_APPLY_BATCH_SIZE", 10000),
+			OutboxApplyFlushEvery: envDuration("OUTBOX_APPLY_FLUSH_EVERY", 50*time.Millisecond),
+			OutboxMetricsInterval: envDuration("OUTBOX_METRICS_INTERVAL", time.Second),
+			SnowflakeNode:         envInt64("SNOWFLAKE_NODE", 0),
+			BotUserID:             envInt64("BOT_USER_ID", 999999999),
+			BotMinBalance:         envInt64("BOT_MIN_BALANCE", 10000000),
+			BotMaxBalance:         envInt64("BOT_MAX_BALANCE", 20000000),
+			LogLevel:              envString("LOG_LEVEL", "info"),
+			LogFormat:             envString("LOG_FORMAT", "text"),
 		}
 
 		cfg.CoreURL = strings.TrimRight(cfg.CoreURL, "/")
