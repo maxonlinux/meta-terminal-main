@@ -239,13 +239,21 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if _, err := db.Exec("pragma journal_mode=DELETE"); err != nil {
+	if _, err := db.Exec("pragma journal_mode=WAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable journal mode: %w", err)
 	}
-	if _, err := db.Exec("pragma synchronous=FULL"); err != nil {
+	if _, err := db.Exec("pragma synchronous=NORMAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable sync: %w", err)
+	}
+	if _, err := db.Exec("pragma wal_autocheckpoint=2000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set wal autocheckpoint: %w", err)
+	}
+	if _, err := db.Exec("pragma cache_size=-131072"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set cache size: %w", err)
 	}
 	if _, err := db.Exec("pragma temp_store=memory"); err != nil {
 		_ = db.Close()

@@ -26,8 +26,8 @@ const (
 	logRecordAbort       byte = 4
 	defaultSegmentSize        = 16 << 20
 	retryAttempts             = 20
-	applyBatchSize            = 2000
-	applyBatchFlushEvery      = 200 * time.Millisecond
+	applyBatchSize            = 10000
+	applyBatchFlushEvery      = 50 * time.Millisecond
 )
 
 var retryBackoffStart = 100 * time.Millisecond
