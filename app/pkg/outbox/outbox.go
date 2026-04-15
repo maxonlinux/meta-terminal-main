@@ -112,6 +112,8 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 		logging.Log().Error().Err(err).Msg("outbox: replay failed, continuing with last good tail")
 		newTail = tail
 	}
+	atomic.StoreUint64(&stats.appliedSeq, newTail)
+	atomic.StoreUint64(&stats.replayAppliedSeq, newTail)
 
 	queue := newQueue(opts)
 	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink, opts.ApplyBatchSize, opts.ApplyBatchFlushEvery, stats)
