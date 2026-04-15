@@ -150,6 +150,16 @@ type positionKey struct {
 	symbol string
 }
 
+type orderKey struct {
+	userID  types.UserID
+	orderID types.OrderID
+}
+
+type orderFillAccum struct {
+	qty types.Quantity
+	ts  uint64
+}
+
 type OrderRecord struct {
 	ID               types.OrderID
 	UserID           types.UserID
@@ -618,10 +628,38 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
 	}
 
+	pendingOrderFills := make(map[orderKey]orderFillAccum)
+	flushOrderFills := func() error {
+		if len(pendingOrderFills) == 0 {
+			return nil
+		}
+		for key, accum := range pendingOrderFills {
+			if err := addFillToOrder(tx, s.stmts, key.userID, key.orderID, accum.qty, accum.ts); err != nil {
+				return err
+			}
+			delete(pendingOrderFills, key)
+		}
+		return nil
+	}
+	accumOrderFill := func(userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) {
+		key := orderKey{userID: userID, orderID: orderID}
+		accum := pendingOrderFills[key]
+		accum.qty = math.Add(accum.qty, qty)
+		if ts > accum.ts {
+			accum.ts = ts
+		}
+		pendingOrderFills[key] = accum
+	}
+
 	for i := range eventsBatch {
 		event := eventsBatch[i]
 		if err := s.replayer.ApplyEvent(event); err != nil {
 			return err
+		}
+		if event.Type != events.TradeExecuted {
+			if err := flushOrderFills(); err != nil {
+				return err
+			}
 		}
 		switch event.Type {
 		case events.OrderPlaced:
@@ -660,7 +698,17 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if trade.Instrument != nil && s.registry.GetInstrument(trade.Symbol) == nil {
 				s.registry.SetInstrument(trade.Symbol, trade.Instrument)
 			}
-			err = applyTrade(tx, s.stmts, trade)
+			price := trade.Price.String()
+			qty := trade.Quantity.String()
+			makerSide := oppositeSide(trade.TakerSide)
+			if err = insertFill(tx, s.stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
+				return err
+			}
+			if err = insertFill(tx, s.stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
+				return err
+			}
+			accumOrderFill(trade.MakerUserID, trade.MakerOrderID, trade.Quantity, trade.Timestamp)
+			accumOrderFill(trade.TakerUserID, trade.TakerOrderID, trade.Quantity, trade.Timestamp)
 			addBalance(trade.MakerUserID)
 			addBalance(trade.TakerUserID)
 			if trade.Category == constants.CATEGORY_LINEAR {
@@ -713,6 +761,10 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if err := flushOrderFills(); err != nil {
+		return err
 	}
 
 	for userID := range s.balances {
