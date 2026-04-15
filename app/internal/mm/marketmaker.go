@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -46,17 +47,17 @@ type MarketMaker struct {
 	val *rand.Rand
 
 	orders map[marketKey]map[string]types.OrderID
-	ticks  chan priceTick
+	ticks  chan string
+
+	mu       sync.Mutex
+	latest   map[string]types.Price
+	pending  map[string]struct{}
+	lastTick map[string]types.Price
 }
 
 type marketKey struct {
 	symbol   string
 	category int8
-}
-
-type priceTick struct {
-	symbol string
-	price  types.Price
 }
 
 func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
@@ -89,12 +90,15 @@ func New(eng *engine.Engine, reg *registry.Registry, cfg Config) *MarketMaker {
 	}
 
 	return &MarketMaker{
-		eng:    eng,
-		reg:    reg,
-		cfg:    cfg,
-		val:    rand.New(rand.NewSource(time.Now().UnixNano())),
-		orders: make(map[marketKey]map[string]types.OrderID),
-		ticks:  make(chan priceTick, defaultTickQueue),
+		eng:      eng,
+		reg:      reg,
+		cfg:      cfg,
+		val:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		orders:   make(map[marketKey]map[string]types.OrderID),
+		ticks:    make(chan string, defaultTickQueue),
+		latest:   make(map[string]types.Price),
+		pending:  make(map[string]struct{}),
+		lastTick: make(map[string]types.Price),
 	}
 }
 
@@ -115,8 +119,15 @@ func (m *MarketMaker) loop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.refresh()
-		case tick := <-m.ticks:
-			m.refreshSymbol(tick.symbol, tick.price)
+		case symbol := <-m.ticks:
+			m.mu.Lock()
+			price, ok := m.latest[symbol]
+			delete(m.pending, symbol)
+			m.mu.Unlock()
+			if !ok {
+				continue
+			}
+			m.refreshSymbol(symbol, price)
 		}
 	}
 }
@@ -126,8 +137,18 @@ func (m *MarketMaker) OnPriceTick(symbol string, price types.Price) {
 	if m == nil {
 		return
 	}
+	m.mu.Lock()
+	m.latest[symbol] = price
+	_, queued := m.pending[symbol]
+	if !queued {
+		m.pending[symbol] = struct{}{}
+	}
+	m.mu.Unlock()
+	if queued {
+		return
+	}
 	select {
-	case m.ticks <- priceTick{symbol: symbol, price: price}:
+	case m.ticks <- symbol:
 	default:
 	}
 }
@@ -145,8 +166,8 @@ func (m *MarketMaker) refresh() {
 
 		m.ensureBalances(inst)
 
-		m.updateMarket(inst, constants.CATEGORY_SPOT, priceTick.Price)
-		m.updateMarket(inst, constants.CATEGORY_LINEAR, priceTick.Price)
+		m.updateMarket(inst, constants.CATEGORY_SPOT, priceTick.Price, true)
+		m.updateMarket(inst, constants.CATEGORY_LINEAR, priceTick.Price, true)
 		// Top up after reserves to keep available balance above minimum.
 		m.ensureBalances(inst)
 	}
@@ -156,18 +177,22 @@ func (m *MarketMaker) refreshSymbol(symbol string, price types.Price) {
 	if math.Sign(price) <= 0 {
 		return
 	}
+	if prev, ok := m.lastTick[symbol]; ok && math.Cmp(prev, price) == 0 {
+		return
+	}
+	m.lastTick[symbol] = price
 	inst := m.reg.GetInstrument(symbol)
 	if inst == nil {
 		return
 	}
 	m.ensureBalances(inst)
-	m.updateMarket(inst, constants.CATEGORY_SPOT, price)
-	m.updateMarket(inst, constants.CATEGORY_LINEAR, price)
+	m.updateMarket(inst, constants.CATEGORY_SPOT, price, false)
+	m.updateMarket(inst, constants.CATEGORY_LINEAR, price, false)
 	// Top up after reserves to keep available balance above minimum.
 	m.ensureBalances(inst)
 }
 
-func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price types.Price) {
+func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price types.Price, allowRandomization bool) {
 	key := marketKey{symbol: inst.Symbol, category: category}
 	existing, stale := m.rebuildExisting(key, inst, category, price)
 	m.orders[key] = make(map[string]types.OrderID, len(existing))
@@ -231,7 +256,8 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		if order == nil {
 			continue
 		}
-		if _, ok := desired[level]; !ok || m.val.Float64() < m.cfg.CancelPercent {
+		randomCancel := allowRandomization && m.val.Float64() < m.cfg.CancelPercent
+		if _, ok := desired[level]; !ok || randomCancel {
 			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: order.ID})
 			delete(existing, level)
 			continue
@@ -267,7 +293,7 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 		if _, ok := existing[level]; ok {
 			continue
 		}
-		if m.val.Float64() < m.cfg.SkipPercent {
+		if allowRandomization && m.val.Float64() < m.cfg.SkipPercent {
 			continue
 		}
 		if m.wouldSelfMatch(&req) {
