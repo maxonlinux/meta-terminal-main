@@ -29,10 +29,6 @@ func initSchema(db *sql.DB) error {
       updated_at integer not null
     );
 
-    create index if not exists orders_user_idx on orders (user_id, updated_at);
-    create index if not exists orders_symbol_idx on orders (symbol, category, updated_at);
-    create index if not exists orders_user_status_idx on orders (user_id, status, updated_at);
-    create index if not exists orders_symbol_status_idx on orders (symbol, category, status, updated_at);
 
 
 
@@ -52,8 +48,6 @@ func initSchema(db *sql.DB) error {
       primary key (id, user_id, role)
     );
 
-    create index if not exists fills_user_idx on fills (user_id, ts);
-    create index if not exists fills_symbol_idx on fills (symbol, category, ts);
 
     create table if not exists balances (
       user_id integer not null,
@@ -64,7 +58,6 @@ func initSchema(db *sql.DB) error {
       primary key (user_id, asset)
     );
 
-    create index if not exists balances_user_idx on balances (user_id);
 
     create table if not exists positions (
       user_id integer not null,
@@ -84,7 +77,6 @@ func initSchema(db *sql.DB) error {
       primary key (user_id, symbol)
     );
 
-    create index if not exists positions_user_idx on positions (user_id);
 
     create table if not exists fundings (
       id integer primary key,
@@ -115,8 +107,22 @@ func initSchema(db *sql.DB) error {
       created_at integer not null
     );
 
-    create index if not exists rpnl_user_idx on rpnl_events (user_id, created_at);
-    create index if not exists rpnl_symbol_idx on rpnl_events (symbol, category, created_at);
+    drop index if exists orders_user_status_idx;
+    create index if not exists orders_user_status_idx on orders (user_id, status);
+
+    drop index if exists fills_user_idx;
+    create index if not exists fills_user_idx on fills (user_id);
+
+    drop index if exists rpnl_user_idx;
+    create index if not exists rpnl_user_idx on rpnl_events (user_id);
+
+    drop index if exists orders_user_idx;
+    drop index if exists orders_symbol_idx;
+    drop index if exists orders_symbol_status_idx;
+    drop index if exists fills_symbol_idx;
+    drop index if exists balances_user_idx;
+    drop index if exists positions_user_idx;
+    drop index if exists rpnl_symbol_idx;
   `)
 	if err != nil {
 		return err
