@@ -246,6 +246,8 @@ type tradeInstrumentCacheEntry struct {
 	inst    *types.Instrument
 }
 
+const fillInsertBlockSize = 8
+
 type OrderRecord struct {
 	ID               types.OrderID
 	UserID           types.UserID
@@ -846,17 +848,18 @@ func (s *Store) appendTradeFills(trade events.TradeEvent, makerSide int8, price 
 }
 
 func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
-	const fillBlock = 8
 	if len(s.fills) == 0 {
 		return nil
 	}
+	// Fast path during trade-heavy bursts: push fixed-size blocks through a
+	// precompiled multi-row statement to reduce sqlite step/bind overhead.
 	if all {
 		for len(s.fills) > 0 {
-			if len(s.fills) >= fillBlock {
-				if err := insertFill8(stmts, s.fills[:fillBlock]); err != nil {
+			if len(s.fills) >= fillInsertBlockSize {
+				if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
 					return err
 				}
-				s.fills = s.fills[fillBlock:]
+				s.fills = s.fills[fillInsertBlockSize:]
 				continue
 			}
 			if err := insertFill(stmts, s.fills[0]); err != nil {
@@ -867,11 +870,11 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 		s.fills = s.fills[:0]
 		return nil
 	}
-	for len(s.fills) >= fillBlock {
-		if err := insertFill8(stmts, s.fills[:fillBlock]); err != nil {
+	for len(s.fills) >= fillInsertBlockSize {
+		if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
 			return err
 		}
-		s.fills = s.fills[fillBlock:]
+		s.fills = s.fills[fillInsertBlockSize:]
 	}
 	return nil
 }
@@ -899,11 +902,15 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	for i := range eventsBatch {
 		event := eventsBatch[i]
 		if event.Type == events.TradeExecuted {
+			// Trade writes and order mutations target the same order rows.
+			// Flush pending non-trade mutations before processing trade stream.
 			if err := s.flushOrderMutations(txStmts); err != nil {
 				return err
 			}
 		}
 		if event.Type != events.TradeExecuted {
+			// A non-trade event is a natural barrier: flush accumulated trade side effects
+			// so write ordering stays deterministic across mixed batches.
 			if err := s.flushFillInserts(txStmts, true); err != nil {
 				return err
 			}
@@ -1238,29 +1245,42 @@ func insertFill(stmts *txStatements, row fillInsertRow) error {
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill statement")
 	}
-	_, err := stmt.Exec(row.id, row.userID, row.orderID, row.counterparty, row.symbol, row.category, row.orderType, row.side, row.role, row.price, row.qty, row.ts)
+	var args [12]any
+	setFillArgs(args[:], 0, row)
+	_, err := stmt.Exec(args[:]...)
 	return err
 }
 
 func insertFill8(stmts *txStatements, rows []fillInsertRow) error {
-	if len(rows) != 8 {
-		return fmt.Errorf("expected 8 fill rows, got %d", len(rows))
+	if len(rows) != fillInsertBlockSize {
+		return fmt.Errorf("expected %d fill rows, got %d", fillInsertBlockSize, len(rows))
 	}
 	stmt := stmts.insertFill8
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill8 statement")
 	}
-	_, err := stmt.Exec(
-		rows[0].id, rows[0].userID, rows[0].orderID, rows[0].counterparty, rows[0].symbol, rows[0].category, rows[0].orderType, rows[0].side, rows[0].role, rows[0].price, rows[0].qty, rows[0].ts,
-		rows[1].id, rows[1].userID, rows[1].orderID, rows[1].counterparty, rows[1].symbol, rows[1].category, rows[1].orderType, rows[1].side, rows[1].role, rows[1].price, rows[1].qty, rows[1].ts,
-		rows[2].id, rows[2].userID, rows[2].orderID, rows[2].counterparty, rows[2].symbol, rows[2].category, rows[2].orderType, rows[2].side, rows[2].role, rows[2].price, rows[2].qty, rows[2].ts,
-		rows[3].id, rows[3].userID, rows[3].orderID, rows[3].counterparty, rows[3].symbol, rows[3].category, rows[3].orderType, rows[3].side, rows[3].role, rows[3].price, rows[3].qty, rows[3].ts,
-		rows[4].id, rows[4].userID, rows[4].orderID, rows[4].counterparty, rows[4].symbol, rows[4].category, rows[4].orderType, rows[4].side, rows[4].role, rows[4].price, rows[4].qty, rows[4].ts,
-		rows[5].id, rows[5].userID, rows[5].orderID, rows[5].counterparty, rows[5].symbol, rows[5].category, rows[5].orderType, rows[5].side, rows[5].role, rows[5].price, rows[5].qty, rows[5].ts,
-		rows[6].id, rows[6].userID, rows[6].orderID, rows[6].counterparty, rows[6].symbol, rows[6].category, rows[6].orderType, rows[6].side, rows[6].role, rows[6].price, rows[6].qty, rows[6].ts,
-		rows[7].id, rows[7].userID, rows[7].orderID, rows[7].counterparty, rows[7].symbol, rows[7].category, rows[7].orderType, rows[7].side, rows[7].role, rows[7].price, rows[7].qty, rows[7].ts,
-	)
+	// Build args in a fixed array so we avoid allocating a new slice each call.
+	var args [fillInsertBlockSize * 12]any
+	for i := 0; i < fillInsertBlockSize; i++ {
+		setFillArgs(args[:], i*12, rows[i])
+	}
+	_, err := stmt.Exec(args[:]...)
 	return err
+}
+
+func setFillArgs(args []any, offset int, row fillInsertRow) {
+	args[offset+0] = row.id
+	args[offset+1] = row.userID
+	args[offset+2] = row.orderID
+	args[offset+3] = row.counterparty
+	args[offset+4] = row.symbol
+	args[offset+5] = row.category
+	args[offset+6] = row.orderType
+	args[offset+7] = row.side
+	args[offset+8] = row.role
+	args[offset+9] = row.price
+	args[offset+10] = row.qty
+	args[offset+11] = row.ts
 }
 
 func upsertOrderFill(stmts *txStatements, userID types.UserID, orderID types.OrderID, filled types.Quantity, qty types.Quantity, ts uint64) error {
