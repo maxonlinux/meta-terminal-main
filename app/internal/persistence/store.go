@@ -716,18 +716,23 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			_ = tx.Rollback()
 			_ = s.loadState()
 		} else {
-			_ = tx.Commit()
+			if commitErr := tx.Commit(); commitErr != nil {
+				err = commitErr
+				_ = s.loadState()
+			}
 		}
 	}()
 	writer := applyWriter{s: s, txStmts: txStmts}
-	if err := writer.process(eventsBatch); err != nil {
+	err = writer.process(eventsBatch)
+	if err != nil {
 		return err
 	}
-	if err := writer.finalize(); err != nil {
+	err = writer.finalize()
+	if err != nil {
 		return err
 	}
 
-	return err
+	return nil
 }
 
 func (s *Store) loadState() error {
