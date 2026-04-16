@@ -614,28 +614,3 @@ func DecodeInstrument(data []byte) (*types.Instrument, error) {
 	}
 	return inst, nil
 }
-
-func DecodeEvent(event Event) (interface{}, error) {
-	switch event.Type {
-	case OrderPlaced:
-		return DecodeOrderPlaced(event.Data)
-	case OrderAmended:
-		return DecodeOrderAmended(event.Data)
-	case OrderCanceled:
-		return DecodeOrderCanceled(event.Data)
-	case TradeExecuted:
-		return DecodeTrade(event.Data)
-	case LeverageSet:
-		return DecodeLeverage(event.Data)
-	case FundingCreated:
-		return DecodeFundingCreated(event.Data)
-	case FundingApproved, FundingRejected:
-		return DecodeFundingStatus(event.Data)
-	case OrderTriggered:
-		return DecodeOrderTriggered(event.Data)
-	case RPNLRecorded:
-		return DecodeRPNL(event.Data)
-	default:
-		return nil, errors.New("unknown event type")
-	}
-}

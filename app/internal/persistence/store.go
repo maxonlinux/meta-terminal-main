@@ -680,10 +680,7 @@ func (s *Store) resolveTradeInstrument(symbol string, payload []byte) (*types.In
 	return inst, nil
 }
 
-func (s *Store) Apply(eventsBatch []events.Event) error {
-	if len(eventsBatch) == 0 {
-		return nil
-	}
+func (s *Store) resetApplyState() {
 	if s.balances == nil {
 		s.balances = make(map[types.UserID]struct{})
 	} else {
@@ -709,6 +706,98 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	} else {
 		clear(s.tradeInstruments)
 	}
+}
+
+func (s *Store) addBalance(userID types.UserID) {
+	s.balances[userID] = struct{}{}
+}
+
+func (s *Store) addPosition(userID types.UserID, symbol string) {
+	s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
+}
+
+func (s *Store) accumOrderFill(order *types.Order, qty types.Quantity, ts uint64) {
+	key := orderKey{userID: order.UserID, orderID: order.ID}
+	accum, ok := s.orderFills[key]
+	if !ok {
+		accum.qty = order.Quantity
+		accum.filled = order.Filled
+	}
+	accum.filled = math.Add(accum.filled, qty)
+	if ts > accum.ts {
+		accum.ts = ts
+	}
+	s.orderFills[key] = accum
+}
+
+func (s *Store) flushOrderFills(stmts *txStatements) error {
+	if len(s.orderFills) == 0 {
+		return nil
+	}
+	for key, accum := range s.orderFills {
+		if err := upsertOrderFill(stmts, key.userID, key.orderID, accum.filled, accum.qty, accum.ts); err != nil {
+			return err
+		}
+	}
+	clear(s.orderFills)
+	return nil
+}
+
+func (s *Store) scheduleOrderMutation(key orderKey, mutation orderMutation) {
+	current, ok := s.orderMutations[key]
+	if !ok {
+		s.orderMutations[key] = mutation
+		return
+	}
+	if mutation.kind == orderMutationAmend && current.kind == orderMutationAmend {
+		if math.Sign(mutation.price) > 0 {
+			current.price = mutation.price
+		}
+		current.qty = mutation.qty
+		if mutation.timestamp > current.timestamp {
+			current.timestamp = mutation.timestamp
+		}
+		s.orderMutations[key] = current
+		return
+	}
+	s.orderMutations[key] = mutation
+}
+
+func (s *Store) flushOrderMutations(stmts *txStatements) error {
+	if len(s.orderMutations) == 0 {
+		return nil
+	}
+	for key, mutation := range s.orderMutations {
+		switch mutation.kind {
+		case orderMutationAmend:
+			if math.Sign(mutation.price) > 0 {
+				if err := updateOrderPriceQty(stmts, key.userID, key.orderID, mutation.price, mutation.qty, mutation.timestamp); err != nil {
+					return err
+				}
+			} else {
+				if err := updateOrderQty(stmts, key.userID, key.orderID, mutation.qty, mutation.timestamp); err != nil {
+					return err
+				}
+			}
+		case orderMutationCancel:
+			if err := cancelOrder(stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+				return err
+			}
+		case orderMutationTrigger:
+			if err := markOrderTriggered(stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+				return err
+			}
+		}
+	}
+	clear(s.orderMutations)
+	return nil
+}
+
+func (s *Store) Apply(eventsBatch []events.Event) error {
+	if len(eventsBatch) == 0 {
+		return nil
+	}
+	s.resetApplyState()
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -728,98 +817,15 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		}
 	}()
 
-	addBalance := func(userID types.UserID) {
-		s.balances[userID] = struct{}{}
-	}
-	addPosition := func(userID types.UserID, symbol string) {
-		s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
-	}
-
-	pendingOrderFills := s.orderFills
-	pendingOrderMutations := s.orderMutations
-	flushOrderFills := func() error {
-		if len(pendingOrderFills) == 0 {
-			return nil
-		}
-		for key, accum := range pendingOrderFills {
-			if err := upsertOrderFill(txStmts, key.userID, key.orderID, accum.filled, accum.qty, accum.ts); err != nil {
-				return err
-			}
-			delete(pendingOrderFills, key)
-		}
-		return nil
-	}
-	accumOrderFill := func(order *types.Order, qty types.Quantity, ts uint64) {
-		key := orderKey{userID: order.UserID, orderID: order.ID}
-		accum, ok := pendingOrderFills[key]
-		if !ok {
-			accum.qty = order.Quantity
-			accum.filled = order.Filled
-		}
-		accum.filled = math.Add(accum.filled, qty)
-		if ts > accum.ts {
-			accum.ts = ts
-		}
-		pendingOrderFills[key] = accum
-	}
-	flushOrderMutations := func() error {
-		if len(pendingOrderMutations) == 0 {
-			return nil
-		}
-		for key, mutation := range pendingOrderMutations {
-			switch mutation.kind {
-			case orderMutationAmend:
-				if math.Sign(mutation.price) > 0 {
-					if err := updateOrderPriceQty(txStmts, key.userID, key.orderID, mutation.price, mutation.qty, mutation.timestamp); err != nil {
-						return err
-					}
-				} else {
-					if err := updateOrderQty(txStmts, key.userID, key.orderID, mutation.qty, mutation.timestamp); err != nil {
-						return err
-					}
-				}
-			case orderMutationCancel:
-				if err := cancelOrder(txStmts, key.userID, key.orderID, mutation.timestamp); err != nil {
-					return err
-				}
-			case orderMutationTrigger:
-				if err := markOrderTriggered(txStmts, key.userID, key.orderID, mutation.timestamp); err != nil {
-					return err
-				}
-			}
-			delete(pendingOrderMutations, key)
-		}
-		return nil
-	}
-	scheduleOrderMutation := func(key orderKey, mutation orderMutation) {
-		current, ok := pendingOrderMutations[key]
-		if !ok {
-			pendingOrderMutations[key] = mutation
-			return
-		}
-		if mutation.kind == orderMutationAmend && current.kind == orderMutationAmend {
-			if math.Sign(mutation.price) > 0 {
-				current.price = mutation.price
-			}
-			current.qty = mutation.qty
-			if mutation.timestamp > current.timestamp {
-				current.timestamp = mutation.timestamp
-			}
-			pendingOrderMutations[key] = current
-			return
-		}
-		pendingOrderMutations[key] = mutation
-	}
-
 	for i := range eventsBatch {
 		event := eventsBatch[i]
 		if event.Type == events.TradeExecuted {
-			if err := flushOrderMutations(); err != nil {
+			if err := s.flushOrderMutations(txStmts); err != nil {
 				return err
 			}
 		}
 		if event.Type != events.TradeExecuted {
-			if err := flushOrderFills(); err != nil {
+			if err := s.flushOrderFills(txStmts); err != nil {
 				return err
 			}
 		}
@@ -833,7 +839,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return err
 			}
 			err = upsertOrder(txStmts, placed.Order)
-			addBalance(placed.Order.UserID)
+			s.addBalance(placed.Order.UserID)
 		case events.OrderAmended:
 			amend, decErr := events.DecodeOrderAmended(event.Data)
 			if decErr != nil {
@@ -842,8 +848,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err := s.replayer.ApplyOrderAmended(amend); err != nil {
 				return err
 			}
-			scheduleOrderMutation(orderKey{userID: amend.UserID, orderID: amend.OrderID}, orderMutation{kind: orderMutationAmend, price: amend.NewPrice, qty: amend.NewQty, timestamp: amend.Timestamp})
-			addBalance(amend.UserID)
+			s.scheduleOrderMutation(orderKey{userID: amend.UserID, orderID: amend.OrderID}, orderMutation{kind: orderMutationAmend, price: amend.NewPrice, qty: amend.NewQty, timestamp: amend.Timestamp})
+			s.addBalance(amend.UserID)
 		case events.OrderCanceled:
 			cancel, decErr := events.DecodeOrderCanceled(event.Data)
 			if decErr != nil {
@@ -852,8 +858,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err := s.replayer.ApplyOrderCanceled(cancel); err != nil {
 				return err
 			}
-			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
-			addBalance(cancel.UserID)
+			s.scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
+			s.addBalance(cancel.UserID)
 		case events.TradeExecuted:
 			trade, instrumentPayload, decErr := events.DecodeTradeNoSymbolWithPayload(event.Data)
 			if decErr != nil {
@@ -876,8 +882,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return instErr
 			}
 			trade.Instrument = inst
-			accumOrderFill(makerOrder, trade.Quantity, trade.Timestamp)
-			accumOrderFill(takerOrder, trade.Quantity, trade.Timestamp)
+			s.accumOrderFill(makerOrder, trade.Quantity, trade.Timestamp)
+			s.accumOrderFill(takerOrder, trade.Quantity, trade.Timestamp)
 			if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
 				return err
 			}
@@ -890,11 +896,11 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err = insertFill(txStmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
 				return err
 			}
-			addBalance(trade.MakerUserID)
-			addBalance(trade.TakerUserID)
+			s.addBalance(trade.MakerUserID)
+			s.addBalance(trade.TakerUserID)
 			if trade.Category == constants.CATEGORY_LINEAR {
-				addPosition(trade.MakerUserID, trade.Symbol)
-				addPosition(trade.TakerUserID, trade.Symbol)
+				s.addPosition(trade.MakerUserID, trade.Symbol)
+				s.addPosition(trade.TakerUserID, trade.Symbol)
 			}
 		case events.LeverageSet:
 			lev, decErr := events.DecodeLeverage(event.Data)
@@ -904,7 +910,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err := s.replayer.ApplyLeverageSet(lev); err != nil {
 				return err
 			}
-			addPosition(lev.UserID, lev.Symbol)
+			s.addPosition(lev.UserID, lev.Symbol)
 		case events.FundingCreated:
 			req, decErr := events.DecodeFundingCreated(event.Data)
 			if decErr != nil {
@@ -914,7 +920,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return err
 			}
 			err = upsertFunding(txStmts, req)
-			addBalance(req.UserID)
+			s.addBalance(req.UserID)
 		case events.FundingApproved, events.FundingRejected:
 			evt, decErr := events.DecodeFundingStatus(event.Data)
 			if decErr != nil {
@@ -938,7 +944,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if selErr != nil {
 				return selErr
 			}
-			addBalance(userID)
+			s.addBalance(userID)
 		case events.OrderTriggered:
 			evt, decErr := events.DecodeOrderTriggered(event.Data)
 			if decErr != nil {
@@ -947,8 +953,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err := s.replayer.ApplyOrderTriggered(evt); err != nil {
 				return err
 			}
-			scheduleOrderMutation(orderKey{userID: evt.UserID, orderID: evt.OrderID}, orderMutation{kind: orderMutationTrigger, timestamp: evt.Timestamp})
-			addBalance(evt.UserID)
+			s.scheduleOrderMutation(orderKey{userID: evt.UserID, orderID: evt.OrderID}, orderMutation{kind: orderMutationTrigger, timestamp: evt.Timestamp})
+			s.addBalance(evt.UserID)
 		case events.RPNLRecorded:
 			evt, decErr := events.DecodeRPNL(event.Data)
 			if decErr != nil {
@@ -958,7 +964,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return err
 			}
 			err = insertRPNL(txStmts, evt)
-			addBalance(evt.UserID)
+			s.addBalance(evt.UserID)
 		default:
 			if err := s.replayer.ApplyEvent(event); err != nil {
 				return err
@@ -969,10 +975,10 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		}
 	}
 
-	if err := flushOrderFills(); err != nil {
+	if err := s.flushOrderFills(txStmts); err != nil {
 		return err
 	}
-	if err := flushOrderMutations(); err != nil {
+	if err := s.flushOrderMutations(txStmts); err != nil {
 		return err
 	}
 
@@ -986,21 +992,20 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				}
 			}
 		}
-		delete(s.balances, userID)
 	}
+	clear(s.balances)
 
 	for key := range s.positions {
 		pos := s.portfolio.GetPosition(key.userID, key.symbol)
 		if pos == nil {
-			delete(s.positions, key)
 			continue
 		}
 		err = upsertPosition(txStmts, pos)
 		if err != nil {
 			return err
 		}
-		delete(s.positions, key)
 	}
+	clear(s.positions)
 
 	return err
 }
