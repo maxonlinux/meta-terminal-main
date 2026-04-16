@@ -704,7 +704,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	if len(eventsBatch) == 0 {
 		return nil
 	}
-	s.resetApplyState()
+	s.resetApplyState(eventsBatch)
 
 	tx, err := s.db.Begin()
 	if err != nil {

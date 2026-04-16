@@ -10,7 +10,7 @@ import (
 
 // resetApplyState clears per-batch scratch structures while retaining capacity.
 // This keeps allocations flatter under sustained outbox throughput.
-func (s *Store) resetApplyState() {
+func (s *Store) resetApplyState(_ []events.Event) {
 	if s.balances == nil {
 		s.balances = make(map[types.UserID]struct{})
 	} else {
@@ -167,28 +167,33 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 	}
 	// Fast path during trade-heavy bursts: push fixed-size blocks through a
 	// precompiled multi-row statement to reduce sqlite step/bind overhead.
+	processed := 0
 	if all {
-		for len(s.fills) > 0 {
-			if len(s.fills) >= fillInsertBlockSize {
-				if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
-					return err
-				}
-				s.fills = s.fills[fillInsertBlockSize:]
-				continue
-			}
-			if err := insertFill(stmts, s.fills[0]); err != nil {
+		for processed+fillInsertBlockSize <= len(s.fills) {
+			if err := insertFill8(stmts, s.fills[processed:processed+fillInsertBlockSize]); err != nil {
 				return err
 			}
-			s.fills = s.fills[1:]
+			processed += fillInsertBlockSize
+		}
+		for processed < len(s.fills) {
+			if err := insertFill(stmts, s.fills[processed]); err != nil {
+				return err
+			}
+			processed++
 		}
 		s.fills = s.fills[:0]
 		return nil
 	}
-	for len(s.fills) >= fillInsertBlockSize {
-		if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
+	for processed+fillInsertBlockSize <= len(s.fills) {
+		if err := insertFill8(stmts, s.fills[processed:processed+fillInsertBlockSize]); err != nil {
 			return err
 		}
-		s.fills = s.fills[fillInsertBlockSize:]
+		processed += fillInsertBlockSize
+	}
+	if processed > 0 {
+		remaining := len(s.fills) - processed
+		copy(s.fills, s.fills[processed:])
+		s.fills = s.fills[:remaining]
 	}
 	return nil
 }
