@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestApplyWithRetryDropsAfterAttempts(t *testing.T) {
+func TestApplyWithRetryReturnsErrorAfterAttempts(t *testing.T) {
 	prevStart := retryBackoffStart
 	prevMax := retryBackoffMax
 	prevSleep := retrySleep
@@ -31,14 +31,14 @@ func TestApplyWithRetryDropsAfterAttempts(t *testing.T) {
 		return nil
 	}, "test", nil)
 
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 	if applyCalls != retryAttempts {
 		t.Fatalf("expected %d attempts, got %d", retryAttempts, applyCalls)
 	}
-	if finalizeCalls != 1 {
-		t.Fatalf("expected finalize once, got %d", finalizeCalls)
+	if finalizeCalls != 0 {
+		t.Fatalf("expected finalize not called, got %d", finalizeCalls)
 	}
 }
 

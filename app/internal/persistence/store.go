@@ -34,6 +34,49 @@ type Store struct {
 	positions map[positionKey]struct{}
 }
 
+type txStatements struct {
+	upsertOrder         *sql.Stmt
+	updateOrderQty      *sql.Stmt
+	updateOrderPriceQty *sql.Stmt
+	cancelOrder         *sql.Stmt
+	markOrderTriggered  *sql.Stmt
+	insertFill          *sql.Stmt
+	updateOrderFilled   *sql.Stmt
+	upsertBalance       *sql.Stmt
+	upsertPosition      *sql.Stmt
+	upsertFunding       *sql.Stmt
+	updateFundingStatus *sql.Stmt
+	selectFundingUser   *sql.Stmt
+	insertRPNL          *sql.Stmt
+}
+
+func bindTxStatements(tx *sql.Tx, stmts *statements) *txStatements {
+	if stmts == nil {
+		return &txStatements{}
+	}
+	bind := func(stmt *sql.Stmt) *sql.Stmt {
+		if tx == nil || stmt == nil {
+			return nil
+		}
+		return tx.Stmt(stmt)
+	}
+	return &txStatements{
+		upsertOrder:         bind(stmts.upsertOrder),
+		updateOrderQty:      bind(stmts.updateOrderQty),
+		updateOrderPriceQty: bind(stmts.updateOrderPriceQty),
+		cancelOrder:         bind(stmts.cancelOrder),
+		markOrderTriggered:  bind(stmts.markOrderTriggered),
+		insertFill:          bind(stmts.insertFill),
+		updateOrderFilled:   bind(stmts.updateOrderFilled),
+		upsertBalance:       bind(stmts.upsertBalance),
+		upsertPosition:      bind(stmts.upsertPosition),
+		upsertFunding:       bind(stmts.upsertFunding),
+		updateFundingStatus: bind(stmts.updateFundingStatus),
+		selectFundingUser:   bind(stmts.selectFundingUser),
+		insertRPNL:          bind(stmts.insertRPNL),
+	}
+}
+
 // DB returns the underlying database handle for feature repositories.
 func (s *Store) DB() *sql.DB {
 	return s.db
@@ -623,6 +666,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	if err != nil {
 		return err
 	}
+	txStmts := bindTxStatements(tx, s.stmts)
 	defer func() {
 		if err != nil {
 			_ = s.loadState()
@@ -650,7 +694,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			return nil
 		}
 		for key, accum := range pendingOrderFills {
-			if err := addFillToOrder(tx, s.stmts, key.userID, key.orderID, accum.qty, accum.ts); err != nil {
+			if err := addFillToOrder(tx, txStmts, key.userID, key.orderID, accum.qty, accum.ts); err != nil {
 				return err
 			}
 			delete(pendingOrderFills, key)
@@ -674,20 +718,20 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			switch mutation.kind {
 			case orderMutationAmend:
 				if math.Sign(mutation.price) > 0 {
-					if err := updateOrderPriceQty(tx, s.stmts, key.userID, key.orderID, mutation.price, mutation.qty, mutation.timestamp); err != nil {
+					if err := updateOrderPriceQty(txStmts, key.userID, key.orderID, mutation.price, mutation.qty, mutation.timestamp); err != nil {
 						return err
 					}
 				} else {
-					if err := updateOrderQty(tx, s.stmts, key.userID, key.orderID, mutation.qty, mutation.timestamp); err != nil {
+					if err := updateOrderQty(txStmts, key.userID, key.orderID, mutation.qty, mutation.timestamp); err != nil {
 						return err
 					}
 				}
 			case orderMutationCancel:
-				if err := cancelOrder(tx, s.stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+				if err := cancelOrder(txStmts, key.userID, key.orderID, mutation.timestamp); err != nil {
 					return err
 				}
 			case orderMutationTrigger:
-				if err := markOrderTriggered(tx, s.stmts, key.userID, key.orderID, mutation.timestamp); err != nil {
+				if err := markOrderTriggered(txStmts, key.userID, key.orderID, mutation.timestamp); err != nil {
 					return err
 				}
 			}
@@ -717,9 +761,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 
 	for i := range eventsBatch {
 		event := eventsBatch[i]
-		if err := s.replayer.ApplyEvent(event); err != nil {
-			return err
-		}
 		if event.Type == events.TradeExecuted {
 			if err := flushOrderMutations(); err != nil {
 				return err
@@ -736,15 +777,18 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			if placed.Instrument != nil && s.registry.GetInstrument(placed.Order.Symbol) == nil {
-				s.registry.SetInstrument(placed.Order.Symbol, placed.Instrument)
+			if err := s.replayer.ApplyOrderPlaced(placed); err != nil {
+				return err
 			}
-			err = upsertOrder(tx, s.stmts, placed.Order)
+			err = upsertOrder(txStmts, placed.Order)
 			addBalance(placed.Order.UserID)
 		case events.OrderAmended:
 			amend, decErr := events.DecodeOrderAmended(event.Data)
 			if decErr != nil {
 				return decErr
+			}
+			if err := s.replayer.ApplyOrderAmended(amend); err != nil {
+				return err
 			}
 			scheduleOrderMutation(orderKey{userID: amend.UserID, orderID: amend.OrderID}, orderMutation{kind: orderMutationAmend, price: amend.NewPrice, qty: amend.NewQty, timestamp: amend.Timestamp})
 			addBalance(amend.UserID)
@@ -753,6 +797,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
+			if err := s.replayer.ApplyOrderCanceled(cancel); err != nil {
+				return err
+			}
 			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
@@ -760,16 +807,16 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			if trade.Instrument != nil && s.registry.GetInstrument(trade.Symbol) == nil {
-				s.registry.SetInstrument(trade.Symbol, trade.Instrument)
+			if err := s.replayer.ApplyTradeExecuted(trade); err != nil {
+				return err
 			}
 			price := trade.Price.String()
 			qty := trade.Quantity.String()
 			makerSide := oppositeSide(trade.TakerSide)
-			if err = insertFill(tx, s.stmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
+			if err = insertFill(txStmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
 				return err
 			}
-			if err = insertFill(tx, s.stmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
+			if err = insertFill(txStmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
 				return err
 			}
 			accumOrderFill(trade.MakerUserID, trade.MakerOrderID, trade.Quantity, trade.Timestamp)
@@ -785,25 +832,40 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
+			if err := s.replayer.ApplyLeverageSet(lev); err != nil {
+				return err
+			}
 			addPosition(lev.UserID, lev.Symbol)
 		case events.FundingCreated:
 			req, decErr := events.DecodeFundingCreated(event.Data)
 			if decErr != nil {
 				return decErr
 			}
-			err = upsertFunding(tx, s.stmts, req)
+			if err := s.replayer.ApplyFundingCreated(req); err != nil {
+				return err
+			}
+			err = upsertFunding(txStmts, req)
 			addBalance(req.UserID)
 		case events.FundingApproved, events.FundingRejected:
 			evt, decErr := events.DecodeFundingStatus(event.Data)
 			if decErr != nil {
 				return decErr
 			}
+			if event.Type == events.FundingApproved {
+				if err := s.replayer.ApplyFundingApproved(evt); err != nil {
+					return err
+				}
+			} else {
+				if err := s.replayer.ApplyFundingRejected(evt); err != nil {
+					return err
+				}
+			}
 			status := types.FundingStatusCanceled
 			if event.Type == events.FundingApproved {
 				status = types.FundingStatusCompleted
 			}
-			err = updateFundingStatus(tx, s.stmts, evt.FundingID, status)
-			userID, selErr := selectFundingUser(tx, s.stmts, evt.FundingID)
+			err = updateFundingStatus(txStmts, evt.FundingID, status)
+			userID, selErr := selectFundingUser(txStmts, evt.FundingID)
 			if selErr != nil {
 				return selErr
 			}
@@ -813,6 +875,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
+			if err := s.replayer.ApplyOrderTriggered(evt); err != nil {
+				return err
+			}
 			scheduleOrderMutation(orderKey{userID: evt.UserID, orderID: evt.OrderID}, orderMutation{kind: orderMutationTrigger, timestamp: evt.Timestamp})
 			addBalance(evt.UserID)
 		case events.RPNLRecorded:
@@ -820,8 +885,15 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			err = insertRPNL(tx, s.stmts, evt)
+			if err := s.replayer.ApplyEvent(event); err != nil {
+				return err
+			}
+			err = insertRPNL(txStmts, evt)
 			addBalance(evt.UserID)
+		default:
+			if err := s.replayer.ApplyEvent(event); err != nil {
+				return err
+			}
 		}
 		if err != nil {
 			return err
@@ -839,7 +911,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		balances := s.portfolio.GetBalances(userID)
 		for i := range balances {
 			if bal := balances[i]; bal != nil {
-				err = upsertBalance(tx, s.stmts, bal)
+				err = upsertBalance(txStmts, bal)
 				if err != nil {
 					return err
 				}
@@ -854,7 +926,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			delete(s.positions, key)
 			continue
 		}
-		err = upsertPosition(tx, s.stmts, pos)
+		err = upsertPosition(txStmts, pos)
 		if err != nil {
 			return err
 		}
@@ -939,7 +1011,7 @@ func loadPendingFundings(db *sql.DB, portfolio *portfolio.Service) error {
 	return nil
 }
 
-func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
+func upsertOrder(stmts *txStatements, order *types.Order) error {
 	if order == nil {
 		return fmt.Errorf("order is nil")
 	}
@@ -947,7 +1019,7 @@ func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 	if stmt == nil {
 		return fmt.Errorf("missing upsert order statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(
+	_, err := stmt.Exec(
 		order.ID,
 		order.UserID,
 		order.Symbol,
@@ -972,29 +1044,29 @@ func upsertOrder(tx *sql.Tx, stmts *statements, order *types.Order) error {
 	return err
 }
 
-func updateOrderPriceQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
+func updateOrderPriceQty(stmts *txStatements, userID types.UserID, orderID types.OrderID, price types.Price, qty types.Quantity, ts uint64) error {
 	stmt := stmts.updateOrderPriceQty
 	if stmt == nil {
 		return fmt.Errorf("missing update order price qty statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(price.String(), qty.String(), ts, orderID, userID)
+	_, err := stmt.Exec(price.String(), qty.String(), ts, orderID, userID)
 	return err
 }
-func updateOrderQty(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
+func updateOrderQty(stmts *txStatements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
 	stmt := stmts.updateOrderQty
 	if stmt == nil {
 		return fmt.Errorf("missing update order qty statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(qty.String(), ts, orderID, userID)
+	_, err := stmt.Exec(qty.String(), ts, orderID, userID)
 	return err
 }
 
-func cancelOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, ts uint64) error {
+func cancelOrder(stmts *txStatements, userID types.UserID, orderID types.OrderID, ts uint64) error {
 	stmt := stmts.cancelOrder
 	if stmt == nil {
 		return fmt.Errorf("missing cancel order statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(
+	_, err := stmt.Exec(
 		constants.ORDER_STATUS_DEACTIVATED,
 		constants.ORDER_STATUS_CANCELED,
 		ts,
@@ -1004,16 +1076,16 @@ func cancelOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID typ
 	return err
 }
 
-func insertFill(tx *sql.Tx, stmts *statements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, orderType int8, side int8, role string, price string, qty string, ts uint64) error {
+func insertFill(stmts *txStatements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, orderType int8, side int8, role string, price string, qty string, ts uint64) error {
 	stmt := stmts.insertFill
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(id, userID, orderID, counterparty, symbol, category, orderType, side, role, price, qty, ts)
+	_, err := stmt.Exec(id, userID, orderID, counterparty, symbol, category, orderType, side, role, price, qty, ts)
 	return err
 }
 
-func addFillToOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
+func addFillToOrder(tx *sql.Tx, stmts *txStatements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
 	row := tx.QueryRow(`select filled, qty, status from orders where id = ? and user_id = ?`, orderID, userID)
 	var filledStr, qtyStr string
 	var status int8
@@ -1033,26 +1105,26 @@ func addFillToOrder(tx *sql.Tx, stmts *statements, userID types.UserID, orderID 
 	if stmt == nil {
 		return fmt.Errorf("missing update order filled statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(newFilled.String(), status, ts, orderID, userID)
+	_, err := stmt.Exec(newFilled.String(), status, ts, orderID, userID)
 	return err
 }
 
-func markOrderTriggered(tx *sql.Tx, stmts *statements, userID types.UserID, orderID types.OrderID, ts uint64) error {
+func markOrderTriggered(stmts *txStatements, userID types.UserID, orderID types.OrderID, ts uint64) error {
 	stmt := stmts.markOrderTriggered
 	if stmt == nil {
 		return fmt.Errorf("missing mark order triggered statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(constants.ORDER_STATUS_TRIGGERED, types.Price{}.String(), ts, orderID, userID)
+	_, err := stmt.Exec(constants.ORDER_STATUS_TRIGGERED, types.Price{}.String(), ts, orderID, userID)
 	return err
 }
 
-func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
+func insertRPNL(stmts *txStatements, ev events.RPNLEvent) error {
 	// Persists realized PnL into history store.
 	stmt := stmts.insertRPNL
 	if stmt == nil {
 		return fmt.Errorf("missing insert rpnl statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(
+	_, err := stmt.Exec(
 		snowflake.Next(),
 		uint64(ev.UserID),
 		uint64(ev.OrderID),
@@ -1067,7 +1139,7 @@ func insertRPNL(tx *sql.Tx, stmts *statements, ev events.RPNLEvent) error {
 	return err
 }
 
-func upsertBalance(tx *sql.Tx, stmts *statements, bal *types.Balance) error {
+func upsertBalance(stmts *txStatements, bal *types.Balance) error {
 	if bal == nil {
 		return fmt.Errorf("balance is nil")
 	}
@@ -1075,11 +1147,11 @@ func upsertBalance(tx *sql.Tx, stmts *statements, bal *types.Balance) error {
 	if stmt == nil {
 		return fmt.Errorf("missing upsert balance statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(bal.UserID, bal.Asset, bal.Available.String(), bal.Locked.String(), bal.Margin.String())
+	_, err := stmt.Exec(bal.UserID, bal.Asset, bal.Available.String(), bal.Locked.String(), bal.Margin.String())
 	return err
 }
 
-func upsertPosition(tx *sql.Tx, stmts *statements, pos *types.Position) error {
+func upsertPosition(stmts *txStatements, pos *types.Position) error {
 	if pos == nil {
 		return fmt.Errorf("position is nil")
 	}
@@ -1087,7 +1159,7 @@ func upsertPosition(tx *sql.Tx, stmts *statements, pos *types.Position) error {
 	if stmt == nil {
 		return fmt.Errorf("missing upsert position statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(
+	_, err := stmt.Exec(
 		pos.UserID,
 		pos.Symbol,
 		pos.Size.String(),
@@ -1106,7 +1178,7 @@ func upsertPosition(tx *sql.Tx, stmts *statements, pos *types.Position) error {
 	return err
 }
 
-func upsertFunding(tx *sql.Tx, stmts *statements, req *types.FundingRequest) error {
+func upsertFunding(stmts *txStatements, req *types.FundingRequest) error {
 	if req == nil {
 		return fmt.Errorf("funding request is nil")
 	}
@@ -1114,7 +1186,7 @@ func upsertFunding(tx *sql.Tx, stmts *statements, req *types.FundingRequest) err
 	if stmt == nil {
 		return fmt.Errorf("missing upsert funding statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(
+	_, err := stmt.Exec(
 		req.ID,
 		req.UserID,
 		req.Type,
@@ -1130,21 +1202,21 @@ func upsertFunding(tx *sql.Tx, stmts *statements, req *types.FundingRequest) err
 	return err
 }
 
-func updateFundingStatus(tx *sql.Tx, stmts *statements, id types.FundingID, status types.FundingStatus) error {
+func updateFundingStatus(stmts *txStatements, id types.FundingID, status types.FundingStatus) error {
 	stmt := stmts.updateFundingStatus
 	if stmt == nil {
 		return fmt.Errorf("missing update funding status statement")
 	}
-	_, err := tx.Stmt(stmt).Exec(status, id)
+	_, err := stmt.Exec(status, id)
 	return err
 }
 
-func selectFundingUser(tx *sql.Tx, stmts *statements, id types.FundingID) (types.UserID, error) {
+func selectFundingUser(stmts *txStatements, id types.FundingID) (types.UserID, error) {
 	stmt := stmts.selectFundingUser
 	if stmt == nil {
 		return 0, fmt.Errorf("missing select funding user statement")
 	}
-	row := tx.Stmt(stmt).QueryRow(id)
+	row := stmt.QueryRow(id)
 	var userID types.UserID
 	if err := row.Scan(&userID); err != nil {
 		return 0, err

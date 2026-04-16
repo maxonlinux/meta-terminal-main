@@ -109,8 +109,8 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 
 	newTail, err := replayLog(log, tail, opts.EventSink, tailPath, opts.ApplyBatchSize, stats)
 	if err != nil {
-		logging.Log().Error().Err(err).Msg("outbox: replay failed, continuing with last good tail")
-		newTail = tail
+		_ = log.Close()
+		return nil, fmt.Errorf("outbox replay: %w", err)
 	}
 	atomic.StoreUint64(&stats.appliedSeq, newTail)
 	atomic.StoreUint64(&stats.replayAppliedSeq, newTail)
@@ -755,6 +755,11 @@ type worker struct {
 	stats                *stats
 }
 
+type committedTx struct {
+	txID   uint64
+	endSeq uint64
+}
+
 func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink, applyBatchSize int, applyBatchFlushEvery time.Duration, stats *stats) *worker {
 	if applyBatchSize <= 0 {
 		applyBatchSize = defaultApplyBatchSize
@@ -804,10 +809,6 @@ func (w *worker) run() {
 	lastCommitted := w.lastOffset
 	pending := make(map[uint64][]record)
 	pendingOffsets := make(map[uint64]uint64)
-	type committedTx struct {
-		txID   uint64
-		endSeq uint64
-	}
 	batchEvents := make([]events.Event, 0, w.applyBatchSize)
 	batchTxs := make([]committedTx, 0, w.applyBatchSize)
 	flushTicker := time.NewTicker(w.applyBatchFlushEvery)
@@ -898,37 +899,28 @@ func (w *worker) run() {
 		if len(batchTxs) == 0 {
 			return nil
 		}
-		lastTx := batchTxs[len(batchTxs)-1]
-		apply := func() error {
-			if w.sink == nil || len(batchEvents) == 0 {
-				return nil
-			}
-			started := time.Now()
-			if err := w.sink.Apply(batchEvents); err != nil {
-				logging.Log().Error().Err(err).Int("events", len(batchEvents)).Int("tx_count", len(batchTxs)).Msg("outbox: sink apply failed")
-				return err
-			}
-			w.stats.onApplyBatch(len(batchEvents), time.Since(started))
-			return nil
-		}
-		finalize := func() error {
-			err := finalizeBatch(batchTxs)
-			batchTxs = batchTxs[:0]
-			batchEvents = batchEvents[:0]
+		if err := applyCommittedBatch("live", w.sink, batchEvents, batchTxs, w.stop, w.stats, finalizeBatch); err != nil {
 			return err
 		}
-		return applyWithRetry(lastTx.txID, lastTx.endSeq, w.stop, apply, finalize, "live", w.stats)
+		batchTxs = batchTxs[:0]
+		batchEvents = batchEvents[:0]
+		return nil
 	}
 
 	for {
 		rec, ok := w.queue.Dequeue()
 		if !ok {
-			_ = flushBatch()
+			if err := flushBatch(); err != nil {
+				logging.Log().Error().Err(err).Msg("outbox: worker flush failed on shutdown")
+			}
 			return
 		}
 		switch rec.recordType {
 		case logRecordFlush:
-			_ = flushBatch()
+			if err := flushBatch(); err != nil {
+				logging.Log().Error().Err(err).Msg("outbox: worker flush failed")
+				return
+			}
 		case logRecordBegin:
 			if _, ok := pending[rec.txID]; !ok {
 				pending[rec.txID] = nil
@@ -956,7 +948,10 @@ func (w *worker) run() {
 			}
 			batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.endSeq})
 			if len(batchEvents) >= w.applyBatchSize {
-				_ = flushBatch()
+				if err := flushBatch(); err != nil {
+					logging.Log().Error().Err(err).Msg("outbox: worker apply batch failed")
+					return
+				}
 			}
 		case logRecordAbort:
 			delete(pending, rec.txID)
@@ -1010,11 +1005,6 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, a
 		return offset, nil
 	}
 
-	type committedTx struct {
-		txID   uint64
-		endSeq uint64
-	}
-
 	pending := make(map[uint64][]logRecord)
 	lastOffset := offset
 	appliedOffset := offset
@@ -1048,31 +1038,22 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, a
 		if len(batchTxs) == 0 {
 			return nil
 		}
-		lastTx := batchTxs[len(batchTxs)-1]
-		apply := func() error {
-			if sink == nil || len(eventsBatch) == 0 {
-				return nil
+		finalize := func(txs []committedTx) error {
+			for i := range txs {
+				delete(pending, txs[i].txID)
 			}
-			started := time.Now()
-			err := sink.Apply(eventsBatch)
-			if err == nil {
-				stats.onApplyBatch(len(eventsBatch), time.Since(started))
-			}
-			return err
-		}
-		finalize := func() error {
-			for i := range batchTxs {
-				delete(pending, batchTxs[i].txID)
-			}
-			appliedOffset = lastTx.endSeq
+			appliedOffset = txs[len(txs)-1].endSeq
 			if stats != nil {
 				atomic.StoreUint64(&stats.replayAppliedSeq, appliedOffset)
 			}
-			batchTxs = batchTxs[:0]
-			eventsBatch = eventsBatch[:0]
 			return storeTail(tailPath, appliedOffset)
 		}
-		return applyWithRetry(lastTx.txID, lastTx.endSeq, nil, apply, finalize, "replay", stats)
+		if err := applyCommittedBatch("replay", sink, eventsBatch, batchTxs, nil, stats, finalize); err != nil {
+			return err
+		}
+		batchTxs = batchTxs[:0]
+		eventsBatch = eventsBatch[:0]
+		return nil
 	}
 
 	for _, seg := range segments {
@@ -1115,10 +1096,16 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, a
 				}
 				batchTxs = append(batchTxs, committedTx{txID: rec.txID, endSeq: rec.seq})
 				if len(eventsBatch) >= applyBatchSize {
-					_ = flushBatch()
+					if err := flushBatch(); err != nil {
+						_ = file.Close()
+						return appliedOffset, err
+					}
 				}
 			case logRecordAbort:
-				_ = flushBatch()
+				if err := flushBatch(); err != nil {
+					_ = file.Close()
+					return appliedOffset, err
+				}
 				delete(pending, rec.txID)
 				appliedOffset = lastOffset
 				if stats != nil {
@@ -1231,9 +1218,28 @@ func applyWithRetry(txID uint64, endSeq uint64, stop <-chan struct{}, apply func
 			}
 		}
 	}
-	if stats != nil {
-		stats.onApplyDropped()
+	logging.Log().Error().Err(lastErr).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Str("scope", scope).Msg("outbox: apply failed after retries")
+	return lastErr
+}
+
+func applyCommittedBatch(scope string, sink EventSink, eventsBatch []events.Event, txs []committedTx, stop <-chan struct{}, stats *stats, finalize func([]committedTx) error) error {
+	if len(txs) == 0 {
+		return nil
 	}
-	logging.Log().Error().Err(lastErr).Uint64("tx_id", txID).Uint64("end_seq", endSeq).Str("scope", scope).Msg("outbox: apply failed, dropping transaction")
-	return finalize()
+	lastTx := txs[len(txs)-1]
+	apply := func() error {
+		if sink == nil || len(eventsBatch) == 0 {
+			return nil
+		}
+		started := time.Now()
+		if err := sink.Apply(eventsBatch); err != nil {
+			logging.Log().Error().Err(err).Int("events", len(eventsBatch)).Int("tx_count", len(txs)).Str("scope", scope).Msg("outbox: sink apply failed")
+			return err
+		}
+		if stats != nil {
+			stats.onApplyBatch(len(eventsBatch), time.Since(started))
+		}
+		return nil
+	}
+	return applyWithRetry(lastTx.txID, lastTx.endSeq, stop, apply, func() error { return finalize(txs) }, scope, stats)
 }
