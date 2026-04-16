@@ -808,7 +808,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
-			trade, decErr := events.DecodeTrade(event.Data)
+			trade, decErr := events.DecodeTradeNoInstrument(event.Data)
 			if decErr != nil {
 				return decErr
 			}

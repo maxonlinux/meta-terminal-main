@@ -219,6 +219,14 @@ func EncodeTrade(ev TradeEvent) Event {
 }
 
 func DecodeTrade(data []byte) (TradeEvent, error) {
+	return decodeTrade(data, true)
+}
+
+func DecodeTradeNoInstrument(data []byte) (TradeEvent, error) {
+	return decodeTrade(data, false)
+}
+
+func decodeTrade(data []byte, decodeInstrumentPayload bool) (TradeEvent, error) {
 	var ev TradeEvent
 	if len(data) < 48 {
 		return ev, errors.New("invalid trade payload")
@@ -253,6 +261,13 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 	}
 	if err := ev.Quantity.UnmarshalBinary(qtyBytes); err != nil {
 		return ev, err
+	}
+	if !decodeInstrumentPayload {
+		_, err := readBytesAt(data, &off)
+		if err != nil {
+			return ev, err
+		}
+		return ev, nil
 	}
 	instBytes, err := readBytesAt(data, &off)
 	if err != nil {

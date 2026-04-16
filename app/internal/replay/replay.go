@@ -54,7 +54,7 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		}
 		return r.ApplyOrderCanceled(cancel)
 	case events.TradeExecuted:
-		trade, err := events.DecodeTrade(ev.Data)
+		trade, err := events.DecodeTradeNoInstrument(ev.Data)
 		if err != nil {
 			return err
 		}
