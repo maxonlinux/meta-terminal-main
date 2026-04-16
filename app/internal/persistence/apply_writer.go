@@ -29,13 +29,15 @@ func (w *applyWriter) process(eventsBatch []events.Event) error {
 		isTrade := event.Type == events.TradeExecuted
 		if isTrade {
 			if !prevWasTrade {
+				// Entering a trade streak: flush pending order mutations so order
+				// rows are in a stable state before fill accumulation begins.
 				if err := w.s.flushOrderMutations(w.txStmts); err != nil {
 					return err
 				}
 			}
 		} else if prevWasTrade {
-			// Leaving a trade streak: flush accumulated trade side effects before
-			// processing non-trade events to keep deterministic write ordering.
+			// Leaving a trade streak: flush trade side effects before processing
+			// other event classes to preserve deterministic write ordering.
 			if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
 				return err
 			}
