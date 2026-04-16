@@ -23,29 +23,32 @@ type applyWriter struct {
 }
 
 func (w *applyWriter) process(eventsBatch []events.Event) error {
+	prevWasTrade := false
 	for i := range eventsBatch {
 		event := eventsBatch[i]
-		if err := w.flushForEventBoundary(event.Type); err != nil {
-			return err
+		isTrade := event.Type == events.TradeExecuted
+		if isTrade {
+			if !prevWasTrade {
+				if err := w.s.flushOrderMutations(w.txStmts); err != nil {
+					return err
+				}
+			}
+		} else if prevWasTrade {
+			// Leaving a trade streak: flush accumulated trade side effects before
+			// processing non-trade events to keep deterministic write ordering.
+			if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
+				return err
+			}
+			if err := w.s.flushOrderFills(w.txStmts); err != nil {
+				return err
+			}
 		}
 		if err := w.handleEvent(event); err != nil {
 			return err
 		}
+		prevWasTrade = isTrade
 	}
 	return nil
-}
-
-func (w *applyWriter) flushForEventBoundary(t events.Type) error {
-	if t == events.TradeExecuted {
-		if err := w.s.flushOrderMutations(w.txStmts); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
-		return err
-	}
-	return w.s.flushOrderFills(w.txStmts)
 }
 
 func (w *applyWriter) finalize() error {
