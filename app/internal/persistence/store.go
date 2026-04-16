@@ -806,12 +806,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	txStmts := bindTxStatements(tx, s.stmts)
 	defer func() {
 		if err != nil {
-			_ = s.loadState()
-		}
-	}()
-	defer func() {
-		if err != nil {
 			_ = tx.Rollback()
+			_ = s.loadState()
 		} else {
 			_ = tx.Commit()
 		}
