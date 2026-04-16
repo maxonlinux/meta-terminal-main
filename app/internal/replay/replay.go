@@ -167,11 +167,15 @@ func (r *Replayer) ApplyOrderCanceled(cancel events.OrderCanceledEvent) error {
 }
 
 func (r *Replayer) ApplyTradeExecuted(trade events.TradeEvent) error {
+	maker, _ := r.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
+	taker, _ := r.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
+	return r.ApplyTradeExecutedWithOrders(trade, maker, taker)
+}
+
+func (r *Replayer) ApplyTradeExecutedWithOrders(trade events.TradeEvent, maker *types.Order, taker *types.Order) error {
 	if trade.Instrument != nil && r.registry.GetInstrument(trade.Symbol) == nil {
 		r.registry.SetInstrument(trade.Symbol, trade.Instrument)
 	}
-	maker, _ := r.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
-	taker, _ := r.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
 	if maker == nil || taker == nil {
 		return fmt.Errorf("missing orders for trade %d", trade.TradeID)
 	}

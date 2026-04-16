@@ -199,8 +199,9 @@ type orderKey struct {
 }
 
 type orderFillAccum struct {
-	qty types.Quantity
-	ts  uint64
+	filled types.Quantity
+	qty    types.Quantity
+	ts     uint64
 }
 
 type orderMutationKind uint8
@@ -694,17 +695,21 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			return nil
 		}
 		for key, accum := range pendingOrderFills {
-			if err := addFillToOrder(tx, txStmts, key.userID, key.orderID, accum.qty, accum.ts); err != nil {
+			if err := upsertOrderFill(txStmts, key.userID, key.orderID, accum.filled, accum.qty, accum.ts); err != nil {
 				return err
 			}
 			delete(pendingOrderFills, key)
 		}
 		return nil
 	}
-	accumOrderFill := func(userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) {
-		key := orderKey{userID: userID, orderID: orderID}
-		accum := pendingOrderFills[key]
-		accum.qty = math.Add(accum.qty, qty)
+	accumOrderFill := func(order *types.Order, qty types.Quantity, ts uint64) {
+		key := orderKey{userID: order.UserID, orderID: order.ID}
+		accum, ok := pendingOrderFills[key]
+		if !ok {
+			accum.qty = order.Quantity
+			accum.filled = order.Filled
+		}
+		accum.filled = math.Add(accum.filled, qty)
 		if ts > accum.ts {
 			accum.ts = ts
 		}
@@ -807,7 +812,17 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if decErr != nil {
 				return decErr
 			}
-			if err := s.replayer.ApplyTradeExecuted(trade); err != nil {
+			makerOrder, ok := s.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
+			if !ok || makerOrder == nil {
+				return fmt.Errorf("maker order %d for user %d not found", trade.MakerOrderID, trade.MakerUserID)
+			}
+			takerOrder, ok := s.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
+			if !ok || takerOrder == nil {
+				return fmt.Errorf("taker order %d for user %d not found", trade.TakerOrderID, trade.TakerUserID)
+			}
+			accumOrderFill(makerOrder, trade.Quantity, trade.Timestamp)
+			accumOrderFill(takerOrder, trade.Quantity, trade.Timestamp)
+			if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
 				return err
 			}
 			price := trade.Price.String()
@@ -819,8 +834,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if err = insertFill(txStmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
 				return err
 			}
-			accumOrderFill(trade.MakerUserID, trade.MakerOrderID, trade.Quantity, trade.Timestamp)
-			accumOrderFill(trade.TakerUserID, trade.TakerOrderID, trade.Quantity, trade.Timestamp)
 			addBalance(trade.MakerUserID)
 			addBalance(trade.TakerUserID)
 			if trade.Category == constants.CATEGORY_LINEAR {
@@ -1085,27 +1098,16 @@ func insertFill(stmts *txStatements, id types.TradeID, userID types.UserID, orde
 	return err
 }
 
-func addFillToOrder(tx *sql.Tx, stmts *txStatements, userID types.UserID, orderID types.OrderID, qty types.Quantity, ts uint64) error {
-	row := tx.QueryRow(`select filled, qty, status from orders where id = ? and user_id = ?`, orderID, userID)
-	var filledStr, qtyStr string
-	var status int8
-	if err := row.Scan(&filledStr, &qtyStr, &status); err != nil {
-		return err
-	}
-	if status == constants.ORDER_STATUS_CANCELED || status == constants.ORDER_STATUS_PARTIALLY_FILLED_CANCELED || status == constants.ORDER_STATUS_DEACTIVATED {
-		return fmt.Errorf("order %d not active", orderID)
-	}
-	filled := parseFixed(filledStr)
-	newFilled := math.Add(filled, qty)
-	status = constants.ORDER_STATUS_PARTIALLY_FILLED
-	if math.Cmp(newFilled, parseFixed(qtyStr)) >= 0 {
+func upsertOrderFill(stmts *txStatements, userID types.UserID, orderID types.OrderID, filled types.Quantity, qty types.Quantity, ts uint64) error {
+	status := constants.ORDER_STATUS_PARTIALLY_FILLED
+	if math.Cmp(filled, qty) >= 0 {
 		status = constants.ORDER_STATUS_FILLED
 	}
 	stmt := stmts.updateOrderFilled
 	if stmt == nil {
 		return fmt.Errorf("missing update order filled statement")
 	}
-	_, err := stmt.Exec(newFilled.String(), status, ts, orderID, userID)
+	_, err := stmt.Exec(filled.String(), status, ts, orderID, userID)
 	return err
 }
 
