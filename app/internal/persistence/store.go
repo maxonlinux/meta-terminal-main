@@ -24,19 +24,22 @@ import (
 )
 
 type Store struct {
-	db               *sql.DB
-	registry         *registry.Registry
-	store            *oms.Service
-	portfolio        *portfolio.Service
-	clearing         *clearing.Service
-	replayer         *replay.Replayer
-	stmts            *statements
-	balances         map[types.UserID]struct{}
-	positions        map[positionKey]struct{}
-	fills            []fillInsertRow
-	orderFills       map[orderKey]orderFillAccum
-	orderMutations   map[orderKey]orderMutation
-	tradeInstruments map[string]tradeInstrumentCacheEntry
+	db                    *sql.DB
+	registry              *registry.Registry
+	store                 *oms.Service
+	portfolio             *portfolio.Service
+	clearing              *clearing.Service
+	replayer              *replay.Replayer
+	coalesceOrderProgress bool
+	stmts                 *statements
+	balances              map[types.UserID]struct{}
+	positions             map[positionKey]struct{}
+	// fillHistoryRows is a write buffer for persisted rows in the fills table.
+	fillHistoryRows []fillInsertRow
+	// orderProgressDeltas aggregates updates for orders.filled/status writes.
+	orderProgressDeltas map[orderKey]orderProgressDelta
+	orderMutations      map[orderKey]orderMutation
+	tradeInstruments    map[string]tradeInstrumentCacheEntry
 }
 
 type txStatements struct {
@@ -205,7 +208,9 @@ type orderKey struct {
 	orderID types.OrderID
 }
 
-type orderFillAccum struct {
+// orderProgressDelta is an in-memory accumulator for updates to the orders table
+// (filled quantity + derived status) during one Apply transaction.
+type orderProgressDelta struct {
 	filled types.Quantity
 	qty    types.Quantity
 	ts     uint64
@@ -381,15 +386,16 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 	}
 	replayer := replay.New(reg, omsStore, portfolioService, clearingService)
 	persistenceStore := &Store{
-		db:        db,
-		registry:  reg,
-		store:     omsStore,
-		portfolio: portfolioService,
-		clearing:  clearingService,
-		replayer:  replayer,
-		stmts:     stmts,
-		balances:  make(map[types.UserID]struct{}, 1024),
-		positions: make(map[positionKey]struct{}, 1024),
+		db:                    db,
+		registry:              reg,
+		store:                 omsStore,
+		portfolio:             portfolioService,
+		clearing:              clearingService,
+		replayer:              replayer,
+		coalesceOrderProgress: true,
+		stmts:                 stmts,
+		balances:              make(map[types.UserID]struct{}, 1024),
+		positions:             make(map[positionKey]struct{}, 1024),
 	}
 	if err := persistenceStore.loadState(); err != nil {
 		_ = db.Close()
@@ -704,7 +710,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	if len(eventsBatch) == 0 {
 		return nil
 	}
-	s.resetApplyState(eventsBatch)
+	s.resetApplyState()
 
 	tx, err := s.db.Begin()
 	if err != nil {

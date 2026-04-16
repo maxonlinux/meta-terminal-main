@@ -10,7 +10,7 @@ import (
 
 // resetApplyState clears per-batch scratch structures while retaining capacity.
 // This keeps allocations flatter under sustained outbox throughput.
-func (s *Store) resetApplyState(_ []events.Event) {
+func (s *Store) resetApplyState() {
 	if s.balances == nil {
 		s.balances = make(map[types.UserID]struct{})
 	} else {
@@ -21,11 +21,11 @@ func (s *Store) resetApplyState(_ []events.Event) {
 	} else {
 		clear(s.positions)
 	}
-	s.fills = s.fills[:0]
-	if s.orderFills == nil {
-		s.orderFills = make(map[orderKey]orderFillAccum)
+	s.fillHistoryRows = s.fillHistoryRows[:0]
+	if s.orderProgressDeltas == nil {
+		s.orderProgressDeltas = make(map[orderKey]orderProgressDelta)
 	} else {
-		clear(s.orderFills)
+		clear(s.orderProgressDeltas)
 	}
 	if s.orderMutations == nil {
 		s.orderMutations = make(map[orderKey]orderMutation)
@@ -47,9 +47,12 @@ func (s *Store) addPosition(userID types.UserID, symbol string) {
 	s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
 }
 
-func (s *Store) accumOrderFill(order *types.Order, qty types.Quantity, ts uint64) {
+// stageOrderProgressDelta accumulates updates for the orders table.
+// This is distinct from fill history rows: it only tracks per-order aggregate
+// progress (filled quantity and status) for the current Apply transaction.
+func (s *Store) stageOrderProgressDelta(order *types.Order, qty types.Quantity, ts uint64) {
 	key := orderKey{userID: order.UserID, orderID: order.ID}
-	accum, ok := s.orderFills[key]
+	accum, ok := s.orderProgressDeltas[key]
 	if !ok {
 		accum.qty = order.Quantity
 		accum.filled = order.Filled
@@ -58,21 +61,21 @@ func (s *Store) accumOrderFill(order *types.Order, qty types.Quantity, ts uint64
 	if ts > accum.ts {
 		accum.ts = ts
 	}
-	s.orderFills[key] = accum
+	s.orderProgressDeltas[key] = accum
 }
 
-// flushOrderFills materializes accumulated filled/status changes once per
+// flushOrderProgressDeltas materializes accumulated filled/status changes once per
 // boundary instead of updating the same order row for every trade event.
-func (s *Store) flushOrderFills(stmts *txStatements) error {
-	if len(s.orderFills) == 0 {
+func (s *Store) flushOrderProgressDeltas(stmts *txStatements) error {
+	if len(s.orderProgressDeltas) == 0 {
 		return nil
 	}
-	for key, accum := range s.orderFills {
+	for key, accum := range s.orderProgressDeltas {
 		if err := upsertOrderFill(stmts, key.userID, key.orderID, accum.filled, accum.qty, accum.ts); err != nil {
 			return err
 		}
 	}
-	clear(s.orderFills)
+	clear(s.orderProgressDeltas)
 	return nil
 }
 
@@ -129,7 +132,9 @@ func (s *Store) flushOrderMutations(stmts *txStatements) error {
 }
 
 func (s *Store) appendTradeFills(trade events.TradeEvent, makerSide int8, price string, qty string) {
-	s.fills = append(s.fills,
+	// fillHistoryRows maps 1:1 to rows in the fills table (trade history).
+	// We append both maker and taker rows for every trade.
+	s.fillHistoryRows = append(s.fillHistoryRows,
 		fillInsertRow{
 			id:           trade.TradeID,
 			userID:       trade.MakerUserID,
@@ -162,38 +167,38 @@ func (s *Store) appendTradeFills(trade events.TradeEvent, makerSide int8, price 
 }
 
 func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
-	if len(s.fills) == 0 {
+	if len(s.fillHistoryRows) == 0 {
 		return nil
 	}
 	// Fast path during trade-heavy bursts: push fixed-size blocks through a
 	// precompiled multi-row statement to reduce sqlite step/bind overhead.
 	processed := 0
 	if all {
-		for processed+fillInsertBlockSize <= len(s.fills) {
-			if err := insertFill8(stmts, s.fills[processed:processed+fillInsertBlockSize]); err != nil {
+		for processed+fillInsertBlockSize <= len(s.fillHistoryRows) {
+			if err := insertFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
 				return err
 			}
 			processed += fillInsertBlockSize
 		}
-		for processed < len(s.fills) {
-			if err := insertFill(stmts, s.fills[processed]); err != nil {
+		for processed < len(s.fillHistoryRows) {
+			if err := insertFill(stmts, s.fillHistoryRows[processed]); err != nil {
 				return err
 			}
 			processed++
 		}
-		s.fills = s.fills[:0]
+		s.fillHistoryRows = s.fillHistoryRows[:0]
 		return nil
 	}
-	for processed+fillInsertBlockSize <= len(s.fills) {
-		if err := insertFill8(stmts, s.fills[processed:processed+fillInsertBlockSize]); err != nil {
+	for processed+fillInsertBlockSize <= len(s.fillHistoryRows) {
+		if err := insertFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
 			return err
 		}
 		processed += fillInsertBlockSize
 	}
 	if processed > 0 {
-		remaining := len(s.fills) - processed
-		copy(s.fills, s.fills[processed:])
-		s.fills = s.fills[:remaining]
+		remaining := len(s.fillHistoryRows) - processed
+		copy(s.fillHistoryRows, s.fillHistoryRows[processed:])
+		s.fillHistoryRows = s.fillHistoryRows[:remaining]
 	}
 	return nil
 }

@@ -41,7 +41,7 @@ func (w *applyWriter) process(eventsBatch []events.Event) error {
 			if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
 				return err
 			}
-			if err := w.s.flushOrderFills(w.txStmts); err != nil {
+			if err := w.s.flushOrderProgressDeltas(w.txStmts); err != nil {
 				return err
 			}
 		}
@@ -54,7 +54,7 @@ func (w *applyWriter) process(eventsBatch []events.Event) error {
 }
 
 func (w *applyWriter) finalize() error {
-	if err := w.s.flushOrderFills(w.txStmts); err != nil {
+	if err := w.s.flushOrderProgressDeltas(w.txStmts); err != nil {
 		return err
 	}
 	if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
@@ -129,10 +129,19 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 			return err
 		}
 		trade.Instrument = inst
-		s.accumOrderFill(makerOrder, trade.Quantity, trade.Timestamp)
-		s.accumOrderFill(takerOrder, trade.Quantity, trade.Timestamp)
 		if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
 			return err
+		}
+		if s.coalesceOrderProgress {
+			s.stageOrderProgressDelta(makerOrder, trade.Quantity, trade.Timestamp)
+			s.stageOrderProgressDelta(takerOrder, trade.Quantity, trade.Timestamp)
+		} else {
+			if err := upsertOrderFill(w.txStmts, makerOrder.UserID, makerOrder.ID, makerOrder.Filled, makerOrder.Quantity, trade.Timestamp); err != nil {
+				return err
+			}
+			if err := upsertOrderFill(w.txStmts, takerOrder.UserID, takerOrder.ID, takerOrder.Filled, takerOrder.Quantity, trade.Timestamp); err != nil {
+				return err
+			}
 		}
 		price := trade.Price.String()
 		qty := trade.Quantity.String()
