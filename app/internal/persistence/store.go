@@ -47,7 +47,6 @@ type txStatements struct {
 	markOrderTriggered  *sql.Stmt
 	insertFill          *sql.Stmt
 	insertFill8         *sql.Stmt
-	insertFill16        *sql.Stmt
 	updateOrderFilled   *sql.Stmt
 	upsertBalance       *sql.Stmt
 	upsertPosition      *sql.Stmt
@@ -75,7 +74,6 @@ func bindTxStatements(tx *sql.Tx, stmts *statements) *txStatements {
 		markOrderTriggered:  bind(stmts.markOrderTriggered),
 		insertFill:          bind(stmts.insertFill),
 		insertFill8:         bind(stmts.insertFill8),
-		insertFill16:        bind(stmts.insertFill16),
 		updateOrderFilled:   bind(stmts.updateOrderFilled),
 		upsertBalance:       bind(stmts.upsertBalance),
 		upsertPosition:      bind(stmts.upsertPosition),
@@ -248,10 +246,7 @@ type tradeInstrumentCacheEntry struct {
 	inst    *types.Instrument
 }
 
-const (
-	fillInsertBlockSize8  = 8
-	fillInsertBlockSize16 = 16
-)
+const fillInsertBlockSize = 8
 
 type OrderRecord struct {
 	ID               types.OrderID
