@@ -30,10 +30,6 @@ func New(reg *registry.Registry, store *oms.Service, portfolio *portfolio.Servic
 }
 
 func (r *Replayer) ApplyEvent(ev events.Event) error {
-	return r.applyEvent(ev)
-}
-
-func (r *Replayer) applyEvent(ev events.Event) error {
 	switch ev.Type {
 	case events.OrderPlaced:
 		placed, err := events.DecodeOrderPlaced(ev.Data)
@@ -54,7 +50,7 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 		}
 		return r.ApplyOrderCanceled(cancel)
 	case events.TradeExecuted:
-		trade, err := events.DecodeTradeNoInstrument(ev.Data)
+		trade, err := events.DecodeTrade(ev.Data)
 		if err != nil {
 			return err
 		}
@@ -94,7 +90,7 @@ func (r *Replayer) applyEvent(ev events.Event) error {
 }
 
 func (r *Replayer) ApplyOrderPlaced(placed events.OrderPlacedEvent) error {
-	if placed.Instrument != nil && r.registry.GetInstrument(placed.Order.Symbol) == nil {
+	if placed.Instrument != nil {
 		r.registry.SetInstrument(placed.Order.Symbol, placed.Instrument)
 	}
 	order := placed.Order
@@ -173,7 +169,7 @@ func (r *Replayer) ApplyTradeExecuted(trade events.TradeEvent) error {
 }
 
 func (r *Replayer) ApplyTradeExecutedWithOrders(trade events.TradeEvent, maker *types.Order, taker *types.Order) error {
-	if trade.Instrument != nil && r.registry.GetInstrument(trade.Symbol) == nil {
+	if trade.Instrument != nil {
 		r.registry.SetInstrument(trade.Symbol, trade.Instrument)
 	}
 	if maker == nil || taker == nil {

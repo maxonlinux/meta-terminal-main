@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -690,6 +691,25 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 
 	pendingOrderFills := make(map[orderKey]orderFillAccum)
 	pendingOrderMutations := make(map[orderKey]orderMutation)
+	type tradeInstrumentCacheEntry struct {
+		payload []byte
+		inst    *types.Instrument
+	}
+	tradeInstruments := make(map[string]tradeInstrumentCacheEntry)
+	resolveTradeInstrument := func(symbol string, payload []byte) (*types.Instrument, error) {
+		if cached, ok := tradeInstruments[symbol]; ok && bytes.Equal(cached.payload, payload) {
+			return cached.inst, nil
+		}
+		inst, decErr := events.DecodeInstrument(payload)
+		if decErr != nil {
+			return nil, decErr
+		}
+		if inst == nil {
+			return nil, fmt.Errorf("missing trade instrument for %s", symbol)
+		}
+		tradeInstruments[symbol] = tradeInstrumentCacheEntry{payload: append([]byte(nil), payload...), inst: inst}
+		return inst, nil
+	}
 	flushOrderFills := func() error {
 		if len(pendingOrderFills) == 0 {
 			return nil
@@ -808,7 +828,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
-			trade, decErr := events.DecodeTradeNoInstrument(event.Data)
+			trade, instrumentPayload, decErr := events.DecodeTradeNoInstrumentNoSymbolWithPayload(event.Data)
 			if decErr != nil {
 				return decErr
 			}
@@ -820,6 +840,15 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			if !ok || takerOrder == nil {
 				return fmt.Errorf("taker order %d for user %d not found", trade.TakerOrderID, trade.TakerUserID)
 			}
+			if makerOrder.Symbol != takerOrder.Symbol {
+				return fmt.Errorf("trade %d symbol mismatch between maker and taker orders", trade.TradeID)
+			}
+			trade.Symbol = makerOrder.Symbol
+			inst, instErr := resolveTradeInstrument(trade.Symbol, instrumentPayload)
+			if instErr != nil {
+				return instErr
+			}
+			trade.Instrument = inst
 			accumOrderFill(makerOrder, trade.Quantity, trade.Timestamp)
 			accumOrderFill(takerOrder, trade.Quantity, trade.Timestamp)
 			if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
