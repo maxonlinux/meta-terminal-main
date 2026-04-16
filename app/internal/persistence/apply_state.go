@@ -169,11 +169,18 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 	// precompiled multi-row statement to reduce sqlite step/bind overhead.
 	if all {
 		for len(s.fills) > 0 {
-			if len(s.fills) >= fillInsertBlockSize {
-				if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
+			if len(s.fills) >= fillInsertBlockSize16 {
+				if err := insertFill16(stmts, s.fills[:fillInsertBlockSize16]); err != nil {
 					return err
 				}
-				s.fills = s.fills[fillInsertBlockSize:]
+				s.fills = s.fills[fillInsertBlockSize16:]
+				continue
+			}
+			if len(s.fills) >= fillInsertBlockSize8 {
+				if err := insertFill8(stmts, s.fills[:fillInsertBlockSize8]); err != nil {
+					return err
+				}
+				s.fills = s.fills[fillInsertBlockSize8:]
 				continue
 			}
 			if err := insertFill(stmts, s.fills[0]); err != nil {
@@ -184,11 +191,17 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 		s.fills = s.fills[:0]
 		return nil
 	}
-	for len(s.fills) >= fillInsertBlockSize {
-		if err := insertFill8(stmts, s.fills[:fillInsertBlockSize]); err != nil {
+	for len(s.fills) >= fillInsertBlockSize16 {
+		if err := insertFill16(stmts, s.fills[:fillInsertBlockSize16]); err != nil {
 			return err
 		}
-		s.fills = s.fills[fillInsertBlockSize:]
+		s.fills = s.fills[fillInsertBlockSize16:]
+	}
+	for len(s.fills) >= fillInsertBlockSize8 {
+		if err := insertFill8(stmts, s.fills[:fillInsertBlockSize8]); err != nil {
+			return err
+		}
+		s.fills = s.fills[fillInsertBlockSize8:]
 	}
 	return nil
 }
@@ -205,16 +218,32 @@ func insertFill(stmts *txStatements, row fillInsertRow) error {
 }
 
 func insertFill8(stmts *txStatements, rows []fillInsertRow) error {
-	if len(rows) != fillInsertBlockSize {
-		return fmt.Errorf("expected %d fill rows, got %d", fillInsertBlockSize, len(rows))
+	if len(rows) != fillInsertBlockSize8 {
+		return fmt.Errorf("expected %d fill rows, got %d", fillInsertBlockSize8, len(rows))
 	}
 	stmt := stmts.insertFill8
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill8 statement")
 	}
 	// Build args in a fixed array so we avoid allocating a new slice each call.
-	var args [fillInsertBlockSize * 12]any
-	for i := 0; i < fillInsertBlockSize; i++ {
+	var args [fillInsertBlockSize8 * 12]any
+	for i := 0; i < fillInsertBlockSize8; i++ {
+		setFillArgs(args[:], i*12, rows[i])
+	}
+	_, err := stmt.Exec(args[:]...)
+	return err
+}
+
+func insertFill16(stmts *txStatements, rows []fillInsertRow) error {
+	if len(rows) != fillInsertBlockSize16 {
+		return fmt.Errorf("expected %d fill rows, got %d", fillInsertBlockSize16, len(rows))
+	}
+	stmt := stmts.insertFill16
+	if stmt == nil {
+		return fmt.Errorf("missing insert fill16 statement")
+	}
+	var args [fillInsertBlockSize16 * 12]any
+	for i := 0; i < fillInsertBlockSize16; i++ {
 		setFillArgs(args[:], i*12, rows[i])
 	}
 	_, err := stmt.Exec(args[:]...)
