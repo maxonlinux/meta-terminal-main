@@ -55,7 +55,13 @@ func (w *applyWriter) finalize() error {
 	if err := w.s.flushFillInserts(w.txStmts, true); err != nil {
 		return err
 	}
-	return w.s.flushOrderMutations(w.txStmts)
+	if err := w.s.flushOrderMutations(w.txStmts); err != nil {
+		return err
+	}
+	if err := w.s.flushBalanceSnapshots(w.txStmts); err != nil {
+		return err
+	}
+	return w.s.flushPositionSnapshots(w.txStmts)
 }
 
 func (w *applyWriter) handleEvent(event events.Event) error {
@@ -201,9 +207,6 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 	case events.RPNLRecorded:
 		evt, err := events.DecodeRPNL(event.Data)
 		if err != nil {
-			return err
-		}
-		if err := s.replayer.ApplyEvent(event); err != nil {
 			return err
 		}
 		if err := insertRPNL(w.txStmts, evt); err != nil {

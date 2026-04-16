@@ -727,31 +727,6 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		return err
 	}
 
-	for userID := range s.balances {
-		balances := s.portfolio.GetBalances(userID)
-		for i := range balances {
-			if bal := balances[i]; bal != nil {
-				err = upsertBalance(txStmts, bal)
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-	clear(s.balances)
-
-	for key := range s.positions {
-		pos := s.portfolio.GetPosition(key.userID, key.symbol)
-		if pos == nil {
-			continue
-		}
-		err = upsertPosition(txStmts, pos)
-		if err != nil {
-			return err
-		}
-	}
-	clear(s.positions)
-
 	return err
 }
 

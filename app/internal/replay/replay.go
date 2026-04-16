@@ -67,16 +67,13 @@ func (r *Replayer) ApplyEvent(ev events.Event) error {
 			return err
 		}
 		return r.ApplyFundingCreated(req)
-	case events.FundingApproved:
+	case events.FundingApproved, events.FundingRejected:
 		evt, err := events.DecodeFundingStatus(ev.Data)
 		if err != nil {
 			return err
 		}
-		return r.ApplyFundingApproved(evt)
-	case events.FundingRejected:
-		evt, err := events.DecodeFundingStatus(ev.Data)
-		if err != nil {
-			return err
+		if ev.Type == events.FundingApproved {
+			return r.ApplyFundingApproved(evt)
 		}
 		return r.ApplyFundingRejected(evt)
 	case events.OrderTriggered:

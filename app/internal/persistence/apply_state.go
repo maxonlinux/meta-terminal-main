@@ -235,3 +235,36 @@ func setFillArgs(args []any, offset int, row fillInsertRow) {
 	args[offset+10] = row.qty
 	args[offset+11] = row.ts
 }
+
+// flushBalanceSnapshots persists portfolio balances only for users touched by
+// the current apply batch.
+func (s *Store) flushBalanceSnapshots(stmts *txStatements) error {
+	for userID := range s.balances {
+		balances := s.portfolio.GetBalances(userID)
+		for i := range balances {
+			if bal := balances[i]; bal != nil {
+				if err := upsertBalance(stmts, bal); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	clear(s.balances)
+	return nil
+}
+
+// flushPositionSnapshots persists positions only for user/symbol keys touched
+// by the current apply batch.
+func (s *Store) flushPositionSnapshots(stmts *txStatements) error {
+	for key := range s.positions {
+		pos := s.portfolio.GetPosition(key.userID, key.symbol)
+		if pos == nil {
+			continue
+		}
+		if err := upsertPosition(stmts, pos); err != nil {
+			return err
+		}
+	}
+	clear(s.positions)
+	return nil
+}
