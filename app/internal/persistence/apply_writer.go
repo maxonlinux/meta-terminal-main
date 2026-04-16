@@ -132,17 +132,8 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 		if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
 			return err
 		}
-		if s.coalesceOrderProgress {
-			s.stageOrderProgressDelta(makerOrder, trade.Quantity, trade.Timestamp)
-			s.stageOrderProgressDelta(takerOrder, trade.Quantity, trade.Timestamp)
-		} else {
-			if err := upsertOrderFill(w.txStmts, makerOrder.UserID, makerOrder.ID, makerOrder.Filled, makerOrder.Quantity, trade.Timestamp); err != nil {
-				return err
-			}
-			if err := upsertOrderFill(w.txStmts, takerOrder.UserID, takerOrder.ID, takerOrder.Filled, takerOrder.Quantity, trade.Timestamp); err != nil {
-				return err
-			}
-		}
+		s.stageOrderProgressDelta(makerOrder, trade.Quantity, trade.Timestamp)
+		s.stageOrderProgressDelta(takerOrder, trade.Quantity, trade.Timestamp)
 		price := trade.Price.String()
 		qty := trade.Quantity.String()
 		makerSide := oppositeSide(trade.TakerSide)

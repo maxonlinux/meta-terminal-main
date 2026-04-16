@@ -24,16 +24,15 @@ import (
 )
 
 type Store struct {
-	db                    *sql.DB
-	registry              *registry.Registry
-	store                 *oms.Service
-	portfolio             *portfolio.Service
-	clearing              *clearing.Service
-	replayer              *replay.Replayer
-	coalesceOrderProgress bool
-	stmts                 *statements
-	balances              map[types.UserID]struct{}
-	positions             map[positionKey]struct{}
+	db        *sql.DB
+	registry  *registry.Registry
+	store     *oms.Service
+	portfolio *portfolio.Service
+	clearing  *clearing.Service
+	replayer  *replay.Replayer
+	stmts     *statements
+	balances  map[types.UserID]struct{}
+	positions map[positionKey]struct{}
 	// fillHistoryRows is a write buffer for persisted rows in the fills table.
 	fillHistoryRows []fillInsertRow
 	// orderProgressDeltas aggregates updates for orders.filled/status writes.
@@ -386,16 +385,15 @@ func Open(dir string, reg *registry.Registry) (*Store, error) {
 	}
 	replayer := replay.New(reg, omsStore, portfolioService, clearingService)
 	persistenceStore := &Store{
-		db:                    db,
-		registry:              reg,
-		store:                 omsStore,
-		portfolio:             portfolioService,
-		clearing:              clearingService,
-		replayer:              replayer,
-		coalesceOrderProgress: true,
-		stmts:                 stmts,
-		balances:              make(map[types.UserID]struct{}, 1024),
-		positions:             make(map[positionKey]struct{}, 1024),
+		db:        db,
+		registry:  reg,
+		store:     omsStore,
+		portfolio: portfolioService,
+		clearing:  clearingService,
+		replayer:  replayer,
+		stmts:     stmts,
+		balances:  make(map[types.UserID]struct{}, 1024),
+		positions: make(map[positionKey]struct{}, 1024),
 	}
 	if err := persistenceStore.loadState(); err != nil {
 		_ = db.Close()

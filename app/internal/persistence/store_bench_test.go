@@ -137,14 +137,10 @@ func BenchmarkHistoryApplyDefault(b *testing.B) {
 }
 
 func BenchmarkHistoryApplyTradeBurst(b *testing.B) {
-	benchmarkHistoryApplyTradeBurst(b, true)
+	benchmarkHistoryApplyTradeBurst(b)
 }
 
-func BenchmarkHistoryApplyTradeBurstNoOrderFillCoalesce(b *testing.B) {
-	benchmarkHistoryApplyTradeBurst(b, false)
-}
-
-func benchmarkHistoryApplyTradeBurst(b *testing.B, coalesceOrderProgress bool) {
+func benchmarkHistoryApplyTradeBurst(b *testing.B) {
 	reg := registry.New()
 	reg.SetInstrument("BTCUSDT", &types.Instrument{
 		Symbol:     "BTCUSDT",
@@ -163,8 +159,6 @@ func benchmarkHistoryApplyTradeBurst(b *testing.B, coalesceOrderProgress bool) {
 	b.Cleanup(func() {
 		_ = store.Close()
 	})
-	store.coalesceOrderProgress = coalesceOrderProgress
-
 	store.portfolio.LoadBalance(&types.Balance{UserID: 1, Asset: "USDT", Available: types.Quantity(fixed.NewI(1000000000, 0))})
 	store.portfolio.LoadBalance(&types.Balance{UserID: 2, Asset: "BTC", Available: types.Quantity(fixed.NewI(1000000000, 0))})
 
@@ -182,14 +176,10 @@ func benchmarkHistoryApplyTradeBurst(b *testing.B, coalesceOrderProgress bool) {
 }
 
 func BenchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B) {
-	benchmarkHistoryApplyTradeBurstMixedBoundaries(b, true)
+	benchmarkHistoryApplyTradeBurstMixedBoundaries(b)
 }
 
-func BenchmarkHistoryApplyTradeBurstMixedBoundariesNoOrderFillCoalesce(b *testing.B) {
-	benchmarkHistoryApplyTradeBurstMixedBoundaries(b, false)
-}
-
-func benchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B, coalesceOrderProgress bool) {
+func benchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B) {
 	reg := registry.New()
 	reg.SetInstrument("BTCUSDT", &types.Instrument{
 		Symbol:     "BTCUSDT",
@@ -208,8 +198,6 @@ func benchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B, coalesceOrderP
 	b.Cleanup(func() {
 		_ = store.Close()
 	})
-	store.coalesceOrderProgress = coalesceOrderProgress
-
 	store.portfolio.LoadBalance(&types.Balance{UserID: 1, Asset: "USDT", Available: types.Quantity(fixed.NewI(1000000000, 0))})
 	store.portfolio.LoadBalance(&types.Balance{UserID: 2, Asset: "BTC", Available: types.Quantity(fixed.NewI(1000000000, 0))})
 
