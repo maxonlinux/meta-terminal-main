@@ -33,6 +33,7 @@ type Store struct {
 	stmts            *statements
 	balances         map[types.UserID]struct{}
 	positions        map[positionKey]struct{}
+	fills            []fillInsertRow
 	orderFills       map[orderKey]orderFillAccum
 	orderMutations   map[orderKey]orderMutation
 	tradeInstruments map[string]tradeInstrumentCacheEntry
@@ -45,6 +46,7 @@ type txStatements struct {
 	cancelOrder         *sql.Stmt
 	markOrderTriggered  *sql.Stmt
 	insertFill          *sql.Stmt
+	insertFill8         *sql.Stmt
 	updateOrderFilled   *sql.Stmt
 	upsertBalance       *sql.Stmt
 	upsertPosition      *sql.Stmt
@@ -71,6 +73,7 @@ func bindTxStatements(tx *sql.Tx, stmts *statements) *txStatements {
 		cancelOrder:         bind(stmts.cancelOrder),
 		markOrderTriggered:  bind(stmts.markOrderTriggered),
 		insertFill:          bind(stmts.insertFill),
+		insertFill8:         bind(stmts.insertFill8),
 		updateOrderFilled:   bind(stmts.updateOrderFilled),
 		upsertBalance:       bind(stmts.upsertBalance),
 		upsertPosition:      bind(stmts.upsertPosition),
@@ -221,6 +224,21 @@ type orderMutation struct {
 	price     types.Price
 	qty       types.Quantity
 	timestamp uint64
+}
+
+type fillInsertRow struct {
+	id           types.TradeID
+	userID       types.UserID
+	orderID      types.OrderID
+	counterparty types.OrderID
+	symbol       string
+	category     int8
+	orderType    int8
+	side         int8
+	role         string
+	price        string
+	qty          string
+	ts           uint64
 }
 
 type tradeInstrumentCacheEntry struct {
@@ -691,6 +709,7 @@ func (s *Store) resetApplyState() {
 	} else {
 		clear(s.positions)
 	}
+	s.fills = s.fills[:0]
 	if s.orderFills == nil {
 		s.orderFills = make(map[orderKey]orderFillAccum)
 	} else {
@@ -793,6 +812,70 @@ func (s *Store) flushOrderMutations(stmts *txStatements) error {
 	return nil
 }
 
+func (s *Store) appendTradeFills(trade events.TradeEvent, makerSide int8, price string, qty string) {
+	s.fills = append(s.fills,
+		fillInsertRow{
+			id:           trade.TradeID,
+			userID:       trade.MakerUserID,
+			orderID:      trade.MakerOrderID,
+			counterparty: trade.TakerOrderID,
+			symbol:       trade.Symbol,
+			category:     trade.Category,
+			orderType:    trade.MakerOrderType,
+			side:         makerSide,
+			role:         "MAKER",
+			price:        price,
+			qty:          qty,
+			ts:           trade.Timestamp,
+		},
+		fillInsertRow{
+			id:           trade.TradeID,
+			userID:       trade.TakerUserID,
+			orderID:      trade.TakerOrderID,
+			counterparty: trade.MakerOrderID,
+			symbol:       trade.Symbol,
+			category:     trade.Category,
+			orderType:    trade.TakerOrderType,
+			side:         trade.TakerSide,
+			role:         "TAKER",
+			price:        price,
+			qty:          qty,
+			ts:           trade.Timestamp,
+		},
+	)
+}
+
+func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
+	const fillBlock = 8
+	if len(s.fills) == 0 {
+		return nil
+	}
+	if all {
+		for len(s.fills) > 0 {
+			if len(s.fills) >= fillBlock {
+				if err := insertFill8(stmts, s.fills[:fillBlock]); err != nil {
+					return err
+				}
+				s.fills = s.fills[fillBlock:]
+				continue
+			}
+			if err := insertFill(stmts, s.fills[0]); err != nil {
+				return err
+			}
+			s.fills = s.fills[1:]
+		}
+		s.fills = s.fills[:0]
+		return nil
+	}
+	for len(s.fills) >= fillBlock {
+		if err := insertFill8(stmts, s.fills[:fillBlock]); err != nil {
+			return err
+		}
+		s.fills = s.fills[fillBlock:]
+	}
+	return nil
+}
+
 func (s *Store) Apply(eventsBatch []events.Event) error {
 	if len(eventsBatch) == 0 {
 		return nil
@@ -821,6 +904,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			}
 		}
 		if event.Type != events.TradeExecuted {
+			if err := s.flushFillInserts(txStmts, true); err != nil {
+				return err
+			}
 			if err := s.flushOrderFills(txStmts); err != nil {
 				return err
 			}
@@ -886,10 +972,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			price := trade.Price.String()
 			qty := trade.Quantity.String()
 			makerSide := oppositeSide(trade.TakerSide)
-			if err = insertFill(txStmts, trade.TradeID, trade.MakerUserID, trade.MakerOrderID, trade.TakerOrderID, trade.Symbol, trade.Category, trade.MakerOrderType, makerSide, "MAKER", price, qty, trade.Timestamp); err != nil {
-				return err
-			}
-			if err = insertFill(txStmts, trade.TradeID, trade.TakerUserID, trade.TakerOrderID, trade.MakerOrderID, trade.Symbol, trade.Category, trade.TakerOrderType, trade.TakerSide, "TAKER", price, qty, trade.Timestamp); err != nil {
+			s.appendTradeFills(trade, makerSide, price, qty)
+			if err = s.flushFillInserts(txStmts, false); err != nil {
 				return err
 			}
 			s.addBalance(trade.MakerUserID)
@@ -972,6 +1056,9 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 	}
 
 	if err := s.flushOrderFills(txStmts); err != nil {
+		return err
+	}
+	if err := s.flushFillInserts(txStmts, true); err != nil {
 		return err
 	}
 	if err := s.flushOrderMutations(txStmts); err != nil {
@@ -1146,12 +1233,33 @@ func cancelOrder(stmts *txStatements, userID types.UserID, orderID types.OrderID
 	return err
 }
 
-func insertFill(stmts *txStatements, id types.TradeID, userID types.UserID, orderID types.OrderID, counterparty types.OrderID, symbol string, category int8, orderType int8, side int8, role string, price string, qty string, ts uint64) error {
+func insertFill(stmts *txStatements, row fillInsertRow) error {
 	stmt := stmts.insertFill
 	if stmt == nil {
 		return fmt.Errorf("missing insert fill statement")
 	}
-	_, err := stmt.Exec(id, userID, orderID, counterparty, symbol, category, orderType, side, role, price, qty, ts)
+	_, err := stmt.Exec(row.id, row.userID, row.orderID, row.counterparty, row.symbol, row.category, row.orderType, row.side, row.role, row.price, row.qty, row.ts)
+	return err
+}
+
+func insertFill8(stmts *txStatements, rows []fillInsertRow) error {
+	if len(rows) != 8 {
+		return fmt.Errorf("expected 8 fill rows, got %d", len(rows))
+	}
+	stmt := stmts.insertFill8
+	if stmt == nil {
+		return fmt.Errorf("missing insert fill8 statement")
+	}
+	_, err := stmt.Exec(
+		rows[0].id, rows[0].userID, rows[0].orderID, rows[0].counterparty, rows[0].symbol, rows[0].category, rows[0].orderType, rows[0].side, rows[0].role, rows[0].price, rows[0].qty, rows[0].ts,
+		rows[1].id, rows[1].userID, rows[1].orderID, rows[1].counterparty, rows[1].symbol, rows[1].category, rows[1].orderType, rows[1].side, rows[1].role, rows[1].price, rows[1].qty, rows[1].ts,
+		rows[2].id, rows[2].userID, rows[2].orderID, rows[2].counterparty, rows[2].symbol, rows[2].category, rows[2].orderType, rows[2].side, rows[2].role, rows[2].price, rows[2].qty, rows[2].ts,
+		rows[3].id, rows[3].userID, rows[3].orderID, rows[3].counterparty, rows[3].symbol, rows[3].category, rows[3].orderType, rows[3].side, rows[3].role, rows[3].price, rows[3].qty, rows[3].ts,
+		rows[4].id, rows[4].userID, rows[4].orderID, rows[4].counterparty, rows[4].symbol, rows[4].category, rows[4].orderType, rows[4].side, rows[4].role, rows[4].price, rows[4].qty, rows[4].ts,
+		rows[5].id, rows[5].userID, rows[5].orderID, rows[5].counterparty, rows[5].symbol, rows[5].category, rows[5].orderType, rows[5].side, rows[5].role, rows[5].price, rows[5].qty, rows[5].ts,
+		rows[6].id, rows[6].userID, rows[6].orderID, rows[6].counterparty, rows[6].symbol, rows[6].category, rows[6].orderType, rows[6].side, rows[6].role, rows[6].price, rows[6].qty, rows[6].ts,
+		rows[7].id, rows[7].userID, rows[7].orderID, rows[7].counterparty, rows[7].symbol, rows[7].category, rows[7].orderType, rows[7].side, rows[7].role, rows[7].price, rows[7].qty, rows[7].ts,
+	)
 	return err
 }
 

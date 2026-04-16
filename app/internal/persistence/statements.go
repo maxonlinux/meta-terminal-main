@@ -9,6 +9,7 @@ type statements struct {
 	cancelOrder         *sql.Stmt
 	markOrderTriggered  *sql.Stmt
 	insertFill          *sql.Stmt
+	insertFill8         *sql.Stmt
 	updateOrderFilled   *sql.Stmt
 	upsertBalance       *sql.Stmt
 	upsertPosition      *sql.Stmt
@@ -81,6 +82,20 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	if err := prepare(&stmts.insertFill, `
     insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `); err != nil {
+		return nil, err
+	}
+	if err := prepare(&stmts.insertFill8, `
+    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts)
+    values
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `); err != nil {
 		return nil, err
 	}
@@ -161,6 +176,7 @@ func closeStatements(stmts *statements) {
 	closeStmt(stmts.cancelOrder)
 	closeStmt(stmts.markOrderTriggered)
 	closeStmt(stmts.insertFill)
+	closeStmt(stmts.insertFill8)
 	closeStmt(stmts.updateOrderFilled)
 	closeStmt(stmts.upsertBalance)
 	closeStmt(stmts.upsertPosition)
