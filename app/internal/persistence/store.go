@@ -24,15 +24,18 @@ import (
 )
 
 type Store struct {
-	db        *sql.DB
-	registry  *registry.Registry
-	store     *oms.Service
-	portfolio *portfolio.Service
-	clearing  *clearing.Service
-	replayer  *replay.Replayer
-	stmts     *statements
-	balances  map[types.UserID]struct{}
-	positions map[positionKey]struct{}
+	db               *sql.DB
+	registry         *registry.Registry
+	store            *oms.Service
+	portfolio        *portfolio.Service
+	clearing         *clearing.Service
+	replayer         *replay.Replayer
+	stmts            *statements
+	balances         map[types.UserID]struct{}
+	positions        map[positionKey]struct{}
+	orderFills       map[orderKey]orderFillAccum
+	orderMutations   map[orderKey]orderMutation
+	tradeInstruments map[string]tradeInstrumentCacheEntry
 }
 
 type txStatements struct {
@@ -218,6 +221,11 @@ type orderMutation struct {
 	price     types.Price
 	qty       types.Quantity
 	timestamp uint64
+}
+
+type tradeInstrumentCacheEntry struct {
+	payload []byte
+	inst    *types.Instrument
 }
 
 type OrderRecord struct {
@@ -657,12 +665,50 @@ func (s *Store) CountPendingFundings() (int, error) {
 	return count, nil
 }
 
+func (s *Store) resolveTradeInstrument(symbol string, payload []byte) (*types.Instrument, error) {
+	if cached, ok := s.tradeInstruments[symbol]; ok && bytes.Equal(cached.payload, payload) {
+		return cached.inst, nil
+	}
+	inst, err := events.DecodeInstrument(payload)
+	if err != nil {
+		return nil, err
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("missing trade instrument for %s", symbol)
+	}
+	s.tradeInstruments[symbol] = tradeInstrumentCacheEntry{payload: payload, inst: inst}
+	return inst, nil
+}
+
 func (s *Store) Apply(eventsBatch []events.Event) error {
 	if len(eventsBatch) == 0 {
 		return nil
 	}
-	s.balances = make(map[types.UserID]struct{})
-	s.positions = make(map[positionKey]struct{})
+	if s.balances == nil {
+		s.balances = make(map[types.UserID]struct{})
+	} else {
+		clear(s.balances)
+	}
+	if s.positions == nil {
+		s.positions = make(map[positionKey]struct{})
+	} else {
+		clear(s.positions)
+	}
+	if s.orderFills == nil {
+		s.orderFills = make(map[orderKey]orderFillAccum)
+	} else {
+		clear(s.orderFills)
+	}
+	if s.orderMutations == nil {
+		s.orderMutations = make(map[orderKey]orderMutation)
+	} else {
+		clear(s.orderMutations)
+	}
+	if s.tradeInstruments == nil {
+		s.tradeInstruments = make(map[string]tradeInstrumentCacheEntry)
+	} else {
+		clear(s.tradeInstruments)
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -689,27 +735,8 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 		s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
 	}
 
-	pendingOrderFills := make(map[orderKey]orderFillAccum)
-	pendingOrderMutations := make(map[orderKey]orderMutation)
-	type tradeInstrumentCacheEntry struct {
-		payload []byte
-		inst    *types.Instrument
-	}
-	tradeInstruments := make(map[string]tradeInstrumentCacheEntry)
-	resolveTradeInstrument := func(symbol string, payload []byte) (*types.Instrument, error) {
-		if cached, ok := tradeInstruments[symbol]; ok && bytes.Equal(cached.payload, payload) {
-			return cached.inst, nil
-		}
-		inst, decErr := events.DecodeInstrument(payload)
-		if decErr != nil {
-			return nil, decErr
-		}
-		if inst == nil {
-			return nil, fmt.Errorf("missing trade instrument for %s", symbol)
-		}
-		tradeInstruments[symbol] = tradeInstrumentCacheEntry{payload: append([]byte(nil), payload...), inst: inst}
-		return inst, nil
-	}
+	pendingOrderFills := s.orderFills
+	pendingOrderMutations := s.orderMutations
 	flushOrderFills := func() error {
 		if len(pendingOrderFills) == 0 {
 			return nil
@@ -828,7 +855,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 			scheduleOrderMutation(orderKey{userID: cancel.UserID, orderID: cancel.OrderID}, orderMutation{kind: orderMutationCancel, timestamp: cancel.Timestamp})
 			addBalance(cancel.UserID)
 		case events.TradeExecuted:
-			trade, instrumentPayload, decErr := events.DecodeTradeNoInstrumentNoSymbolWithPayload(event.Data)
+			trade, instrumentPayload, decErr := events.DecodeTradeNoSymbolWithPayload(event.Data)
 			if decErr != nil {
 				return decErr
 			}
@@ -844,7 +871,7 @@ func (s *Store) Apply(eventsBatch []events.Event) error {
 				return fmt.Errorf("trade %d symbol mismatch between maker and taker orders", trade.TradeID)
 			}
 			trade.Symbol = makerOrder.Symbol
-			inst, instErr := resolveTradeInstrument(trade.Symbol, instrumentPayload)
+			inst, instErr := s.resolveTradeInstrument(trade.Symbol, instrumentPayload)
 			if instErr != nil {
 				return instErr
 			}

@@ -234,7 +234,7 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 	return ev, nil
 }
 
-func DecodeTradeNoInstrumentNoSymbolWithPayload(data []byte) (TradeEvent, []byte, error) {
+func DecodeTradeNoSymbolWithPayload(data []byte) (TradeEvent, []byte, error) {
 	return decodeTradePayload(data, false)
 }
 
