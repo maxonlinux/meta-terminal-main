@@ -137,10 +137,6 @@ func BenchmarkHistoryApplyDefault(b *testing.B) {
 }
 
 func BenchmarkHistoryApplyTradeBurst(b *testing.B) {
-	benchmarkHistoryApplyTradeBurst(b)
-}
-
-func benchmarkHistoryApplyTradeBurst(b *testing.B) {
 	reg := registry.New()
 	reg.SetInstrument("BTCUSDT", &types.Instrument{
 		Symbol:     "BTCUSDT",
@@ -176,10 +172,6 @@ func benchmarkHistoryApplyTradeBurst(b *testing.B) {
 }
 
 func BenchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B) {
-	benchmarkHistoryApplyTradeBurstMixedBoundaries(b)
-}
-
-func benchmarkHistoryApplyTradeBurstMixedBoundaries(b *testing.B) {
 	reg := registry.New()
 	reg.SetInstrument("BTCUSDT", &types.Instrument{
 		Symbol:     "BTCUSDT",

@@ -55,7 +55,9 @@ func (s *Store) stageOrderProgressDelta(order *types.Order, qty types.Quantity, 
 	accum, ok := s.orderProgressDeltas[key]
 	if !ok {
 		accum.qty = order.Quantity
-		accum.filled = order.Filled
+		// ApplyTradeExecutedWithOrders mutates order.Filled before this stage call.
+		// Seed from the pre-trade value to avoid counting the current fill twice.
+		accum.filled = math.Sub(order.Filled, qty)
 	}
 	accum.filled = math.Add(accum.filled, qty)
 	if ts > accum.ts {
@@ -131,39 +133,23 @@ func (s *Store) flushOrderMutations(stmts *txStatements) error {
 	return nil
 }
 
-func (s *Store) appendTradeFills(trade events.TradeEvent, makerSide int8, price string, qty string) {
-	// fillHistoryRows maps 1:1 to rows in the fills table (trade history).
-	// We append both maker and taker rows for every trade.
-	s.fillHistoryRows = append(s.fillHistoryRows,
-		fillInsertRow{
-			id:           trade.TradeID,
-			userID:       trade.MakerUserID,
-			orderID:      trade.MakerOrderID,
-			counterparty: trade.TakerOrderID,
-			symbol:       trade.Symbol,
-			category:     trade.Category,
-			orderType:    trade.MakerOrderType,
-			side:         makerSide,
-			role:         "MAKER",
-			price:        price,
-			qty:          qty,
-			ts:           trade.Timestamp,
-		},
-		fillInsertRow{
-			id:           trade.TradeID,
-			userID:       trade.TakerUserID,
-			orderID:      trade.TakerOrderID,
-			counterparty: trade.MakerOrderID,
-			symbol:       trade.Symbol,
-			category:     trade.Category,
-			orderType:    trade.TakerOrderType,
-			side:         trade.TakerSide,
-			role:         "TAKER",
-			price:        price,
-			qty:          qty,
-			ts:           trade.Timestamp,
-		},
-	)
+func (s *Store) appendTradeFills(trade events.TradeEvent, price string, qty string) {
+	// One row per trade in trade_fills table (maker+taker packed together).
+	s.fillHistoryRows = append(s.fillHistoryRows, fillInsertRow{
+		id:             trade.TradeID,
+		makerUserID:    trade.MakerUserID,
+		takerUserID:    trade.TakerUserID,
+		makerOrderID:   trade.MakerOrderID,
+		takerOrderID:   trade.TakerOrderID,
+		symbol:         trade.Symbol,
+		category:       trade.Category,
+		makerOrderType: trade.MakerOrderType,
+		takerOrderType: trade.TakerOrderType,
+		takerSide:      trade.TakerSide,
+		price:          price,
+		qty:            qty,
+		ts:             trade.Timestamp,
+	})
 }
 
 func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
@@ -175,13 +161,13 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 	processed := 0
 	if all {
 		for processed+fillInsertBlockSize <= len(s.fillHistoryRows) {
-			if err := insertFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
+			if err := insertTradeFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
 				return err
 			}
 			processed += fillInsertBlockSize
 		}
 		for processed < len(s.fillHistoryRows) {
-			if err := insertFill(stmts, s.fillHistoryRows[processed]); err != nil {
+			if err := insertTradeFill(stmts, s.fillHistoryRows[processed]); err != nil {
 				return err
 			}
 			processed++
@@ -190,7 +176,7 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 		return nil
 	}
 	for processed+fillInsertBlockSize <= len(s.fillHistoryRows) {
-		if err := insertFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
+		if err := insertTradeFill8(stmts, s.fillHistoryRows[processed:processed+fillInsertBlockSize]); err != nil {
 			return err
 		}
 		processed += fillInsertBlockSize
@@ -203,29 +189,29 @@ func (s *Store) flushFillInserts(stmts *txStatements, all bool) error {
 	return nil
 }
 
-func insertFill(stmts *txStatements, row fillInsertRow) error {
-	stmt := stmts.insertFill
+func insertTradeFill(stmts *txStatements, row fillInsertRow) error {
+	stmt := stmts.insertTradeFill
 	if stmt == nil {
-		return fmt.Errorf("missing insert fill statement")
+		return fmt.Errorf("missing insert trade fill statement")
 	}
-	var args [12]any
+	var args [13]any
 	setFillArgs(args[:], 0, row)
 	_, err := stmt.Exec(args[:]...)
 	return err
 }
 
-func insertFill8(stmts *txStatements, rows []fillInsertRow) error {
+func insertTradeFill8(stmts *txStatements, rows []fillInsertRow) error {
 	if len(rows) != fillInsertBlockSize {
 		return fmt.Errorf("expected %d fill rows, got %d", fillInsertBlockSize, len(rows))
 	}
-	stmt := stmts.insertFill8
+	stmt := stmts.insertTradeFill8
 	if stmt == nil {
-		return fmt.Errorf("missing insert fill8 statement")
+		return fmt.Errorf("missing insert trade fill8 statement")
 	}
 	// Build args in a fixed array so we avoid allocating a new slice each call.
-	var args [fillInsertBlockSize * 12]any
+	var args [fillInsertBlockSize * 13]any
 	for i := 0; i < fillInsertBlockSize; i++ {
-		setFillArgs(args[:], i*12, rows[i])
+		setFillArgs(args[:], i*13, rows[i])
 	}
 	_, err := stmt.Exec(args[:]...)
 	return err
@@ -233,17 +219,18 @@ func insertFill8(stmts *txStatements, rows []fillInsertRow) error {
 
 func setFillArgs(args []any, offset int, row fillInsertRow) {
 	args[offset+0] = row.id
-	args[offset+1] = row.userID
-	args[offset+2] = row.orderID
-	args[offset+3] = row.counterparty
-	args[offset+4] = row.symbol
-	args[offset+5] = row.category
-	args[offset+6] = row.orderType
-	args[offset+7] = row.side
-	args[offset+8] = row.role
-	args[offset+9] = row.price
-	args[offset+10] = row.qty
-	args[offset+11] = row.ts
+	args[offset+1] = row.makerUserID
+	args[offset+2] = row.takerUserID
+	args[offset+3] = row.makerOrderID
+	args[offset+4] = row.takerOrderID
+	args[offset+5] = row.symbol
+	args[offset+6] = row.category
+	args[offset+7] = row.makerOrderType
+	args[offset+8] = row.takerOrderType
+	args[offset+9] = row.takerSide
+	args[offset+10] = row.price
+	args[offset+11] = row.qty
+	args[offset+12] = row.ts
 }
 
 // flushBalanceSnapshots persists portfolio balances only for users touched by

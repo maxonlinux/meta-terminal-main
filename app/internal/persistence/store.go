@@ -33,7 +33,7 @@ type Store struct {
 	stmts     *statements
 	balances  map[types.UserID]struct{}
 	positions map[positionKey]struct{}
-	// fillHistoryRows is a write buffer for persisted rows in the fills table.
+	// fillHistoryRows is a write buffer for persisted rows in the trade_fills table.
 	fillHistoryRows []fillInsertRow
 	// orderProgressDeltas aggregates updates for orders.filled/status writes.
 	orderProgressDeltas map[orderKey]orderProgressDelta
@@ -47,8 +47,8 @@ type txStatements struct {
 	updateOrderPriceQty *sql.Stmt
 	cancelOrder         *sql.Stmt
 	markOrderTriggered  *sql.Stmt
-	insertFill          *sql.Stmt
-	insertFill8         *sql.Stmt
+	insertTradeFill     *sql.Stmt
+	insertTradeFill8    *sql.Stmt
 	updateOrderFilled   *sql.Stmt
 	upsertBalance       *sql.Stmt
 	upsertPosition      *sql.Stmt
@@ -74,8 +74,8 @@ func bindTxStatements(tx *sql.Tx, stmts *statements) *txStatements {
 		updateOrderPriceQty: bind(stmts.updateOrderPriceQty),
 		cancelOrder:         bind(stmts.cancelOrder),
 		markOrderTriggered:  bind(stmts.markOrderTriggered),
-		insertFill:          bind(stmts.insertFill),
-		insertFill8:         bind(stmts.insertFill8),
+		insertTradeFill:     bind(stmts.insertTradeFill),
+		insertTradeFill8:    bind(stmts.insertTradeFill8),
 		updateOrderFilled:   bind(stmts.updateOrderFilled),
 		upsertBalance:       bind(stmts.upsertBalance),
 		upsertPosition:      bind(stmts.upsertPosition),
@@ -153,7 +153,7 @@ func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, er
 
 	tables := []string{
 		"orders",
-		"fills",
+		"trade_fills",
 		"positions",
 		"rpnl_events",
 		"balances",
@@ -174,8 +174,10 @@ func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, er
 				constants.ORDER_STATUS_DEACTIVATED,
 				cutoff,
 			)
-		case "fills":
-			res, err = s.db.Exec(`delete from fills where user_id = ?`, botUserID)
+		case "trade_fills":
+			// trade_fills keeps both sides in one row; deleting rows where only one
+			// side is bot would also erase the counterparty user's history.
+			res, err = s.db.Exec(`delete from trade_fills where maker_user_id = ? and taker_user_id = ?`, botUserID, botUserID)
 		case "positions":
 			res, err = s.db.Exec(`delete from positions where user_id = ?`, botUserID)
 		case "rpnl_events":
@@ -231,18 +233,19 @@ type orderMutation struct {
 }
 
 type fillInsertRow struct {
-	id           types.TradeID
-	userID       types.UserID
-	orderID      types.OrderID
-	counterparty types.OrderID
-	symbol       string
-	category     int8
-	orderType    int8
-	side         int8
-	role         string
-	price        string
-	qty          string
-	ts           uint64
+	id             types.TradeID
+	makerUserID    types.UserID
+	takerUserID    types.UserID
+	makerOrderID   types.OrderID
+	takerOrderID   types.OrderID
+	symbol         string
+	category       int8
+	makerOrderType int8
+	takerOrderType int8
+	takerSide      int8
+	price          string
+	qty            string
+	ts             uint64
 }
 
 type tradeInstrumentCacheEntry struct {
@@ -487,8 +490,54 @@ func (s *Store) ListOrders(userID types.UserID, symbol string, category *int8, l
 }
 
 func (s *Store) ListFills(userID types.UserID, symbol string, category *int8, limit int, offset int) ([]FillRecord, error) {
-	query := `select id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts from fills where user_id = ?`
-	args := []any{userID}
+	query := `
+    select id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts
+    from (
+      select
+        id,
+        maker_user_id as user_id,
+        maker_order_id as order_id,
+        taker_order_id as counterparty_order_id,
+        symbol,
+        category,
+        maker_order_type as order_type,
+        case
+          when taker_side = ? then ?
+          else ?
+        end as side,
+        ? as role,
+        price,
+        qty,
+        ts
+      from trade_fills
+      where maker_user_id = ?
+      union all
+      select
+        id,
+        taker_user_id as user_id,
+        taker_order_id as order_id,
+        maker_order_id as counterparty_order_id,
+        symbol,
+        category,
+        taker_order_type as order_type,
+        taker_side as side,
+        ? as role,
+        price,
+        qty,
+        ts
+      from trade_fills
+      where taker_user_id = ?
+    ) as fills_view
+    where 1 = 1`
+	args := []any{
+		constants.ORDER_SIDE_BUY,
+		constants.ORDER_SIDE_SELL,
+		constants.ORDER_SIDE_BUY,
+		"MAKER",
+		userID,
+		"TAKER",
+		userID,
+	}
 	if symbol != "" {
 		query += " and symbol = ?"
 		args = append(args, symbol)
@@ -1143,11 +1192,4 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
-}
-
-func oppositeSide(side int8) int8 {
-	if side == constants.ORDER_SIDE_BUY {
-		return constants.ORDER_SIDE_SELL
-	}
-	return constants.ORDER_SIDE_BUY
 }

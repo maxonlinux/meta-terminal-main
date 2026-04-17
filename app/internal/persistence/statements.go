@@ -8,8 +8,8 @@ type statements struct {
 	updateOrderPriceQty *sql.Stmt
 	cancelOrder         *sql.Stmt
 	markOrderTriggered  *sql.Stmt
-	insertFill          *sql.Stmt
-	insertFill8         *sql.Stmt
+	insertTradeFill     *sql.Stmt
+	insertTradeFill8    *sql.Stmt
 	updateOrderFilled   *sql.Stmt
 	upsertBalance       *sql.Stmt
 	upsertPosition      *sql.Stmt
@@ -79,23 +79,23 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	if err := prepare(&stmts.markOrderTriggered, `update orders set status = ?, is_conditional = 0, trigger_price = ?, updated_at = ? where id = ? and user_id = ?`); err != nil {
 		return nil, err
 	}
-	if err := prepare(&stmts.insertFill, `
-    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	if err := prepare(&stmts.insertTradeFill, `
+    insert into trade_fills (id, maker_user_id, taker_user_id, maker_order_id, taker_order_id, symbol, category, maker_order_type, taker_order_type, taker_side, price, qty, ts)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `); err != nil {
 		return nil, err
 	}
-	if err := prepare(&stmts.insertFill8, `
-    insert into fills (id, user_id, order_id, counterparty_order_id, symbol, category, order_type, side, role, price, qty, ts)
+	if err := prepare(&stmts.insertTradeFill8, `
+    insert into trade_fills (id, maker_user_id, taker_user_id, maker_order_id, taker_order_id, symbol, category, maker_order_type, taker_order_type, taker_side, price, qty, ts)
     values
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `); err != nil {
 		return nil, err
 	}
@@ -175,8 +175,8 @@ func closeStatements(stmts *statements) {
 	closeStmt(stmts.updateOrderPriceQty)
 	closeStmt(stmts.cancelOrder)
 	closeStmt(stmts.markOrderTriggered)
-	closeStmt(stmts.insertFill)
-	closeStmt(stmts.insertFill8)
+	closeStmt(stmts.insertTradeFill)
+	closeStmt(stmts.insertTradeFill8)
 	closeStmt(stmts.updateOrderFilled)
 	closeStmt(stmts.upsertBalance)
 	closeStmt(stmts.upsertPosition)

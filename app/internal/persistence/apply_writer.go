@@ -136,8 +136,7 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 		s.stageOrderProgressDelta(takerOrder, trade.Quantity, trade.Timestamp)
 		price := trade.Price.String()
 		qty := trade.Quantity.String()
-		makerSide := oppositeSide(trade.TakerSide)
-		s.appendTradeFills(trade, makerSide, price, qty)
+		s.appendTradeFills(trade, price, qty)
 		if err := s.flushFillInserts(w.txStmts, false); err != nil {
 			return err
 		}

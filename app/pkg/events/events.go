@@ -295,7 +295,7 @@ func skipStringAt(data []byte, off *int) error {
 		return errors.New("invalid string payload")
 	}
 	length := int(readU32(data, off))
-	if length < 0 || *off+length > len(data) {
+	if *off+length > len(data) {
 		return errors.New("invalid string payload")
 	}
 	*off += length

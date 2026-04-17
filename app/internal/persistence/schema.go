@@ -29,23 +29,20 @@ func initSchema(db *sql.DB) error {
       updated_at integer not null
     );
 
-
-
-
-    create table if not exists fills (
-      id integer not null,
-      user_id integer not null,
-      order_id integer not null,
-      counterparty_order_id integer not null,
+    create table if not exists trade_fills (
+      id integer primary key,
+      maker_user_id integer not null,
+      taker_user_id integer not null,
+      maker_order_id integer not null,
+      taker_order_id integer not null,
       symbol text not null,
       category integer not null,
-      order_type integer not null,
-      side integer not null,
-      role text not null,
+      maker_order_type integer not null,
+      taker_order_type integer not null,
+      taker_side integer not null,
       price text not null,
       qty text not null,
-      ts integer not null,
-      primary key (id, user_id, role)
+      ts integer not null
     );
 
 
@@ -107,22 +104,12 @@ func initSchema(db *sql.DB) error {
       created_at integer not null
     );
 
-    drop index if exists orders_user_status_idx;
     create index if not exists orders_user_status_idx on orders (user_id, status);
 
-    drop index if exists fills_user_idx;
-    create index if not exists fills_user_idx on fills (user_id);
-
-    drop index if exists rpnl_user_idx;
     create index if not exists rpnl_user_idx on rpnl_events (user_id);
 
-    drop index if exists orders_user_idx;
-    drop index if exists orders_symbol_idx;
-    drop index if exists orders_symbol_status_idx;
-    drop index if exists fills_symbol_idx;
-    drop index if exists balances_user_idx;
-    drop index if exists positions_user_idx;
-    drop index if exists rpnl_symbol_idx;
+    create index if not exists trade_fills_maker_user_idx on trade_fills (maker_user_id);
+    create index if not exists trade_fills_taker_user_idx on trade_fills (taker_user_id);
   `)
 	if err != nil {
 		return err
