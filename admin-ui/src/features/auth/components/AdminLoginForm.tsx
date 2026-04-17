@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { buttonStyles } from "@/components/ui/button";
 import {
   Card,
@@ -14,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { TextField } from "@/components/ui/text-field";
 
 export function AdminLoginForm() {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -25,7 +27,7 @@ export function AdminLoginForm() {
     const formData = new FormData(event.currentTarget);
     const password = formData.get("password");
 
-    const res = await fetch("/api/admin/auth/login", {
+    const res = await fetch("api/admin/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ password }),
@@ -43,7 +45,7 @@ export function AdminLoginForm() {
       return;
     }
 
-    window.location.assign("/");
+    router.replace("/");
   };
 
   return (
