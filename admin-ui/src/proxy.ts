@@ -23,17 +23,24 @@ function checkToken(request: NextRequest) {
   return Boolean(token?.value);
 }
 
+function redirectTo(request: NextRequest, path: string) {
+  const url = request.nextUrl.clone();
+  url.pathname = path.startsWith("/") ? path : `/${path}`;
+  url.search = "";
+  return NextResponse.redirect(url);
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname === "/setup") {
     if (checkToken(request)) {
-      return NextResponse.redirect(new URL(`/`, request.url));
+      return redirectTo(request, "/");
     }
 
     const init = await checkSetup();
     if (init) {
-      return NextResponse.redirect(new URL(`/login`, request.url));
+      return redirectTo(request, "/login");
     }
 
     return NextResponse.next();
@@ -41,7 +48,7 @@ export async function proxy(request: NextRequest) {
 
   if (pathname === "/login") {
     if (checkToken(request)) {
-      return NextResponse.redirect(new URL(`/`, request.url));
+      return redirectTo(request, "/");
     }
 
     const init = await checkSetup();
@@ -49,7 +56,7 @@ export async function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    return NextResponse.redirect(new URL(`/setup`, request.url));
+    return redirectTo(request, "/setup");
   }
 
   if (checkToken(request)) {
@@ -58,10 +65,10 @@ export async function proxy(request: NextRequest) {
 
   const init = await checkSetup();
   if (init) {
-    return NextResponse.redirect(new URL(`/login`, request.url));
+    return redirectTo(request, "/login");
   }
 
-  return NextResponse.redirect(new URL(`/setup`, request.url));
+  return redirectTo(request, "/setup");
 }
 
 export const config = {
