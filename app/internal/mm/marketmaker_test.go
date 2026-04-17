@@ -159,8 +159,7 @@ func TestRebuildExistingDoesNotMarkSeededOrdersStale(t *testing.T) {
 	if inst == nil {
 		t.Fatalf("missing instrument")
 	}
-	key := marketKey{symbol: "BTCUSDT", category: constants.CATEGORY_SPOT}
-	existing, stale := mm.rebuildExisting(key, inst, constants.CATEGORY_SPOT, mark)
+	existing, stale := mm.rebuildExisting(inst, constants.CATEGORY_SPOT, mark)
 	if len(existing) != 2 {
 		t.Fatalf("expected 2 existing orders, got %d", len(existing))
 	}
