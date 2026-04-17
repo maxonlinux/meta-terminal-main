@@ -134,12 +134,14 @@ func (m *MarketMaker) OnPriceTick(symbol string, price types.Price) {
 
 func (m *MarketMaker) refresh() {
 	insts := m.reg.GetInstruments()
+	logging.Log().Debug().Int("instruments", len(insts)).Msg("mm: refresh start")
 	for _, inst := range insts {
 		if inst == nil {
 			continue
 		}
 		priceTick, ok := m.reg.GetPrice(inst.Symbol)
 		if !ok || math.Sign(priceTick.Price) <= 0 {
+			logging.Log().Debug().Str("symbol", inst.Symbol).Bool("has_price", ok).Str("price", priceTick.Price.String()).Msg("mm: refresh skip - no price")
 			continue
 		}
 
@@ -240,9 +242,11 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 	}
 
 	// Amend existing orders first to avoid self-matching on new placements.
+	logging.Log().Debug().Str("symbol", inst.Symbol).Int8("category", category).Int("existing_len", len(existing)).Int("desired_len", len(desired)).Msg("mm: amend loop")
 	for level, req := range desired {
 		order, ok := existing[level]
 		if !ok {
+			logging.Log().Debug().Str("symbol", inst.Symbol).Str("level", level).Msg("mm: skip amend - no existing order")
 			continue
 		}
 		if m.wouldSelfMatch(&req) {
@@ -263,14 +267,18 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 	}
 
 	// Place new orders after amendments are applied.
+	logging.Log().Debug().Str("symbol", inst.Symbol).Int8("category", category).Float64("skip_rand", m.val.Float64()).Float64("skip_percent", m.cfg.SkipPercent).Msg("mm: place loop")
 	for level, req := range desired {
 		if _, ok := existing[level]; ok {
+			logging.Log().Debug().Str("symbol", inst.Symbol).Str("level", level).Msg("mm: skip place - already exists")
 			continue
 		}
 		if m.val.Float64() < m.cfg.SkipPercent {
+			logging.Log().Debug().Str("symbol", inst.Symbol).Str("level", level).Float64("rand", m.val.Float64()).Float64("skip", m.cfg.SkipPercent).Msg("mm: skip place - random skip")
 			continue
 		}
 		if m.wouldSelfMatch(&req) {
+			logging.Log().Debug().Str("symbol", inst.Symbol).Str("level", level).Msg("mm: skip place - would self match")
 			continue
 		}
 		m.ensureBalanceForOrder(inst, &req)
@@ -289,9 +297,11 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 func (m *MarketMaker) rebuildExisting(key marketKey, inst *types.Instrument, category int8, mark types.Price) (map[string]*types.Order, []*types.Order) {
 	store := m.eng.Store()
 	if store == nil {
+		logging.Log().Debug().Str("symbol", inst.Symbol).Int8("category", category).Msg("mm: rebuildExisting store nil")
 		return make(map[string]*types.Order), nil
 	}
 	orders := store.GetUserOrders(m.cfg.BotUserID)
+	logging.Log().Debug().Str("symbol", inst.Symbol).Int8("category", category).Int("orders_len", len(orders)).Msg("mm: rebuildExisting loaded orders")
 	if len(orders) == 0 {
 		return make(map[string]*types.Order), nil
 	}
