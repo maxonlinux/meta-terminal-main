@@ -162,11 +162,23 @@ func (e *Engine) TradeFeed() *trades.TradeFeed {
 }
 
 func (e *Engine) ReadBook(category int8, symbol string) *orderbook.OrderBook {
+	lock := e.bookLock(symbol, category)
+	lock.Lock()
+	defer lock.Unlock()
+
 	bookSet, ok := e.books[category]
 	if !ok {
 		return nil
 	}
-	return bookSet[symbol]
+	if book, ok := bookSet[symbol]; ok {
+		return book
+	}
+	if e.registry.GetInstrument(symbol) == nil {
+		return nil
+	}
+	book := orderbook.New()
+	bookSet[symbol] = book
+	return book
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
