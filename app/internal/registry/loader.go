@@ -63,6 +63,8 @@ func (l *Loader) sync(ctx context.Context) {
 			continue
 		}
 
+		l.reg.SetPrice(asset.Symbol, PriceTick{Price: price, Timestamp: uint64(time.Now().UnixNano())})
+
 		if l.reg.GetInstrument(asset.Symbol) != nil {
 			continue
 		}
