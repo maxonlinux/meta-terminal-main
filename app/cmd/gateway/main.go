@@ -311,6 +311,8 @@ func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.En
 		return nil, err
 	}
 
+	logging.Log().Info().Str("subject", cfg.NatsPriceSubject).Str("url", cfg.NatsURL).Msg("nats: subscribing to prices")
+
 	_, err = nc.Subscribe(cfg.NatsPriceSubject, func(msg *nats.Msg) {
 		var payload priceMessage
 		decoder := json.NewDecoder(bytes.NewReader(msg.Data))
@@ -339,6 +341,7 @@ func startPriceSubscriber(ctx context.Context, cfg config.Config, eng *engine.En
 			return
 		}
 		eng.OnPriceTick(payload.Symbol, price)
+		logging.Log().Debug().Str("symbol", payload.Symbol).Str("price", price.String()).Msg("nats: price tick")
 		if mmaker != nil {
 			mmaker.OnPriceTick(payload.Symbol, price)
 		}
