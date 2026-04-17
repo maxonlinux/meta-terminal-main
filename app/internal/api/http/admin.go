@@ -10,6 +10,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
 	"github.com/maxonlinux/meta-terminal-go/internal/kyc"
+	"github.com/maxonlinux/meta-terminal-go/internal/otp"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/internal/plan"
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
@@ -22,18 +23,20 @@ type AdminHandler struct {
 	planRepo    *plan.Repository
 	wallets     *wallets.Service
 	users       *users.Service
+	otp         *otp.Service
 	store       *persistence.Store
 	kycRepo     *kyc.Repository
 	engine      *engine.Engine
 	impersonate *impersonation.Service
 }
 
-func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, userService *users.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
+func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, userService *users.Service, otpService *otp.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
 	return &AdminHandler{
 		plan:        planService,
 		planRepo:    planRepo,
 		wallets:     walletService,
 		users:       userService,
+		otp:         otpService,
 		store:       store,
 		kycRepo:     kycRepo,
 		engine:      eng,
@@ -64,6 +67,11 @@ type AdminUser struct {
 
 type AdminUserActiveRequest struct {
 	Active bool `json:"active"`
+}
+
+type AdminUserOTP struct {
+	Code      *string `json:"code"`
+	ExpiresAt *int64  `json:"expiresAt"`
 }
 
 type AdminUserAddress struct {
@@ -252,6 +260,26 @@ func (h *AdminHandler) SetUserActive(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update user"})
 	}
 	return c.NoContent(http.StatusOK)
+}
+
+func (h *AdminHandler) UserActiveOTP(c *echo.Context) error {
+	userID, err := parseUserIDParam(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	user, err := h.users.GetUserByID(userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user"})
+	}
+	if user == nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+	}
+	code, expiresAt, ok := h.otp.ActiveCode(user.Username)
+	if !ok {
+		return c.JSON(http.StatusOK, AdminUserOTP{})
+	}
+	expiresAtMilli := expiresAt.UnixMilli()
+	return c.JSON(http.StatusOK, AdminUserOTP{Code: &code, ExpiresAt: &expiresAtMilli})
 }
 
 func (h *AdminHandler) UserAddress(c *echo.Context) error {

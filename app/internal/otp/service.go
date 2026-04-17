@@ -105,6 +105,20 @@ func (s *Service) Check(username string) bool {
 	return true
 }
 
+func (s *Service) ActiveCode(username string) (string, time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.codes[username]
+	if !ok {
+		return "", time.Time{}, false
+	}
+	if time.Now().After(entry.expires) {
+		delete(s.codes, username)
+		return "", time.Time{}, false
+	}
+	return entry.code, entry.expires, true
+}
+
 func randomCode(length int) (string, error) {
 	if length <= 0 {
 		length = 6

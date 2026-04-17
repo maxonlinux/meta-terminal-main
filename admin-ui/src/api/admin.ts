@@ -63,6 +63,15 @@ export function setUserActive(id: string, active: boolean) {
   return patchJson(`${ADMIN_BASE}/users/${id}/active`, { active });
 }
 
+export type UserActiveOtp = {
+  code?: string | null;
+  expiresAt?: number | null;
+};
+
+export function getUserActiveOtp(id: string) {
+  return getJson<UserActiveOtp>(`${ADMIN_BASE}/users/${id}/otp`);
+}
+
 export function getFundingTransactions() {
   return getJson<Transaction[]>(`${ADMIN_BASE}/funding`);
 }

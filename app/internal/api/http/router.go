@@ -56,7 +56,7 @@ func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtServi
 		MarketHandler:    NewMarketHandler(eng),
 		ProfileHandler:   NewProfileHandler(authService),
 		HistoryHandler:   NewHistoryHandler(persistenceStore),
-		AdminHandler:     NewAdminHandler(planService, planRepo, walletService, authService, persistenceStore, kycRepo, eng, impService),
+		AdminHandler:     NewAdminHandler(planService, planRepo, walletService, authService, otpService, persistenceStore, kycRepo, eng, impService),
 		AdminAuthHandler: &AdminAuthHandler{},
 		KYCHandler:       NewKYCHandler(kycRepo, authService),
 		WsHandler:        wsHandler,
@@ -222,6 +222,7 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.GET("/users/:id", r.AdminHandler.User)
 	adminGroup.PATCH("/users/:id/profile", r.AdminHandler.UpdateUserProfile)
 	adminGroup.PATCH("/users/:id/active", r.AdminHandler.SetUserActive)
+	adminGroup.GET("/users/:id/otp", r.AdminHandler.UserActiveOTP)
 	adminGroup.GET("/users/:id/address", r.AdminHandler.UserAddress)
 	adminGroup.PATCH("/users/:id/address", r.AdminHandler.UpdateUserAddress)
 	adminGroup.GET("/users/:id/transactions", r.AdminHandler.UserTransactions)

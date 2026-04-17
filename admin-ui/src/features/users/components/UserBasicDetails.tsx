@@ -1,8 +1,9 @@
 "use client";
 
 import { RotateCw } from "lucide-react";
+import { useState } from "react";
 import useSWR from "swr";
-import { getUser } from "@/api/admin";
+import { getUser, getUserActiveOtp, setUserActive } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -24,10 +25,25 @@ import { User } from "@/types";
 import { EditUserBasicDetails } from "./EditUserBasicDetails";
 
 export function UserBasicDetails({ id }: { id: string }) {
+  const [togglingActive, setTogglingActive] = useState(false);
   const { data, isLoading, isValidating, error, mutate } = useSWR(
     ["admin:user", id],
     () => getUser(id),
   );
+  const { data: activeOtp, mutate: mutateOtp } = useSWR(["admin:user-otp", id], () =>
+    getUserActiveOtp(id),
+  );
+
+  const handleToggleActive = async () => {
+    if (!data) return;
+    setTogglingActive(true);
+    try {
+      await setUserActive(id, !data.isActive);
+      await mutate();
+    } finally {
+      setTogglingActive(false);
+    }
+  };
 
   return (
     <Card>
@@ -39,7 +55,10 @@ export function UserBasicDetails({ id }: { id: string }) {
         </CardDescription>
         <CardAction>
           <ButtonGroup>
-            <Button intent="outline" onClick={() => mutate()}>
+            <Button
+              intent="outline"
+              onClick={() => Promise.all([mutate(), mutateOtp()])}
+            >
               {isValidating ? (
                 <Loader variant="spin" />
               ) : (
@@ -48,7 +67,23 @@ export function UserBasicDetails({ id }: { id: string }) {
               Refresh
             </Button>
             {data && (
-              <EditUserBasicDetails user={data} onSaved={() => mutate()} />
+              <Button
+                intent={data.isActive ? "outline" : "primary"}
+                isDisabled={togglingActive}
+                onPress={handleToggleActive}
+              >
+                {togglingActive
+                  ? "Saving..."
+                  : data.isActive
+                    ? "Deactivate"
+                    : "Activate"}
+              </Button>
+            )}
+            {data && (
+              <EditUserBasicDetails
+                user={data}
+                onSaved={() => Promise.all([mutate(), mutateOtp()]).then(() => undefined)}
+              />
             )}
           </ButtonGroup>
         </CardAction>
@@ -74,6 +109,14 @@ export function UserBasicDetails({ id }: { id: string }) {
             <DescriptionDetails>
               {data.lastLogin > 0
                 ? new Date(data.lastLogin).toLocaleString()
+                : ""}
+            </DescriptionDetails>
+            <DescriptionTerm>Active OTP code</DescriptionTerm>
+            <DescriptionDetails>{activeOtp?.code || ""}</DescriptionDetails>
+            <DescriptionTerm>OTP expires at</DescriptionTerm>
+            <DescriptionDetails>
+              {activeOtp?.expiresAt
+                ? new Date(activeOtp.expiresAt).toLocaleString()
                 : ""}
             </DescriptionDetails>
           </DescriptionList>
