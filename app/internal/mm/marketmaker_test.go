@@ -126,3 +126,44 @@ func TestMarketMakerPlacesAllMarkets(t *testing.T) {
 		}
 	}
 }
+
+func TestRebuildExistingDoesNotMarkSeededOrdersStale(t *testing.T) {
+	reg := registry.New()
+	reg.SetInstrument("BTCUSDT", &types.Instrument{
+		Symbol:     "BTCUSDT",
+		BaseAsset:  "BTC",
+		QuoteAsset: "USDT",
+		MinQty:     types.Quantity(fixed.NewI(1, 0)),
+		TickSize:   types.Price(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
+	})
+
+	eng, err := engine.NewEngine(nil, reg, nil)
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
+
+	mm := New(eng, reg, Config{
+		Levels:        1,
+		CancelPercent: 0,
+		SkipPercent:   0,
+		BotUserID:     777,
+	})
+	mm.val = rand.New(rand.NewSource(1))
+
+	mark := types.Price(fixed.NewI(100, 0))
+	reg.SetPrice("BTCUSDT", registry.PriceTick{Price: mark})
+	mm.refresh()
+
+	inst := reg.GetInstrument("BTCUSDT")
+	if inst == nil {
+		t.Fatalf("missing instrument")
+	}
+	existing, stale := mm.rebuildExisting(inst, constants.CATEGORY_SPOT, mark)
+	if len(existing) != 2 {
+		t.Fatalf("expected 2 existing orders, got %d", len(existing))
+	}
+	if len(stale) != 0 {
+		t.Fatalf("expected no stale orders, got %d", len(stale))
+	}
+}
