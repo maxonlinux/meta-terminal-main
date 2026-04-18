@@ -102,6 +102,7 @@ type wsHub struct {
 	seq       map[string]uint64
 	bookCache map[string]map[int]bookSnapshot
 	readBook  func(category int8, symbol string) *orderbook.OrderBook
+	bookQueue chan string
 }
 
 type topicSub struct {
@@ -125,12 +126,31 @@ func newWsConn(conn *websocket.Conn) *wsConn {
 }
 
 func newWsHub(readBook func(category int8, symbol string) *orderbook.OrderBook) *wsHub {
-	return &wsHub{
+	h := &wsHub{
 		userSubs:  make(map[types.UserID]map[*wsConn]struct{}),
 		topicSubs: make(map[string]map[*wsConn]*topicSub),
 		seq:       make(map[string]uint64),
 		bookCache: make(map[string]map[int]bookSnapshot),
 		readBook:  readBook,
+		bookQueue: make(chan string, 4096),
+	}
+	go h.bookPublisherLoop()
+	return h
+}
+
+func (h *wsHub) bookPublisherLoop() {
+	for topic := range h.bookQueue {
+		h.publishOrderbook(topic)
+	}
+}
+
+func (h *wsHub) enqueueOrderbook(topic string) {
+	if topic == "" {
+		return
+	}
+	select {
+	case h.bookQueue <- topic:
+	default:
 	}
 }
 
@@ -526,7 +546,7 @@ func (h *wsHub) OnOrderUpdated(order *types.Order) {
 
 	if order.Symbol != "" {
 		topic := "orderbook:" + shared.CategoryToString(order.Category) + ":" + order.Symbol
-		h.publishOrderbook(topic)
+		h.enqueueOrderbook(topic)
 	}
 }
 
@@ -559,7 +579,7 @@ func (h *wsHub) OnOrderbookUpdated(category int8, symbol string) {
 		return
 	}
 	topic := "orderbook:" + shared.CategoryToString(category) + ":" + symbol
-	h.publishOrderbook(topic)
+	h.enqueueOrderbook(topic)
 }
 
 func (h *wsHub) OnLiquidation(event engine.LiquidationEvent) {
