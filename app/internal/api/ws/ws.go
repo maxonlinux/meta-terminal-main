@@ -118,6 +118,8 @@ type wsConn struct {
 	mu   sync.Mutex
 }
 
+const wsWriteTimeout = 2 * time.Second
+
 func newWsConn(conn *websocket.Conn) *wsConn {
 	return &wsConn{conn: conn}
 }
@@ -273,7 +275,7 @@ func (h *wsHub) readMarketLoop(conn *wsConn) {
 			continue
 		}
 		if string(data) == "ping" {
-			conn.writeMessage([]byte("pong"))
+			_ = conn.writeMessage([]byte("pong"))
 			continue
 		}
 
@@ -308,7 +310,7 @@ func (h *wsHub) readUserLoop(userID types.UserID, conn *wsConn) {
 			continue
 		}
 		if string(data) == "ping" {
-			conn.writeMessage([]byte("pong"))
+			_ = conn.writeMessage([]byte("pong"))
 		}
 	}
 }
@@ -370,7 +372,10 @@ func (h *wsHub) sendOrderbookSnapshot(conn *wsConn, topic string, depth int) {
 			"cts": time.Now().UnixMilli(),
 		},
 	}
-	conn.writeJSON(payload)
+	if err := conn.writeJSON(payload); err != nil {
+		h.dropConn(conn)
+		return
+	}
 	h.storeBookSnapshot(topic, depth, cache)
 }
 
@@ -380,15 +385,14 @@ func (h *wsHub) publishOrderbook(topic string) {
 		return
 	}
 
-	h.mu.RLock()
-	subs := h.topicSubs[topic]
-	h.mu.RUnlock()
+	subs := h.snapshotTopicSubs(topic)
 	if len(subs) == 0 {
 		return
 	}
 
 	byDepth := make(map[int][]*wsConn)
-	for conn, sub := range subs {
+	for _, sub := range subs {
+		conn := sub.conn
 		depth := sub.depth
 		if depth <= 0 {
 			depth = 50
@@ -430,7 +434,9 @@ func (h *wsHub) publishOrderbook(topic string) {
 				},
 			}
 			for _, conn := range conns {
-				conn.writeJSON(payload)
+				if err := conn.writeJSON(payload); err != nil {
+					h.dropConn(conn)
+				}
 			}
 			h.storeBookSnapshot(topic, depth, nextSnapshot)
 			continue
@@ -455,7 +461,9 @@ func (h *wsHub) publishOrderbook(topic string) {
 			},
 		}
 		for _, conn := range conns {
-			conn.writeJSON(payload)
+			if err := conn.writeJSON(payload); err != nil {
+				h.dropConn(conn)
+			}
 		}
 		h.storeBookSnapshot(topic, depth, nextSnapshot)
 	}
@@ -486,18 +494,19 @@ func (h *wsHub) publishTrades(topic string, trades []types.Trade) {
 			"trades":   items,
 		},
 	}
-	for conn := range h.topicSubs[topic] {
-		conn.writeJSON(payload)
+	for _, sub := range h.snapshotTopicSubs(topic) {
+		if err := sub.conn.writeJSON(payload); err != nil {
+			h.dropConn(sub.conn)
+		}
 	}
 }
 
 func (h *wsHub) writeToUser(userID types.UserID, payload map[string]interface{}) {
-	h.mu.RLock()
-	set := h.userSubs[userID]
-	for conn := range set {
-		conn.writeJSON(payload)
+	for _, conn := range h.snapshotUserSubs(userID) {
+		if err := conn.writeJSON(payload); err != nil {
+			h.dropConn(conn)
+		}
 	}
-	h.mu.RUnlock()
 }
 
 func (h *wsHub) OnOrderUpdated(order *types.Order) {
@@ -585,16 +594,64 @@ func parseMarketTopic(topic string, prefix string) (int8, string, bool) {
 	return category, symbol, true
 }
 
-func (c *wsConn) writeJSON(payload interface{}) {
+func (c *wsConn) writeJSON(payload interface{}) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return err
 	}
-	c.writeMessage(data)
+	return c.writeMessage(data)
 }
 
-func (c *wsConn) writeMessage(data []byte) {
+func (c *wsConn) writeMessage(data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_ = c.conn.WriteMessage(websocket.TextMessage, data)
+	_ = c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	err := c.conn.WriteMessage(websocket.TextMessage, data)
+	_ = c.conn.SetWriteDeadline(time.Time{})
+	return err
+}
+
+type topicSubSnapshot struct {
+	conn  *wsConn
+	depth int
+}
+
+func (h *wsHub) snapshotTopicSubs(topic string) []topicSubSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set := h.topicSubs[topic]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]topicSubSnapshot, 0, len(set))
+	for conn, sub := range set {
+		depth := 0
+		if sub != nil {
+			depth = sub.depth
+		}
+		out = append(out, topicSubSnapshot{conn: conn, depth: depth})
+	}
+	return out
+}
+
+func (h *wsHub) snapshotUserSubs(userID types.UserID) []*wsConn {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set := h.userSubs[userID]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]*wsConn, 0, len(set))
+	for conn := range set {
+		out = append(out, conn)
+	}
+	return out
+}
+
+func (h *wsHub) dropConn(conn *wsConn) {
+	if conn == nil {
+		return
+	}
+	h.unsubscribeAll(conn)
+	_ = conn.conn.Close()
 }
