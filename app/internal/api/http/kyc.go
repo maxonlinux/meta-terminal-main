@@ -181,7 +181,7 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 	query := strings.TrimSpace(c.QueryParam("q"))
 	var userID *types.UserID
 	if raw := strings.TrimSpace(c.QueryParam("userId")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
+		parsed, err := parseInt64ID(raw)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid userId"})
 		}
@@ -200,7 +200,7 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 		}
 		user, _ := h.users.GetProfile(item.UserID)
 		userPayload := map[string]interface{}{
-			"id":       item.UserID,
+			"id":       strconv.FormatInt(int64(item.UserID), 10),
 			"username": "",
 			"email":    "",
 			"phone":    "",
@@ -219,7 +219,7 @@ func (h *KYCHandler) ListRequests(c *echo.Context) error {
 }
 
 func (h *KYCHandler) GetRequest(c *echo.Context) error {
-	kycID, err := parseKYCIDParam(c.Param("id"))
+	kycID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})
 	}
@@ -234,11 +234,11 @@ func (h *KYCHandler) GetRequest(c *echo.Context) error {
 }
 
 func (h *KYCHandler) GetFile(c *echo.Context) error {
-	kycID, err := parseKYCIDParam(c.Param("id"))
+	kycID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})
 	}
-	fileID, err := parseKYCIDParam(c.Param("fileId"))
+	fileID, err := parseInt64ID(c.Param("fileId"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid file id"})
 	}
@@ -258,7 +258,7 @@ func (h *KYCHandler) GetFile(c *echo.Context) error {
 }
 
 func (h *KYCHandler) UpdateRequest(c *echo.Context) error {
-	kycID, err := parseKYCIDParam(c.Param("id"))
+	kycID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid kyc id"})
 	}
@@ -375,15 +375,4 @@ func formatUserID(id types.UserID) string {
 
 func formatInt64(value int64) string {
 	return strconv.FormatInt(value, 10)
-}
-
-func parseKYCIDParam(value string) (int64, error) {
-	if value == "" {
-		return 0, strconv.ErrSyntax
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return parsed, nil
 }

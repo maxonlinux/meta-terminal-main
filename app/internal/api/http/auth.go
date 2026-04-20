@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
@@ -95,7 +96,7 @@ func (h *AuthHandler) Register(c *echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assign wallets"})
 	}
 	_, _ = h.otpService.Generate(req.Username, req.Email, req.Phone)
-	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": userID})
+	return c.JSON(http.StatusCreated, map[string]interface{}{"userId": strconv.FormatInt(int64(userID), 10)})
 }
 
 type LoginRequest struct {

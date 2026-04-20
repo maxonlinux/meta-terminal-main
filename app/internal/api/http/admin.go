@@ -191,10 +191,11 @@ func (h *AdminHandler) Users(c *echo.Context) error {
 }
 
 func (h *AdminHandler) User(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	profile, err := h.users.GetProfile(userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user"})
@@ -230,10 +231,11 @@ func (h *AdminHandler) User(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UpdateUserProfile(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	var req AdminUserProfileUpdateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -248,10 +250,11 @@ func (h *AdminHandler) UpdateUserProfile(c *echo.Context) error {
 }
 
 func (h *AdminHandler) SetUserActive(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	var req AdminUserActiveRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -263,10 +266,11 @@ func (h *AdminHandler) SetUserActive(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UserActiveOTP(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	user, err := h.users.GetUserByID(userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load user"})
@@ -283,10 +287,11 @@ func (h *AdminHandler) UserActiveOTP(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UserAddress(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	addr, err := h.users.GetAddress(userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load address"})
@@ -304,10 +309,11 @@ func (h *AdminHandler) UserAddress(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UpdateUserAddress(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	var req AdminAddressUpdateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -326,10 +332,11 @@ func (h *AdminHandler) UpdateUserAddress(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UserTransactions(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	limit, offset := parsePagination(c)
 	items, err := h.store.ListFundings(userID, limit, offset)
 	if err != nil {
@@ -392,10 +399,11 @@ func (h *AdminHandler) Funding(c *echo.Context) error {
 }
 
 func (h *AdminHandler) ApproveFunding(c *echo.Context) error {
-	fundingID, err := parseFundingIDParam(c.Param("id"))
+	parsedFundingID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid funding id"})
 	}
+	fundingID := types.FundingID(parsedFundingID)
 	res := h.engine.Cmd(&engine.ApproveFundingCmd{FundingID: fundingID})
 	if res.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
@@ -404,10 +412,11 @@ func (h *AdminHandler) ApproveFunding(c *echo.Context) error {
 }
 
 func (h *AdminHandler) CancelFunding(c *echo.Context) error {
-	fundingID, err := parseFundingIDParam(c.Param("id"))
+	parsedFundingID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid funding id"})
 	}
+	fundingID := types.FundingID(parsedFundingID)
 	res := h.engine.Cmd(&engine.RejectFundingCmd{FundingID: fundingID})
 	if res.Err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
@@ -453,7 +462,7 @@ func (h *AdminHandler) ListWallets(c *echo.Context) error {
 	resp := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
 		resp = append(resp, map[string]interface{}{
-			"id":       item.ID,
+			"id":       strconv.FormatInt(item.ID, 10),
 			"name":     item.Name,
 			"address":  item.Address,
 			"network":  item.Network,
@@ -493,7 +502,7 @@ func (h *AdminHandler) CreateWallet(c *echo.Context) error {
 }
 
 func (h *AdminHandler) UpdateWallet(c *echo.Context) error {
-	id, err := parseWalletIDParam(c.Param("id"))
+	id, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid wallet id"})
 	}
@@ -518,32 +527,35 @@ func (h *AdminHandler) UpdateWallet(c *echo.Context) error {
 }
 
 type WalletAssignRequest struct {
-	WalletID int64 `json:"walletId"`
+	WalletID string `json:"walletId"`
 }
 
 func (h *AdminHandler) AssignUserWallet(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	var req WalletAssignRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	if req.WalletID == 0 {
+	walletID, err := parseInt64ID(req.WalletID)
+	if err != nil || walletID == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletId is required"})
 	}
-	if err := h.wallets.AssignWallet(userID, req.WalletID, "admin"); err != nil {
+	if err := h.wallets.AssignWallet(userID, walletID, "admin"); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusOK)
 }
 
 func (h *AdminHandler) ListUserWallets(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	items, err := h.wallets.ListUserWallets(userID, false)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallets"})
@@ -551,7 +563,7 @@ func (h *AdminHandler) ListUserWallets(c *echo.Context) error {
 	resp := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
 		resp = append(resp, map[string]interface{}{
-			"id":       item.WalletID,
+			"id":       strconv.FormatInt(item.WalletID, 10),
 			"name":     item.Name,
 			"address":  item.Address,
 			"network":  item.Network,
@@ -566,10 +578,11 @@ func (h *AdminHandler) ListUserWallets(c *echo.Context) error {
 }
 
 func (h *AdminHandler) Impersonate(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	code, err := h.impersonate.Create(userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create impersonation code"})
@@ -578,10 +591,11 @@ func (h *AdminHandler) Impersonate(c *echo.Context) error {
 }
 
 func (h *AdminHandler) GetUserPlan(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	progress, err := h.plan.GetUserPlanProgress(userID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load plan"})
@@ -599,10 +613,11 @@ type PlanUpdateRequest struct {
 }
 
 func (h *AdminHandler) SetUserPlan(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	var req PlanUpdateRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -618,43 +633,15 @@ func (h *AdminHandler) SetUserPlan(c *echo.Context) error {
 }
 
 func (h *AdminHandler) ResetUserPlan(c *echo.Context) error {
-	userID, err := parseUserIDParam(c.Param("id"))
+	parsedUserID, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 	}
+	userID := types.UserID(parsedUserID)
 	if err := h.plan.ResetManualPlan(userID); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to reset plan"})
 	}
 	return c.NoContent(http.StatusOK)
-}
-
-func parseUserIDParam(value string) (types.UserID, error) {
-	if value == "" {
-		return 0, strconv.ErrSyntax
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return types.UserID(parsed), nil
-}
-
-func parseFundingIDParam(value string) (types.FundingID, error) {
-	if value == "" {
-		return 0, strconv.ErrSyntax
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return types.FundingID(parsed), nil
-}
-
-func parseWalletIDParam(value string) (int64, error) {
-	if value == "" {
-		return 0, strconv.ErrSyntax
-	}
-	return strconv.ParseInt(value, 10, 64)
 }
 
 func parsePagination(c *echo.Context) (int, int) {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v5"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
@@ -167,7 +166,7 @@ func (h *OrdersHandler) Get(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
@@ -186,7 +185,7 @@ func (h *OrdersHandler) Cancel(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}
@@ -209,7 +208,7 @@ func (h *OrdersHandler) Amend(c *echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 	}
 
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseInt64ID(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid order id"})
 	}

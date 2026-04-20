@@ -323,7 +323,7 @@ type FundingRequestBody struct {
 }
 
 type DepositRequestBody struct {
-	WalletID int64  `json:"walletId"`
+	WalletID string `json:"walletId"`
 	Amount   string `json:"amount"`
 }
 
@@ -390,10 +390,11 @@ func (h *UserHandler) FundingDeposit(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 	}
-	if req.WalletID == 0 {
+	walletID, err := parseInt64ID(req.WalletID)
+	if err != nil || walletID == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "walletId is required"})
 	}
-	wallet, err := h.wallets.GetUserWallet(claims.UserID, req.WalletID)
+	wallet, err := h.wallets.GetUserWallet(claims.UserID, walletID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load wallet"})
 	}
@@ -419,7 +420,7 @@ func (h *UserHandler) Wallets(c *echo.Context) error {
 	resp := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
 		resp = append(resp, map[string]interface{}{
-			"id":       item.WalletID,
+			"id":       strconv.FormatInt(item.WalletID, 10),
 			"name":     item.Name,
 			"address":  item.Address,
 			"network":  item.Network,
