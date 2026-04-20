@@ -95,6 +95,9 @@ func main() {
 		SyncEveryFlush:       cfg.OutboxSyncEveryFlush,
 		ApplyBatchSize:       cfg.OutboxApplyBatchSize,
 		ApplyBatchFlushEvery: cfg.OutboxApplyFlushEvery,
+		OnFatal: func(err error) {
+			log.Fatalf("outbox fatal: %v", err)
+		},
 	})
 	if err != nil {
 		log.Fatalf("outbox open: %v", err)

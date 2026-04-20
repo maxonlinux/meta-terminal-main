@@ -67,6 +67,7 @@ type Options struct {
 	SyncEveryFlush       bool
 	ApplyBatchSize       int
 	ApplyBatchFlushEvery time.Duration
+	OnFatal              func(error)
 }
 
 type segmentInfo struct {
@@ -116,7 +117,7 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 	atomic.StoreUint64(&stats.replayAppliedSeq, newTail)
 
 	queue := newQueue(opts)
-	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink, opts.ApplyBatchSize, opts.ApplyBatchFlushEvery, stats)
+	worker := newWorker(log, tailPath, newTail, queue, opts.EventSink, opts.ApplyBatchSize, opts.ApplyBatchFlushEvery, stats, opts.OnFatal)
 
 	return &Outbox{
 		log:      log,
@@ -753,6 +754,7 @@ type worker struct {
 	applyBatchSize       int
 	applyBatchFlushEvery time.Duration
 	stats                *stats
+	onFatal              func(error)
 }
 
 type committedTx struct {
@@ -760,7 +762,7 @@ type committedTx struct {
 	endSeq uint64
 }
 
-func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink, applyBatchSize int, applyBatchFlushEvery time.Duration, stats *stats) *worker {
+func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink EventSink, applyBatchSize int, applyBatchFlushEvery time.Duration, stats *stats, onFatal func(error)) *worker {
 	if applyBatchSize <= 0 {
 		applyBatchSize = defaultApplyBatchSize
 	}
@@ -778,7 +780,19 @@ func newWorker(log *appendLog, tailPath string, offset uint64, queue queue, sink
 		applyBatchSize:       applyBatchSize,
 		applyBatchFlushEvery: applyBatchFlushEvery,
 		stats:                stats,
+		onFatal:              onFatal,
 	}
+}
+
+func (w *worker) fatal(err error) {
+	if err == nil {
+		return
+	}
+	if w != nil && w.onFatal != nil {
+		w.onFatal(err)
+		return
+	}
+	panic(err)
 }
 
 func (w *worker) Start() {
@@ -912,6 +926,7 @@ func (w *worker) run() {
 		if !ok {
 			if err := flushBatch(); err != nil {
 				logging.Log().Error().Err(err).Msg("outbox: worker flush failed on shutdown")
+				w.fatal(fmt.Errorf("outbox live apply failed on shutdown: %w", err))
 			}
 			return
 		}
@@ -919,6 +934,7 @@ func (w *worker) run() {
 		case logRecordFlush:
 			if err := flushBatch(); err != nil {
 				logging.Log().Error().Err(err).Msg("outbox: worker flush failed")
+				w.fatal(fmt.Errorf("outbox live apply failed on flush: %w", err))
 				return
 			}
 		case logRecordBegin:
@@ -950,6 +966,7 @@ func (w *worker) run() {
 			if len(batchEvents) >= w.applyBatchSize {
 				if err := flushBatch(); err != nil {
 					logging.Log().Error().Err(err).Msg("outbox: worker apply batch failed")
+					w.fatal(fmt.Errorf("outbox live apply failed on batch: %w", err))
 					return
 				}
 			}
@@ -1233,7 +1250,19 @@ func applyCommittedBatch(scope string, sink EventSink, eventsBatch []events.Even
 		}
 		started := time.Now()
 		if err := sink.Apply(eventsBatch); err != nil {
-			logging.Log().Error().Err(err).Int("events", len(eventsBatch)).Int("tx_count", len(txs)).Str("scope", scope).Msg("outbox: sink apply failed")
+			firstTx := txs[0]
+			lastTx := txs[len(txs)-1]
+			logging.Log().Error().
+				Err(err).
+				Int("events", len(eventsBatch)).
+				Int("tx_count", len(txs)).
+				Uint64("first_tx_id", firstTx.txID).
+				Uint64("first_end_seq", firstTx.endSeq).
+				Uint64("last_tx_id", lastTx.txID).
+				Uint64("last_end_seq", lastTx.endSeq).
+				Str("event_type_counts", summarizeEventTypes(eventsBatch)).
+				Str("scope", scope).
+				Msg("outbox: sink apply failed")
 			return err
 		}
 		if stats != nil {
@@ -1242,4 +1271,71 @@ func applyCommittedBatch(scope string, sink EventSink, eventsBatch []events.Even
 		return nil
 	}
 	return applyWithRetry(lastTx.txID, lastTx.endSeq, stop, apply, func() error { return finalize(txs) }, scope, stats)
+}
+
+func summarizeEventTypes(batch []events.Event) string {
+	if len(batch) == 0 {
+		return ""
+	}
+
+	counts := make(map[events.Type]int, 8)
+	for i := range batch {
+		counts[batch[i].Type]++
+	}
+
+	ordered := []events.Type{
+		events.OrderPlaced,
+		events.OrderAmended,
+		events.OrderCanceled,
+		events.TradeExecuted,
+		events.LeverageSet,
+		events.FundingCreated,
+		events.FundingApproved,
+		events.FundingRejected,
+		events.OrderTriggered,
+		events.RPNLRecorded,
+	}
+
+	parts := make([]string, 0, len(counts))
+	for i := range ordered {
+		t := ordered[i]
+		if n := counts[t]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", eventTypeName(t), n))
+			delete(counts, t)
+		}
+	}
+
+	for t, n := range counts {
+		parts = append(parts, fmt.Sprintf("type_%d=%d", byte(t), n))
+	}
+
+	slices.Sort(parts)
+	return strings.Join(parts, ",")
+}
+
+func eventTypeName(t events.Type) string {
+	switch t {
+	case events.OrderPlaced:
+		return "OrderPlaced"
+	case events.OrderAmended:
+		return "OrderAmended"
+	case events.OrderCanceled:
+		return "OrderCanceled"
+	case events.TradeExecuted:
+		return "TradeExecuted"
+	case events.LeverageSet:
+		return "LeverageSet"
+	case events.FundingCreated:
+		return "FundingCreated"
+	case events.FundingApproved:
+		return "FundingApproved"
+	case events.FundingRejected:
+		return "FundingRejected"
+	case events.OrderTriggered:
+		return "OrderTriggered"
+	case events.RPNLRecorded:
+		return "RPNLRecorded"
+	default:
+		return fmt.Sprintf("type_%d", byte(t))
+	}
 }
