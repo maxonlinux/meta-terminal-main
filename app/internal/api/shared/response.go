@@ -1,14 +1,16 @@
 package shared
 
 import (
+	"strconv"
+
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
 )
 
 type OrderResponse struct {
-	ID             int64  `json:"id"`
-	UserID         int64  `json:"userId"`
+	ID             string `json:"id"`
+	UserID         string `json:"userId"`
 	Symbol         string `json:"symbol"`
 	Category       string `json:"category"`
 	Origin         string `json:"origin"`
@@ -30,8 +32,8 @@ type OrderResponse struct {
 
 func OrderResponseFromOrder(o *types.Order) OrderResponse {
 	resp := OrderResponse{
-		ID:             o.ID,
-		UserID:         o.UserID,
+		ID:             formatInt64(o.ID),
+		UserID:         formatInt64(o.UserID),
 		Symbol:         o.Symbol,
 		Category:       CategoryToString(o.Category),
 		Origin:         OriginToString(o.Origin),
@@ -67,8 +69,8 @@ func OrderResponseFromOrder(o *types.Order) OrderResponse {
 
 func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 	resp := OrderResponse{
-		ID:             order.ID,
-		UserID:         order.UserID,
+		ID:             formatInt64(order.ID),
+		UserID:         formatInt64(order.UserID),
 		Symbol:         order.Symbol,
 		Category:       CategoryToString(order.Category),
 		Origin:         OriginToString(order.Origin),
@@ -98,10 +100,10 @@ func OrderResponseFromRecord(order persistence.OrderRecord) OrderResponse {
 }
 
 type FillResponse struct {
-	ID                  int64  `json:"id"`
-	UserID              int64  `json:"userId"`
-	OrderID             int64  `json:"orderId"`
-	CounterpartyOrderID int64  `json:"counterpartyOrderId"`
+	ID                  string `json:"id"`
+	UserID              string `json:"userId"`
+	OrderID             string `json:"orderId"`
+	CounterpartyOrderID string `json:"counterpartyOrderId"`
 	Symbol              string `json:"symbol"`
 	Category            string `json:"category"`
 	Side                string `json:"side"`
@@ -114,10 +116,10 @@ type FillResponse struct {
 
 func FillResponseFromRecord(fill persistence.FillRecord) FillResponse {
 	return FillResponse{
-		ID:                  fill.ID,
-		UserID:              fill.UserID,
-		OrderID:             fill.OrderID,
-		CounterpartyOrderID: fill.CounterpartyOrderID,
+		ID:                  formatInt64(fill.ID),
+		UserID:              formatInt64(fill.UserID),
+		OrderID:             formatInt64(fill.OrderID),
+		CounterpartyOrderID: formatInt64(fill.CounterpartyOrderID),
 		Symbol:              fill.Symbol,
 		Category:            CategoryToString(fill.Category),
 		Side:                SideToString(fill.Side),
@@ -127,4 +129,8 @@ func FillResponseFromRecord(fill persistence.FillRecord) FillResponse {
 		Timestamp:           UnixMilliFromNano(fill.Timestamp),
 		OrderType:           OrderTypeToString(fill.OrderType),
 	}
+}
+
+func formatInt64(v int64) string {
+	return strconv.FormatInt(v, 10)
 }
