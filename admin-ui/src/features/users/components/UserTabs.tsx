@@ -21,7 +21,14 @@ export function UserTabs({ id }: { id: string }) {
   const handleImpersonate = async () => {
     const data = await getUserImpersonation(id);
     if (!data?.code) return;
-    const url = `http://localhost:3333/impersonate/${data.code}`;
+    const frontendBase = process.env.NEXT_PUBLIC_FRONTEND_URL?.replace(
+      /\/$/,
+      "",
+    );
+    const impersonatePath = `/impersonate/${data.code}`;
+    const url = frontendBase
+      ? `${frontendBase}${impersonatePath}`
+      : impersonatePath;
     window.open(url, "_blank", "noopener");
   };
 
