@@ -255,6 +255,9 @@ func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage type
 	if math.Sign(effective) <= 0 {
 		effective = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 	}
+	if clearing.IsImmediateLiquidationLeverage(effective) {
+		return constants.ErrLeverageTooHigh
+	}
 	liqPrice := clearing.LiquidationPrice(pos.EntryPrice, effective, pos.Size)
 	if clearing.ShouldLiquidate(price, liqPrice, pos.Size) {
 		return constants.ErrLeverageTooHigh
@@ -264,10 +267,6 @@ func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage type
 
 func (e *Engine) checkLinearOrderLeverage(userID types.UserID, symbol string, side int8) error {
 	pos := e.portfolio.GetPosition(userID, symbol)
-	if pos == nil {
-		return nil
-	}
-
 	if math.Sign(pos.Size) > 0 && side == constants.ORDER_SIDE_SELL {
 		return nil
 	}
@@ -279,7 +278,6 @@ func (e *Engine) checkLinearOrderLeverage(userID types.UserID, symbol string, si
 	if math.Sign(leverage) <= 0 {
 		leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 	}
-
 	if clearing.IsImmediateLiquidationLeverage(leverage) {
 		return constants.ErrLeverageTooHigh
 	}

@@ -100,7 +100,7 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	pos.Size = newSize
 	if math.Sign(newSize) == 0 {
 		pos.EntryPrice = types.Price(math.Zero)
-		pos.Leverage = types.Leverage(math.Zero)
+		pos.Leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		pos.TakeProfit = types.Price{}
 		pos.StopLoss = types.Price{}
 		pos.TPOrderID = 0
