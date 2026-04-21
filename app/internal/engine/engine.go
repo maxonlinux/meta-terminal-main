@@ -262,6 +262,31 @@ func (e *Engine) checkLeverage(userID types.UserID, symbol string, leverage type
 	return nil
 }
 
+func (e *Engine) checkLinearOrderLeverage(userID types.UserID, symbol string, side int8) error {
+	pos := e.portfolio.GetPosition(userID, symbol)
+	if pos == nil {
+		return nil
+	}
+
+	if math.Sign(pos.Size) > 0 && side == constants.ORDER_SIDE_SELL {
+		return nil
+	}
+	if math.Sign(pos.Size) < 0 && side == constants.ORDER_SIDE_BUY {
+		return nil
+	}
+
+	leverage := pos.Leverage
+	if math.Sign(leverage) <= 0 {
+		leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+	}
+
+	if clearing.IsImmediateLiquidationLeverage(leverage) {
+		return constants.ErrLeverageTooHigh
+	}
+
+	return nil
+}
+
 func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types.Quantity) {
 	price := types.Price{}
 	if tick, ok := e.registry.GetPrice(symbol); ok {
@@ -428,6 +453,12 @@ func (c *PlaceOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 
 	if e.planPolicy != nil && req.Origin == constants.ORDER_ORIGIN_USER {
 		if err := e.planPolicy.CheckOrder(req.UserID, req.Category, req.Symbol); err != nil {
+			return CommandResult{Err: err}
+		}
+	}
+
+	if req.Category == constants.CATEGORY_LINEAR && req.Origin == constants.ORDER_ORIGIN_USER && !req.ReduceOnly {
+		if err := e.checkLinearOrderLeverage(req.UserID, req.Symbol, req.Side); err != nil {
 			return CommandResult{Err: err}
 		}
 	}

@@ -11,6 +11,7 @@ import (
 )
 
 var one = fixed.NewI(1, 0)
+var maintenanceMarginRatio = fixed.MustParse(constants.MM_RATIO)
 
 type Portfolio interface {
 	Reserve(userID types.UserID, asset string, amount types.Quantity) error
@@ -93,13 +94,20 @@ func LiquidationPrice(entryPrice types.Price, leverage types.Leverage, size type
 	}
 
 	invLeverage := math.Div(one, leverage)
-	// Parse maintenance margin ratio as fixed-point for accuracy.
-	maintenance := fixed.MustParse(constants.MM_RATIO)
-	ratio := math.Sub(invLeverage, maintenance)
+	ratio := math.Sub(invLeverage, maintenanceMarginRatio)
 	if math.Sign(size) > 0 {
 		return types.Price(math.Mul(entryPrice, math.Sub(one, ratio)))
 	}
 	return types.Price(math.Mul(entryPrice, math.Add(one, ratio)))
+}
+
+func IsImmediateLiquidationLeverage(leverage types.Leverage) bool {
+	if math.Sign(leverage) <= 0 {
+		return false
+	}
+
+	invLeverage := math.Div(one, leverage)
+	return math.Cmp(invLeverage, maintenanceMarginRatio) <= 0
 }
 
 func ShouldLiquidate(currentPrice types.Price, liqPrice types.Price, size types.Quantity) bool {
