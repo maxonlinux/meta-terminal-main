@@ -144,7 +144,10 @@ func (s *Store) CleanupSystemOrders(cutoff uint64) (int64, error) {
 	return count, nil
 }
 
-// CleanupBotData removes all data for a specific bot user ID across all tables.
+// CleanupBotData removes bot history for a specific bot user ID.
+//
+// Safety invariant: periodic bot cleanup must never delete balances/positions,
+// because MM may still have active orders that rely on those funds during replay.
 func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
@@ -154,9 +157,7 @@ func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, er
 	tables := []string{
 		"orders",
 		"trade_fills",
-		"positions",
 		"rpnl_events",
-		"balances",
 	}
 
 	for _, table := range tables {
@@ -178,12 +179,8 @@ func (s *Store) CleanupBotData(botUserID types.UserID, cutoff uint64) (int64, er
 			// trade_fills keeps both sides in one row; deleting rows where only one
 			// side is bot would also erase the counterparty user's history.
 			res, err = s.db.Exec(`delete from trade_fills where maker_user_id = ? and taker_user_id = ?`, botUserID, botUserID)
-		case "positions":
-			res, err = s.db.Exec(`delete from positions where user_id = ?`, botUserID)
 		case "rpnl_events":
 			res, err = s.db.Exec(`delete from rpnl_events where user_id = ?`, botUserID)
-		case "balances":
-			res, err = s.db.Exec(`delete from balances where user_id = ?`, botUserID)
 		}
 
 		if err != nil {

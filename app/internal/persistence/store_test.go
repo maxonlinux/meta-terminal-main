@@ -271,3 +271,157 @@ func TestListFillsSupportsSymbolAndCategoryFilters(t *testing.T) {
 		t.Fatalf("expected taker side SELL, got %d", takerFills[0].Side)
 	}
 }
+
+func TestCleanupBotDataKeepsBalancesAndPositions(t *testing.T) {
+	reg := registry.New()
+	reg.SetInstrument("BTCUSDT", &types.Instrument{
+		Symbol:     "BTCUSDT",
+		BaseAsset:  "BTC",
+		QuoteAsset: "USDT",
+		MinQty:     types.Quantity(fixed.NewI(1, 0)),
+		TickSize:   types.Price(fixed.NewI(1, 0)),
+		StepSize:   types.Quantity(fixed.NewI(1, 0)),
+	})
+
+	store, err := Open(filepath.Join(t.TempDir(), "history"), reg)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer func() {
+		_ = store.Close()
+	}()
+
+	const botID = types.UserID(999999999)
+
+	insertOrder := func(id int64, status int8) {
+		t.Helper()
+		_, err := store.db.Exec(
+			`insert into orders (id, user_id, symbol, category, origin, side, type, tif, status, price, qty, filled, trigger_price, reduce_only, close_on_trigger, stop_order_type, trigger_direction, is_conditional, created_at, updated_at)
+			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id,
+			botID,
+			"BTCUSDT",
+			constants.CATEGORY_SPOT,
+			constants.ORDER_ORIGIN_SYSTEM,
+			constants.ORDER_SIDE_BUY,
+			constants.ORDER_TYPE_LIMIT,
+			constants.TIF_GTC,
+			status,
+			"100",
+			"1",
+			"0",
+			"0",
+			0,
+			0,
+			0,
+			0,
+			0,
+			1,
+			1,
+		)
+		if err != nil {
+			t.Fatalf("insert order: %v", err)
+		}
+	}
+
+	insertOrder(1001, constants.ORDER_STATUS_FILLED)
+	insertOrder(1002, constants.ORDER_STATUS_NEW)
+
+	_, err = store.db.Exec(`insert into balances (user_id, asset, available, locked, margin) values (?, ?, ?, ?, ?)`, botID, "USDT", "1000", "0", "0")
+	if err != nil {
+		t.Fatalf("insert balance: %v", err)
+	}
+
+	_, err = store.db.Exec(
+		`insert into positions (user_id, symbol, size, entry_price, exit_price, mode, mm, im, liq_price, leverage, take_profit, stop_loss, tp_order_id, sl_order_id)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		botID,
+		"BTCUSDT",
+		"1",
+		"100",
+		"0",
+		0,
+		"0",
+		"0",
+		"0",
+		"2",
+		"0",
+		"0",
+		0,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("insert position: %v", err)
+	}
+
+	_, err = store.db.Exec(
+		`insert into trade_fills (id, maker_user_id, taker_user_id, maker_order_id, taker_order_id, symbol, category, maker_order_type, taker_order_type, taker_side, price, qty, ts)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		2001,
+		botID,
+		botID,
+		1001,
+		1002,
+		"BTCUSDT",
+		constants.CATEGORY_SPOT,
+		constants.ORDER_TYPE_LIMIT,
+		constants.ORDER_TYPE_LIMIT,
+		constants.ORDER_SIDE_SELL,
+		"100",
+		"1",
+		1,
+	)
+	if err != nil {
+		t.Fatalf("insert trade fill: %v", err)
+	}
+
+	_, err = store.db.Exec(
+		`insert into rpnl_events (id, user_id, order_id, symbol, category, side, price, qty, realized, created_at)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		3001,
+		botID,
+		1001,
+		"BTCUSDT",
+		constants.CATEGORY_SPOT,
+		constants.ORDER_SIDE_BUY,
+		"100",
+		"1",
+		"0",
+		1,
+	)
+	if err != nil {
+		t.Fatalf("insert rpnl event: %v", err)
+	}
+
+	deleted, err := store.CleanupBotData(botID, 2)
+	if err != nil {
+		t.Fatalf("cleanup bot data: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("expected 3 deleted rows (closed order, trade fill, rpnl), got %d", deleted)
+	}
+
+	var ordersCount int
+	if err := store.db.QueryRow(`select count(*) from orders where user_id = ?`, botID).Scan(&ordersCount); err != nil {
+		t.Fatalf("count orders: %v", err)
+	}
+	if ordersCount != 1 {
+		t.Fatalf("expected 1 active order to remain, got %d", ordersCount)
+	}
+
+	var balancesCount int
+	if err := store.db.QueryRow(`select count(*) from balances where user_id = ?`, botID).Scan(&balancesCount); err != nil {
+		t.Fatalf("count balances: %v", err)
+	}
+	if balancesCount != 1 {
+		t.Fatalf("expected bot balance to remain, got %d", balancesCount)
+	}
+
+	var positionsCount int
+	if err := store.db.QueryRow(`select count(*) from positions where user_id = ?`, botID).Scan(&positionsCount); err != nil {
+		t.Fatalf("count positions: %v", err)
+	}
+	if positionsCount != 1 {
+		t.Fatalf("expected bot position to remain, got %d", positionsCount)
+	}
+}
