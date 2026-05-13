@@ -345,12 +345,21 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 			recorder = newOutboxRecorder(e.outbox.Begin())
 		}
 		for _, id := range ids {
-			res := (&CancelOrderCmd{UserID: userID, OrderID: id}).Apply(e, recorder)
-			if res.Err != nil || res.Order == nil {
+			order, ok := e.store.GetUserOrder(userID, id)
+			if !ok || order == nil {
 				continue
 			}
+			// Keep linked TP/SL cancels in the same trade writer transaction.
+			// Do not route through clearing/portfolio here to avoid re-entrant lock cycle
+			// from portfolio position-reduce callback.
+			if err := e.store.Cancel(userID, id); err != nil {
+				continue
+			}
+			if recorder != nil {
+				_ = recorder.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: userID, OrderID: id, Timestamp: order.UpdatedAt}))
+			}
 			if e.publisher != nil {
-				e.publisher.OnOrderUpdated(res.Order)
+				e.publisher.OnOrderUpdated(order)
 			}
 		}
 		recorder.finalize(nil)
