@@ -32,11 +32,6 @@ func (s *Store) resetApplyState() {
 	} else {
 		clear(s.orderMutations)
 	}
-	if s.tradeInstruments == nil {
-		s.tradeInstruments = make(map[string]tradeInstrumentCacheEntry)
-	} else {
-		clear(s.tradeInstruments)
-	}
 }
 
 func (s *Store) addBalance(userID types.UserID) {

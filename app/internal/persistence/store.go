@@ -1,7 +1,6 @@
 package persistence
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -38,7 +37,6 @@ type Store struct {
 	// orderProgressDeltas aggregates updates for orders.filled/status writes.
 	orderProgressDeltas map[orderKey]orderProgressDelta
 	orderMutations      map[orderKey]orderMutation
-	tradeInstruments    map[string]tradeInstrumentCacheEntry
 }
 
 type txStatements struct {
@@ -241,11 +239,6 @@ type fillInsertRow struct {
 	price          string
 	qty            string
 	ts             uint64
-}
-
-type tradeInstrumentCacheEntry struct {
-	payload []byte
-	inst    *types.Instrument
 }
 
 const fillInsertBlockSize = 8
@@ -731,21 +724,6 @@ func (s *Store) CountPendingFundings() (int, error) {
 		return 0, err
 	}
 	return count, nil
-}
-
-func (s *Store) resolveTradeInstrument(symbol string, payload []byte) (*types.Instrument, error) {
-	if cached, ok := s.tradeInstruments[symbol]; ok && bytes.Equal(cached.payload, payload) {
-		return cached.inst, nil
-	}
-	inst, err := events.DecodeInstrument(payload)
-	if err != nil {
-		return nil, err
-	}
-	if inst == nil {
-		return nil, fmt.Errorf("missing trade instrument for %s", symbol)
-	}
-	s.tradeInstruments[symbol] = tradeInstrumentCacheEntry{payload: payload, inst: inst}
-	return inst, nil
 }
 
 func (s *Store) Apply(eventsBatch []events.Event) error {

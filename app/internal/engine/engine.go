@@ -67,6 +67,41 @@ type Engine struct {
 	liqNext    map[liqKey]time.Time
 }
 
+type outboxRecorder struct {
+	tx        *outbox.Tx
+	hasEvents bool
+}
+
+func newOutboxRecorder(tx *outbox.Tx) *outboxRecorder {
+	return &outboxRecorder{tx: tx}
+}
+
+func (r *outboxRecorder) Record(event events.Event) error {
+	if r == nil || r.tx == nil {
+		return nil
+	}
+	if err := r.tx.Record(event); err != nil {
+		return err
+	}
+	r.hasEvents = true
+	return nil
+}
+
+func (r *outboxRecorder) finalize(err error) {
+	if r == nil || r.tx == nil {
+		return
+	}
+	if err != nil {
+		_ = r.tx.Abort()
+		return
+	}
+	if r.hasEvents {
+		_ = r.tx.Commit()
+	} else {
+		_ = r.tx.Abort()
+	}
+}
+
 func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*Engine, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("registry is required")
@@ -98,14 +133,11 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 	portfolioService.OnBalanceUpdate(e.onBalanceUpdated)
 	portfolioService.OnRealizedPnL(func(event types.RealizedPnL) {
 		// Persist realized PnL as an outbox event for history.
-		if e.outbox == nil {
-			return
+		recorder := newOutboxRecorder(nil)
+		if e.outbox != nil {
+			recorder = newOutboxRecorder(e.outbox.Begin())
 		}
-		tx := e.outbox.Begin()
-		if tx == nil {
-			return
-		}
-		_ = tx.Record(events.EncodeRPNL(events.RPNLEvent{
+		_ = recorder.Record(events.EncodeRPNL(events.RPNLEvent{
 			UserID:    event.UserID,
 			OrderID:   event.OrderID,
 			Symbol:    event.Symbol,
@@ -116,7 +148,7 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 			Realized:  event.Realized,
 			Timestamp: event.Timestamp,
 		}))
-		_ = tx.Commit()
+		recorder.finalize(nil)
 	})
 
 	for _, cat := range []int8{constants.CATEGORY_SPOT, constants.CATEGORY_LINEAR} {
@@ -184,14 +216,14 @@ func (e *Engine) ReadBook(category int8, symbol string) *orderbook.OrderBook {
 }
 
 func (e *Engine) Cmd(cmd Command) CommandResult {
-	var tx *outbox.Tx
+	recorder := newOutboxRecorder(nil)
 	if e.outbox != nil {
-		tx = e.outbox.Begin()
+		recorder = newOutboxRecorder(e.outbox.Begin())
 	}
 
 	apply := func(symbol string, category int8) CommandResult {
 		return e.withBookLock(symbol, category, func() CommandResult {
-			return cmd.Apply(e, tx)
+			return cmd.Apply(e, recorder)
 		})
 	}
 
@@ -209,7 +241,7 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 				if _, ok := e.store.GetUserOrder(c.UserID, c.OrderID); !ok {
 					return CommandResult{Err: errOrderNotFound}
 				}
-				return cmd.Apply(e, tx)
+				return cmd.Apply(e, recorder)
 			})
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
@@ -220,7 +252,7 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 				if _, ok := e.store.GetUserOrder(c.UserID, c.OrderID); !ok {
 					return CommandResult{Err: errOrderNotFound}
 				}
-				return cmd.Apply(e, tx)
+				return cmd.Apply(e, recorder)
 			})
 		} else {
 			result = CommandResult{Err: errOrderNotFound}
@@ -232,15 +264,9 @@ func (e *Engine) Cmd(cmd Command) CommandResult {
 			result = CommandResult{Err: errInvalidOrderRequest}
 		}
 	default:
-		result = cmd.Apply(e, tx)
+		result = cmd.Apply(e, recorder)
 	}
-	if tx != nil {
-		if result.Err != nil {
-			_ = tx.Abort()
-		} else {
-			_ = tx.Commit()
-		}
-	}
+	recorder.finalize(result.Err)
 	if result.Err == nil && result.Order != nil && e.publisher != nil {
 		e.publisher.OnOrderUpdated(result.Order)
 	}
@@ -296,32 +322,38 @@ func (e *Engine) onPositionReduce(userID types.UserID, symbol string, size types
 	if math.Sign(size) == 0 {
 		var buf [16]types.OrderID
 		ids := buf[:0]
-		e.store.Iterate(func(order *types.Order) bool {
+		for _, order := range e.store.GetUserOrders(userID) {
 			if order == nil {
-				return true
+				continue
 			}
-			if order.UserID != userID || order.Symbol != symbol {
-				return true
+			if order.Symbol != symbol {
+				continue
 			}
 			if !order.CloseOnTrigger || !order.ReduceOnly {
-				return true
+				continue
 			}
 			switch order.StopOrderType {
 			case constants.STOP_ORDER_TYPE_TAKE_PROFIT, constants.STOP_ORDER_TYPE_STOP_LOSS:
 				ids = append(ids, order.ID)
 			}
-			return true
-		})
+		}
+		if len(ids) == 0 {
+			return
+		}
+		recorder := newOutboxRecorder(nil)
+		if e.outbox != nil {
+			recorder = newOutboxRecorder(e.outbox.Begin())
+		}
 		for _, id := range ids {
-			order, ok := e.store.GetUserOrder(userID, id)
-			if !ok {
+			res := (&CancelOrderCmd{UserID: userID, OrderID: id}).Apply(e, recorder)
+			if res.Err != nil || res.Order == nil {
 				continue
 			}
-			_ = e.store.Cancel(userID, id)
 			if e.publisher != nil {
-				e.publisher.OnOrderUpdated(order)
+				e.publisher.OnOrderUpdated(res.Order)
 			}
 		}
+		recorder.finalize(nil)
 	}
 }
 
@@ -333,25 +365,28 @@ func (e *Engine) onBalanceUpdated(userID types.UserID, asset string, balance *ty
 
 func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 	e.registry.SetPrice(symbol, registry.PriceTick{Price: price, Timestamp: utils.NowNano()})
-	var tx *outbox.Tx
-	var recorded bool
+	recorder := newOutboxRecorder(nil)
+	if e.outbox != nil {
+		recorder = newOutboxRecorder(e.outbox.Begin())
+	}
+	var recordErr error
 	e.store.OnPriceTick(symbol, price, func(order *types.Order) {
-		if tx == nil && e.outbox != nil {
-			tx = e.outbox.Begin()
+		if recordErr != nil {
+			return
 		}
-		activation := e.activateConditional(order, tx)
-		if tx != nil {
-			recorded = true
-			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{
-				UserID:                 order.UserID,
-				OrderID:                order.ID,
-				Timestamp:              order.UpdatedAt,
-				RemainingReserveAsset:  activation.RemainingReserveAsset,
-				RemainingReserveAmount: activation.RemainingReserveAmount,
-			}))
+		activation := e.activateConditional(order, recorder)
+		if activation.Err != nil {
+			return
 		}
-		if tx != nil {
-			recorded = true
+		if err := recorder.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{
+			UserID:                 order.UserID,
+			OrderID:                order.ID,
+			Timestamp:              order.UpdatedAt,
+			RemainingReserveAsset:  activation.RemainingReserveAsset,
+			RemainingReserveAmount: activation.RemainingReserveAmount,
+		})); err != nil {
+			recordErr = err
+			return
 		}
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(order)
@@ -361,19 +396,13 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 		}
 	})
 	_ = e.withBookLock(symbol, constants.CATEGORY_LINEAR, func() CommandResult {
-		if tx != nil {
-			recorded = true
+		if recordErr != nil {
+			return CommandResult{}
 		}
-		e.checkLiquidations(symbol, price, tx)
+		e.checkLiquidations(symbol, price, recorder)
 		return CommandResult{}
 	})
-	if tx != nil {
-		if recorded {
-			_ = tx.Commit()
-		} else {
-			_ = tx.Abort()
-		}
-	}
+	recorder.finalize(recordErr)
 }
 
 type bookLockKey struct {
@@ -637,8 +666,11 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 
 	if order.TIF == constants.TIF_IOC || order.Type == constants.ORDER_TYPE_MARKET {
 		if math.Cmp(order.Filled, order.Quantity) != 0 {
-			_ = e.store.Cancel(order.UserID, order.ID)
-			result.Order = order
+			cancelRes := (&CancelOrderCmd{UserID: order.UserID, OrderID: order.ID}).Apply(e, writer)
+			if cancelRes.Err != nil {
+				return cancelRes
+			}
+			result.Order = cancelRes.Order
 			return result
 		}
 		result.Order = order
@@ -857,32 +889,34 @@ func (c *UpdateTpSlCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		return CommandResult{Err: constants.ErrNoPosition}
 	}
 
-	if pos.TPOrderID != 0 {
-		if order, ok := e.store.GetUserOrder(c.UserID, pos.TPOrderID); ok {
-			_ = e.store.Cancel(c.UserID, pos.TPOrderID)
-			if writer != nil {
-				_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: c.UserID, OrderID: pos.TPOrderID, Timestamp: order.UpdatedAt}))
-			}
-			if e.publisher != nil {
-				e.publisher.OnOrderUpdated(order)
-			}
+	cancelLinked := func(orderID types.OrderID) error {
+		if orderID == 0 {
+			return nil
 		}
-		pos.TPOrderID = 0
-		pos.TakeProfit = types.Price{}
-	}
-	if pos.SLOrderID != 0 {
-		if order, ok := e.store.GetUserOrder(c.UserID, pos.SLOrderID); ok {
-			_ = e.store.Cancel(c.UserID, pos.SLOrderID)
-			if writer != nil {
-				_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: c.UserID, OrderID: pos.SLOrderID, Timestamp: order.UpdatedAt}))
+		res := (&CancelOrderCmd{UserID: c.UserID, OrderID: orderID}).Apply(e, writer)
+		if res.Err != nil {
+			if res.Err == errOrderNotFound {
+				return nil
 			}
-			if e.publisher != nil {
-				e.publisher.OnOrderUpdated(order)
-			}
+			return res.Err
 		}
-		pos.SLOrderID = 0
-		pos.StopLoss = types.Price{}
+		if res.Order != nil && e.publisher != nil {
+			e.publisher.OnOrderUpdated(res.Order)
+		}
+		return nil
 	}
+
+	if err := cancelLinked(pos.TPOrderID); err != nil {
+		return CommandResult{Err: err}
+	}
+	pos.TPOrderID = 0
+	pos.TakeProfit = types.Price{}
+
+	if err := cancelLinked(pos.SLOrderID); err != nil {
+		return CommandResult{Err: err}
+	}
+	pos.SLOrderID = 0
+	pos.StopLoss = types.Price{}
 
 	if math.Sign(c.TakeProfit) > 0 {
 		takeProfit := e.store.Create(

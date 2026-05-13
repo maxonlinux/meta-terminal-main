@@ -249,11 +249,6 @@ func (m *MarketMaker) updateMarket(inst *types.Instrument, category int8, price 
 			logging.Log().Debug().Str("symbol", inst.Symbol).Str("level", level).Msg("mm: skip amend - no existing order")
 			continue
 		}
-		if m.wouldSelfMatch(&req) {
-			_ = m.eng.Cmd(&engine.CancelOrderCmd{UserID: m.cfg.BotUserID, OrderID: order.ID})
-			delete(existing, level)
-			continue
-		}
 		m.ensureBalanceForOrder(inst, &req)
 		res := m.eng.Cmd(&engine.AmendOrderCmd{
 			UserID:   m.cfg.BotUserID,

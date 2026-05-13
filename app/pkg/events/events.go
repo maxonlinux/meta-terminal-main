@@ -281,7 +281,7 @@ func EncodeTrade(ev TradeEvent) Event {
 }
 
 func DecodeTrade(data []byte) (TradeEvent, error) {
-	ev, instPayload, err := decodeTradePayload(data, true)
+	ev, instPayload, err := decodeTradePayload(data)
 	if err != nil {
 		return ev, err
 	}
@@ -296,11 +296,7 @@ func DecodeTrade(data []byte) (TradeEvent, error) {
 	return ev, nil
 }
 
-func DecodeTradeNoSymbolWithPayload(data []byte) (TradeEvent, []byte, error) {
-	return decodeTradePayload(data, false)
-}
-
-func decodeTradePayload(data []byte, decodeSymbol bool) (TradeEvent, []byte, error) {
+func decodeTradePayload(data []byte) (TradeEvent, []byte, error) {
 	var ev TradeEvent
 	if len(data) < 48 {
 		return ev, nil, errors.New("invalid trade payload")
@@ -317,17 +313,11 @@ func decodeTradePayload(data []byte, decodeSymbol bool) (TradeEvent, []byte, err
 	ev.TakerOrderType = int8(data[off+3])
 	off += 4
 	ev.Timestamp = readU64(data, &off)
-	if decodeSymbol {
-		symbol, err := readStringAt(data, &off)
-		if err != nil {
-			return ev, nil, err
-		}
-		ev.Symbol = symbol
-	} else {
-		if err := skipStringAt(data, &off); err != nil {
-			return ev, nil, err
-		}
+	symbol, err := readStringAt(data, &off)
+	if err != nil {
+		return ev, nil, err
 	}
+	ev.Symbol = symbol
 	priceBytes, err := readBytesAt(data, &off)
 	if err != nil {
 		return ev, nil, err
@@ -404,18 +394,6 @@ func decodeTradePayload(data []byte, decodeSymbol bool) (TradeEvent, []byte, err
 		return ev, nil, errors.New("missing trade instrument")
 	}
 	return ev, instBytes, nil
-}
-
-func skipStringAt(data []byte, off *int) error {
-	if *off+4 > len(data) {
-		return errors.New("invalid string payload")
-	}
-	length := int(readU32(data, off))
-	if *off+length > len(data) {
-		return errors.New("invalid string payload")
-	}
-	*off += length
-	return nil
 }
 
 func EncodeLeverage(ev LeverageEvent) Event {
