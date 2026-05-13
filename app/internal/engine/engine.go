@@ -36,10 +36,12 @@ type Command interface {
 }
 
 type CommandResult struct {
-	Err     error
-	Trades  []types.Trade
-	Funding *types.FundingRequest
-	Order   *types.Order
+	Err                    error
+	Trades                 []types.Trade
+	Funding                *types.FundingRequest
+	Order                  *types.Order
+	RemainingReserveAsset  string
+	RemainingReserveAmount types.Quantity
 }
 
 var (
@@ -337,14 +339,20 @@ func (e *Engine) OnPriceTick(symbol string, price types.Price) {
 		if tx == nil && e.outbox != nil {
 			tx = e.outbox.Begin()
 		}
+		activation := e.activateConditional(order, tx)
 		if tx != nil {
 			recorded = true
-			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt}))
+			_ = tx.Record(events.EncodeOrderTriggered(events.OrderTriggeredEvent{
+				UserID:                 order.UserID,
+				OrderID:                order.ID,
+				Timestamp:              order.UpdatedAt,
+				RemainingReserveAsset:  activation.RemainingReserveAsset,
+				RemainingReserveAmount: activation.RemainingReserveAmount,
+			}))
 		}
 		if tx != nil {
 			recorded = true
 		}
-		_ = e.activateConditional(order, tx)
 		if e.publisher != nil {
 			e.publisher.OnOrderUpdated(order)
 		}
@@ -591,6 +599,23 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 		}
 	}
 
+	result := CommandResult{}
+	if math.Sign(remaining) > 0 && (order.TIF == constants.TIF_POST_ONLY || order.TIF == constants.TIF_GTC) {
+		leverage := types.Leverage{}
+		if pos := e.portfolio.GetPosition(order.UserID, order.Symbol); pos != nil {
+			leverage = pos.Leverage
+		}
+		if math.Sign(leverage) <= 0 {
+			leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+		}
+		reserveAmount, reserveAsset, err := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, remaining, order.Price, leverage, e.registry)
+		if err != nil {
+			return CommandResult{Err: err}
+		}
+		result.RemainingReserveAsset = reserveAsset
+		result.RemainingReserveAmount = reserveAmount
+	}
+
 	if persist {
 		e.store.Add(order)
 		if writer != nil {
@@ -613,9 +638,11 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 	if order.TIF == constants.TIF_IOC || order.Type == constants.ORDER_TYPE_MARKET {
 		if math.Cmp(order.Filled, order.Quantity) != 0 {
 			_ = e.store.Cancel(order.UserID, order.ID)
-			return CommandResult{Order: order}
+			result.Order = order
+			return result
 		}
-		return CommandResult{Order: order}
+		result.Order = order
+		return result
 	}
 
 	if order.TIF == constants.TIF_POST_ONLY {
@@ -623,7 +650,8 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 		if e.publisher != nil {
 			e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
 		}
-		return CommandResult{Order: order}
+		result.Order = order
+		return result
 	}
 
 	if math.Sign(remaining) > 0 {
@@ -632,7 +660,8 @@ func (e *Engine) executeOrder(order *types.Order, book *orderbook.OrderBook, wri
 			e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
 		}
 	}
-	return CommandResult{Order: order}
+	result.Order = order
+	return result
 }
 
 type CancelOrderCmd struct {
@@ -656,7 +685,22 @@ func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		return CommandResult{Order: order}
 	}
 	remaining := math.Sub(order.Quantity, order.Filled)
+	var releaseAsset string
+	var releaseAmount types.Quantity
 	if math.Sign(remaining) > 0 {
+		leverage := types.Leverage{}
+		if pos := e.portfolio.GetPosition(order.UserID, order.Symbol); pos != nil {
+			leverage = pos.Leverage
+		}
+		if math.Sign(leverage) <= 0 {
+			leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
+		}
+		amount, asset, calcErr := clearing.CalculateReserveAmount(order.Symbol, order.Category, order.Side, remaining, order.Price, leverage, e.registry)
+		if calcErr != nil {
+			return CommandResult{Err: calcErr}
+		}
+		releaseAmount = amount
+		releaseAsset = asset
 		if err := e.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
 			return CommandResult{Err: err}
 		}
@@ -668,7 +712,7 @@ func (c *CancelOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		e.publisher.OnOrderbookUpdated(order.Category, order.Symbol)
 	}
 	if writer != nil {
-		_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt}))
+		_ = writer.Record(events.EncodeOrderCanceled(events.OrderCanceledEvent{UserID: order.UserID, OrderID: order.ID, Timestamp: order.UpdatedAt, ReleaseAsset: releaseAsset, ReleaseAmount: releaseAmount}))
 	}
 	return CommandResult{Order: order}
 }
@@ -709,8 +753,10 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 				_ = book.RemoveUnsafe(order.ID)
 			}
 		}
-		pos := e.portfolio.GetPosition(order.UserID, order.Symbol)
-		leverage := pos.Leverage
+		leverage := types.Leverage{}
+		if pos := e.portfolio.GetPosition(order.UserID, order.Symbol); pos != nil {
+			leverage = pos.Leverage
+		}
 		if math.Sign(leverage) <= 0 {
 			leverage = types.Leverage(fixed.NewI(int64(constants.DEFAULT_LEVERAGE), 0))
 		}
@@ -744,7 +790,7 @@ func (c *AmendOrderCmd) Apply(e *Engine, writer outbox.Writer) CommandResult {
 		return CommandResult{Err: err}
 	}
 	if writer != nil {
-		_ = writer.Record(events.EncodeOrderAmended(events.OrderAmendedEvent{UserID: c.UserID, OrderID: c.OrderID, NewQty: c.NewQty, NewPrice: c.NewPrice, Timestamp: order.UpdatedAt}))
+		_ = writer.Record(events.EncodeOrderAmended(events.OrderAmendedEvent{UserID: c.UserID, OrderID: c.OrderID, NewQty: c.NewQty, NewPrice: c.NewPrice, Timestamp: order.UpdatedAt, ReserveAsset: reserveAsset, ReserveDelta: reserveDelta}))
 	}
 	order, ok = e.store.GetUserOrder(c.UserID, c.OrderID)
 	if !ok {
@@ -971,7 +1017,7 @@ func (c *ApproveFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult
 		return CommandResult{Err: err}
 	}
 	if writer != nil {
-		_ = writer.Record(events.EncodeFundingStatus(events.FundingApproved, request.ID))
+		_ = writer.Record(events.EncodeFundingStatus(events.FundingApproved, *request))
 	}
 	return CommandResult{Funding: request}
 }
@@ -989,7 +1035,7 @@ func (c *RejectFundingCmd) Apply(e *Engine, writer outbox.Writer) CommandResult 
 		return CommandResult{Err: err}
 	}
 	if writer != nil {
-		_ = writer.Record(events.EncodeFundingStatus(events.FundingRejected, request.ID))
+		_ = writer.Record(events.EncodeFundingStatus(events.FundingRejected, *request))
 	}
 	return CommandResult{Funding: request}
 }

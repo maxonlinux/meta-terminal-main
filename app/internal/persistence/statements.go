@@ -15,7 +15,6 @@ type statements struct {
 	upsertPosition      *sql.Stmt
 	upsertFunding       *sql.Stmt
 	updateFundingStatus *sql.Stmt
-	selectFundingUser   *sql.Stmt
 	insertRPNL          *sql.Stmt
 }
 
@@ -151,9 +150,6 @@ func prepareStatements(db *sql.DB) (*statements, error) {
 	if err := prepare(&stmts.updateFundingStatus, `update fundings set status = ? where id = ?`); err != nil {
 		return nil, err
 	}
-	if err := prepare(&stmts.selectFundingUser, `select user_id from fundings where id = ?`); err != nil {
-		return nil, err
-	}
 	if err := prepare(&stmts.insertRPNL, `insert into rpnl_events (id, user_id, order_id, symbol, category, side, price, qty, realized, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return nil, err
 	}
@@ -182,6 +178,5 @@ func closeStatements(stmts *statements) {
 	closeStmt(stmts.upsertPosition)
 	closeStmt(stmts.upsertFunding)
 	closeStmt(stmts.updateFundingStatus)
-	closeStmt(stmts.selectFundingUser)
 	closeStmt(stmts.insertRPNL)
 }

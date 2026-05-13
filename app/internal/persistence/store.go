@@ -54,7 +54,6 @@ type txStatements struct {
 	upsertPosition      *sql.Stmt
 	upsertFunding       *sql.Stmt
 	updateFundingStatus *sql.Stmt
-	selectFundingUser   *sql.Stmt
 	insertRPNL          *sql.Stmt
 }
 
@@ -81,7 +80,6 @@ func bindTxStatements(tx *sql.Tx, stmts *statements) *txStatements {
 		upsertPosition:      bind(stmts.upsertPosition),
 		upsertFunding:       bind(stmts.upsertFunding),
 		updateFundingStatus: bind(stmts.updateFundingStatus),
-		selectFundingUser:   bind(stmts.selectFundingUser),
 		insertRPNL:          bind(stmts.insertRPNL),
 	}
 }
@@ -1038,19 +1036,6 @@ func updateFundingStatus(stmts *txStatements, id types.FundingID, status types.F
 	}
 	_, err := stmt.Exec(status, id)
 	return err
-}
-
-func selectFundingUser(stmts *txStatements, id types.FundingID) (types.UserID, error) {
-	stmt := stmts.selectFundingUser
-	if stmt == nil {
-		return 0, fmt.Errorf("missing select funding user statement")
-	}
-	row := stmt.QueryRow(id)
-	var userID types.UserID
-	if err := row.Scan(&userID); err != nil {
-		return 0, err
-	}
-	return userID, nil
 }
 
 func loadBalances(db *sql.DB, portfolio *portfolio.Service) error {

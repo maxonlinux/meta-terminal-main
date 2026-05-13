@@ -47,23 +47,11 @@ func (s *Store) addPosition(userID types.UserID, symbol string) {
 	s.positions[positionKey{userID: userID, symbol: symbol}] = struct{}{}
 }
 
-// stageOrderProgressDelta accumulates updates for the orders table.
-// This is distinct from fill history rows: it only tracks per-order aggregate
-// progress (filled quantity and status) for the current Apply transaction.
-func (s *Store) stageOrderProgressDelta(order *types.Order, qty types.Quantity, ts uint64) {
-	key := orderKey{userID: order.UserID, orderID: order.ID}
+func (s *Store) stageOrderProgressSnapshot(key orderKey, filled types.Quantity, qty types.Quantity, ts uint64) {
 	accum, ok := s.orderProgressDeltas[key]
-	if !ok {
-		accum.qty = order.Quantity
-		// ApplyTradeExecutedWithOrders mutates order.Filled before this stage call.
-		// Seed from the pre-trade value to avoid counting the current fill twice.
-		accum.filled = math.Sub(order.Filled, qty)
+	if !ok || ts >= accum.ts {
+		s.orderProgressDeltas[key] = orderProgressDelta{filled: filled, qty: qty, ts: ts}
 	}
-	accum.filled = math.Add(accum.filled, qty)
-	if ts > accum.ts {
-		accum.ts = ts
-	}
-	s.orderProgressDeltas[key] = accum
 }
 
 // flushOrderProgressDeltas materializes accumulated filled/status changes once per

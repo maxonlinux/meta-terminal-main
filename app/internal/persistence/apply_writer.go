@@ -1,8 +1,6 @@
 package persistence
 
 import (
-	"fmt"
-
 	"github.com/maxonlinux/meta-terminal-go/pkg/constants"
 	"github.com/maxonlinux/meta-terminal-go/pkg/events"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
@@ -108,32 +106,15 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 		s.addBalance(cancel.UserID)
 		return nil
 	case events.TradeExecuted:
-		trade, instrumentPayload, err := events.DecodeTradeNoSymbolWithPayload(event.Data)
+		trade, err := events.DecodeTrade(event.Data)
 		if err != nil {
 			return err
 		}
-		makerOrder, ok := s.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
-		if !ok || makerOrder == nil {
-			return fmt.Errorf("maker order %d for user %d not found", trade.MakerOrderID, trade.MakerUserID)
-		}
-		takerOrder, ok := s.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
-		if !ok || takerOrder == nil {
-			return fmt.Errorf("taker order %d for user %d not found", trade.TakerOrderID, trade.TakerUserID)
-		}
-		if makerOrder.Symbol != takerOrder.Symbol {
-			return fmt.Errorf("trade %d symbol mismatch between maker and taker orders", trade.TradeID)
-		}
-		trade.Symbol = makerOrder.Symbol
-		inst, err := s.resolveTradeInstrument(trade.Symbol, instrumentPayload)
-		if err != nil {
+		if err := s.replayer.ApplyTradeExecuted(trade); err != nil {
 			return err
 		}
-		trade.Instrument = inst
-		if err := s.replayer.ApplyTradeExecutedWithOrders(trade, makerOrder, takerOrder); err != nil {
-			return err
-		}
-		s.stageOrderProgressDelta(makerOrder, trade.Quantity, trade.Timestamp)
-		s.stageOrderProgressDelta(takerOrder, trade.Quantity, trade.Timestamp)
+		s.stageOrderProgressSnapshot(orderKey{userID: trade.MakerUserID, orderID: trade.MakerOrderID}, trade.MakerFilledAfter, trade.MakerOrderQty, trade.Timestamp)
+		s.stageOrderProgressSnapshot(orderKey{userID: trade.TakerUserID, orderID: trade.TakerOrderID}, trade.TakerFilledAfter, trade.TakerOrderQty, trade.Timestamp)
 		price := trade.Price.String()
 		qty := trade.Quantity.String()
 		s.appendTradeFills(trade, price, qty)
@@ -191,11 +172,7 @@ func (w *applyWriter) handleEvent(event events.Event) error {
 		if err := updateFundingStatus(w.txStmts, evt.FundingID, status); err != nil {
 			return err
 		}
-		userID, err := selectFundingUser(w.txStmts, evt.FundingID)
-		if err != nil {
-			return err
-		}
-		s.addBalance(userID)
+		s.addBalance(evt.Request.UserID)
 		return nil
 	case events.OrderTriggered:
 		evt, err := events.DecodeOrderTriggered(event.Data)

@@ -34,12 +34,18 @@ type OrderAmendedEvent struct {
 	NewQty    types.Quantity
 	NewPrice  types.Price
 	Timestamp uint64
+	// Additional data: precomputed reserve side-effect from engine.
+	ReserveAsset string
+	ReserveDelta types.Quantity
 }
 
 type OrderCanceledEvent struct {
 	UserID    types.UserID
 	OrderID   types.OrderID
 	Timestamp uint64
+	// Additional data: precomputed release side-effect from engine.
+	ReleaseAsset  string
+	ReleaseAmount types.Quantity
 }
 
 type TradeEvent struct {
@@ -57,6 +63,14 @@ type TradeEvent struct {
 	Quantity       types.Quantity
 	TakerSide      int8
 	Timestamp      uint64
+	// Additional data: maker/taker order price snapshots at match time.
+	MakerOrderPrice types.Price
+	TakerOrderPrice types.Price
+	// Additional data: order progress snapshots after trade application.
+	MakerOrderQty    types.Quantity
+	MakerFilledAfter types.Quantity
+	TakerOrderQty    types.Quantity
+	TakerFilledAfter types.Quantity
 }
 
 type LeverageEvent struct {
@@ -71,6 +85,8 @@ type FundingEvent struct {
 
 type FundingStatusEvent struct {
 	FundingID types.FundingID
+	// Additional data: full funding snapshot for deterministic replay.
+	Request *types.FundingRequest
 }
 
 type OrderPlacedEvent struct {
@@ -82,6 +98,9 @@ type OrderTriggeredEvent struct {
 	UserID    types.UserID
 	OrderID   types.OrderID
 	Timestamp uint64
+	// Additional data: precomputed reserve side-effect from engine.
+	RemainingReserveAsset  string
+	RemainingReserveAmount types.Quantity
 }
 
 type RPNLEvent struct {
@@ -137,16 +156,16 @@ func DecodeOrderPlaced(data []byte) (OrderPlacedEvent, error) {
 func EncodeOrderAmended(ev OrderAmendedEvent) Event {
 	qty, _ := ev.NewQty.MarshalBinary()
 	price, _ := ev.NewPrice.MarshalBinary()
-	data := make([]byte, 0, 28+len(qty)+len(price))
+	reserveDelta, _ := ev.ReserveDelta.MarshalBinary()
+	data := make([]byte, 0, 48+len(qty)+len(price)+len(ev.ReserveAsset)+len(reserveDelta))
 	data = appendU64(data, uint64(ev.UserID))
 	data = appendU64(data, uint64(ev.OrderID))
 	data = appendU32(data, uint32(len(qty)))
 	data = append(data, qty...)
 	data = appendU64(data, ev.Timestamp)
-	if len(price) > 0 {
-		data = appendU32(data, uint32(len(price)))
-		data = append(data, price...)
-	}
+	data = appendBytes(data, price)
+	data = appendString(data, ev.ReserveAsset)
+	data = appendBytes(data, reserveDelta)
 	return Event{Type: OrderAmended, Data: data}
 }
 
@@ -167,24 +186,41 @@ func DecodeOrderAmended(data []byte) (OrderAmendedEvent, error) {
 	}
 	off += qtyLen
 	ts := readU64(data, &off)
+	priceBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderAmendedEvent{}, err
+	}
 	var price types.Price
-	if off < len(data) {
-		priceLen := int(readU32(data, &off))
-		if priceLen < 0 || off+priceLen > len(data) {
-			return OrderAmendedEvent{}, errors.New("invalid order amended payload")
-		}
-		if err := price.UnmarshalBinary(data[off : off+priceLen]); err != nil {
+	if len(priceBytes) > 0 {
+		if err := price.UnmarshalBinary(priceBytes); err != nil {
 			return OrderAmendedEvent{}, err
 		}
 	}
-	return OrderAmendedEvent{UserID: userID, OrderID: orderID, NewQty: qty, NewPrice: price, Timestamp: ts}, nil
+	reserveAsset, err := readStringAt(data, &off)
+	if err != nil {
+		return OrderAmendedEvent{}, err
+	}
+	reserveDeltaBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderAmendedEvent{}, err
+	}
+	var reserveDelta types.Quantity
+	if len(reserveDeltaBytes) > 0 {
+		if err := reserveDelta.UnmarshalBinary(reserveDeltaBytes); err != nil {
+			return OrderAmendedEvent{}, err
+		}
+	}
+	return OrderAmendedEvent{UserID: userID, OrderID: orderID, NewQty: qty, NewPrice: price, Timestamp: ts, ReserveAsset: reserveAsset, ReserveDelta: reserveDelta}, nil
 }
 
 func EncodeOrderCanceled(ev OrderCanceledEvent) Event {
-	data := make([]byte, 0, 24)
+	releaseAmount, _ := ev.ReleaseAmount.MarshalBinary()
+	data := make([]byte, 0, 32+len(ev.ReleaseAsset)+len(releaseAmount))
 	data = appendU64(data, uint64(ev.UserID))
 	data = appendU64(data, uint64(ev.OrderID))
 	data = appendU64(data, ev.Timestamp)
+	data = appendString(data, ev.ReleaseAsset)
+	data = appendBytes(data, releaseAmount)
 	return Event{Type: OrderCanceled, Data: data}
 }
 
@@ -196,13 +232,33 @@ func DecodeOrderCanceled(data []byte) (OrderCanceledEvent, error) {
 	userID := types.UserID(readU64(data, &off))
 	orderID := types.OrderID(readU64(data, &off))
 	ts := readU64(data, &off)
-	return OrderCanceledEvent{UserID: userID, OrderID: orderID, Timestamp: ts}, nil
+	releaseAsset, err := readStringAt(data, &off)
+	if err != nil {
+		return OrderCanceledEvent{}, err
+	}
+	releaseAmountBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderCanceledEvent{}, err
+	}
+	var releaseAmount types.Quantity
+	if len(releaseAmountBytes) > 0 {
+		if err := releaseAmount.UnmarshalBinary(releaseAmountBytes); err != nil {
+			return OrderCanceledEvent{}, err
+		}
+	}
+	return OrderCanceledEvent{UserID: userID, OrderID: orderID, Timestamp: ts, ReleaseAsset: releaseAsset, ReleaseAmount: releaseAmount}, nil
 }
 
 func EncodeTrade(ev TradeEvent) Event {
 	priceBytes, _ := ev.Price.MarshalBinary()
 	qtyBytes, _ := ev.Quantity.MarshalBinary()
-	data := make([]byte, 0, 64+len(ev.Symbol)+len(priceBytes)+len(qtyBytes))
+	makerPriceBytes, _ := ev.MakerOrderPrice.MarshalBinary()
+	takerPriceBytes, _ := ev.TakerOrderPrice.MarshalBinary()
+	makerQtyBytes, _ := ev.MakerOrderQty.MarshalBinary()
+	makerFilledAfterBytes, _ := ev.MakerFilledAfter.MarshalBinary()
+	takerQtyBytes, _ := ev.TakerOrderQty.MarshalBinary()
+	takerFilledAfterBytes, _ := ev.TakerFilledAfter.MarshalBinary()
+	data := make([]byte, 0, 104+len(ev.Symbol)+len(priceBytes)+len(qtyBytes)+len(makerPriceBytes)+len(takerPriceBytes)+len(makerQtyBytes)+len(makerFilledAfterBytes)+len(takerQtyBytes)+len(takerFilledAfterBytes))
 	data = appendU64(data, uint64(ev.TradeID))
 	data = appendU64(data, uint64(ev.MakerUserID))
 	data = appendU64(data, uint64(ev.TakerUserID))
@@ -213,6 +269,12 @@ func EncodeTrade(ev TradeEvent) Event {
 	data = appendString(data, ev.Symbol)
 	data = appendBytes(data, priceBytes)
 	data = appendBytes(data, qtyBytes)
+	data = appendBytes(data, makerPriceBytes)
+	data = appendBytes(data, takerPriceBytes)
+	data = appendBytes(data, makerQtyBytes)
+	data = appendBytes(data, makerFilledAfterBytes)
+	data = appendBytes(data, takerQtyBytes)
+	data = appendBytes(data, takerFilledAfterBytes)
 	instBytes := encodeInstrument(ev.Instrument)
 	data = appendBytes(data, instBytes)
 	return Event{Type: TradeExecuted, Data: data}
@@ -280,6 +342,60 @@ func decodeTradePayload(data []byte, decodeSymbol bool) (TradeEvent, []byte, err
 	if err := ev.Quantity.UnmarshalBinary(qtyBytes); err != nil {
 		return ev, nil, err
 	}
+	makerPriceBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(makerPriceBytes) > 0 {
+		if err := ev.MakerOrderPrice.UnmarshalBinary(makerPriceBytes); err != nil {
+			return ev, nil, err
+		}
+	}
+	takerPriceBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(takerPriceBytes) > 0 {
+		if err := ev.TakerOrderPrice.UnmarshalBinary(takerPriceBytes); err != nil {
+			return ev, nil, err
+		}
+	}
+	makerQtyBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(makerQtyBytes) > 0 {
+		if err := ev.MakerOrderQty.UnmarshalBinary(makerQtyBytes); err != nil {
+			return ev, nil, err
+		}
+	}
+	makerFilledAfterBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(makerFilledAfterBytes) > 0 {
+		if err := ev.MakerFilledAfter.UnmarshalBinary(makerFilledAfterBytes); err != nil {
+			return ev, nil, err
+		}
+	}
+	takerQtyBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(takerQtyBytes) > 0 {
+		if err := ev.TakerOrderQty.UnmarshalBinary(takerQtyBytes); err != nil {
+			return ev, nil, err
+		}
+	}
+	takerFilledAfterBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return ev, nil, err
+	}
+	if len(takerFilledAfterBytes) > 0 {
+		if err := ev.TakerFilledAfter.UnmarshalBinary(takerFilledAfterBytes); err != nil {
+			return ev, nil, err
+		}
+	}
 	instBytes, err := readBytesAt(data, &off)
 	if err != nil {
 		return ev, nil, err
@@ -342,9 +458,11 @@ func DecodeFundingCreated(data []byte) (*types.FundingRequest, error) {
 	return codec.DecodeFunding(data)
 }
 
-func EncodeFundingStatus(t Type, id types.FundingID) Event {
-	data := make([]byte, 0, 8)
-	data = appendU64(data, uint64(id))
+func EncodeFundingStatus(t Type, req types.FundingRequest) Event {
+	fundingBytes := codec.EncodeFunding(&req)
+	data := make([]byte, 0, 12+len(fundingBytes))
+	data = appendU64(data, uint64(req.ID))
+	data = appendBytes(data, fundingBytes)
 	return Event{Type: t, Data: data}
 }
 
@@ -354,14 +472,25 @@ func DecodeFundingStatus(data []byte) (FundingStatusEvent, error) {
 	}
 	off := 0
 	id := types.FundingID(readU64(data, &off))
-	return FundingStatusEvent{FundingID: id}, nil
+	fundingBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return FundingStatusEvent{}, err
+	}
+	request, err := codec.DecodeFunding(fundingBytes)
+	if err != nil {
+		return FundingStatusEvent{}, err
+	}
+	return FundingStatusEvent{FundingID: id, Request: request}, nil
 }
 
 func EncodeOrderTriggered(ev OrderTriggeredEvent) Event {
-	data := make([]byte, 0, 24)
+	remainingReserveAmount, _ := ev.RemainingReserveAmount.MarshalBinary()
+	data := make([]byte, 0, 32+len(ev.RemainingReserveAsset)+len(remainingReserveAmount))
 	data = appendU64(data, uint64(ev.UserID))
 	data = appendU64(data, uint64(ev.OrderID))
 	data = appendU64(data, ev.Timestamp)
+	data = appendString(data, ev.RemainingReserveAsset)
+	data = appendBytes(data, remainingReserveAmount)
 	return Event{Type: OrderTriggered, Data: data}
 }
 
@@ -451,7 +580,21 @@ func DecodeOrderTriggered(data []byte) (OrderTriggeredEvent, error) {
 	userID := types.UserID(readU64(data, &off))
 	orderID := types.OrderID(readU64(data, &off))
 	ts := readU64(data, &off)
-	return OrderTriggeredEvent{UserID: userID, OrderID: orderID, Timestamp: ts}, nil
+	reserveAsset, err := readStringAt(data, &off)
+	if err != nil {
+		return OrderTriggeredEvent{}, err
+	}
+	reserveAmountBytes, err := readBytesAt(data, &off)
+	if err != nil {
+		return OrderTriggeredEvent{}, err
+	}
+	var reserveAmount types.Quantity
+	if len(reserveAmountBytes) > 0 {
+		if err := reserveAmount.UnmarshalBinary(reserveAmountBytes); err != nil {
+			return OrderTriggeredEvent{}, err
+		}
+	}
+	return OrderTriggeredEvent{UserID: userID, OrderID: orderID, Timestamp: ts, RemainingReserveAsset: reserveAsset, RemainingReserveAmount: reserveAmount}, nil
 }
 
 func appendU64(dst []byte, v uint64) []byte {

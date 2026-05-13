@@ -1,8 +1,6 @@
 package replay
 
 import (
-	"fmt"
-
 	"github.com/maxonlinux/meta-terminal-go/internal/clearing"
 	"github.com/maxonlinux/meta-terminal-go/internal/oms"
 	"github.com/maxonlinux/meta-terminal-go/internal/portfolio"
@@ -113,26 +111,25 @@ func (r *Replayer) ApplyOrderAmended(amend events.OrderAmendedEvent) error {
 		return nil
 	}
 	order.UpdatedAt = amend.Timestamp
+	newPrice := order.Price
 	if math.Sign(amend.NewPrice) > 0 {
-		order.Price = amend.NewPrice
+		newPrice = amend.NewPrice
 	}
 	if order.IsConditional || order.Type != constants.ORDER_TYPE_LIMIT {
+		order.Price = newPrice
 		order.Quantity = amend.NewQty
 		return nil
 	}
-	oldRemaining := math.Sub(order.Quantity, order.Filled)
-	order.Quantity = amend.NewQty
-	newRemaining := math.Sub(order.Quantity, order.Filled)
-	delta := math.Sub(newRemaining, oldRemaining)
-	if math.Sign(delta) > 0 {
-		if err := r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, delta, order.Price); err != nil {
+	if math.Sign(amend.ReserveDelta) > 0 {
+		if err := r.portfolio.Reserve(order.UserID, amend.ReserveAsset, amend.ReserveDelta); err != nil {
 			return err
 		}
-	} else if math.Sign(delta) < 0 {
-		if err := r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, math.Neg(delta), order.Price); err != nil {
-			return err
-		}
+	} else if math.Sign(amend.ReserveDelta) < 0 {
+		r.portfolio.Release(order.UserID, amend.ReserveAsset, types.Quantity(math.Neg(amend.ReserveDelta)))
 	}
+
+	order.Price = newPrice
+	order.Quantity = amend.NewQty
 	return nil
 }
 
@@ -146,10 +143,8 @@ func (r *Replayer) ApplyOrderCanceled(cancel events.OrderCanceledEvent) error {
 			return nil
 		}
 		remaining := math.Sub(order.Quantity, order.Filled)
-		if math.Sign(remaining) > 0 {
-			if err := r.clearing.Release(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price); err != nil {
-				return err
-			}
+		if math.Sign(remaining) > 0 && math.Sign(cancel.ReleaseAmount) > 0 {
+			r.portfolio.Release(order.UserID, cancel.ReleaseAsset, cancel.ReleaseAmount)
 		}
 		order.UpdatedAt = cancel.Timestamp
 		if err := r.store.Cancel(order.UserID, order.ID); err != nil {
@@ -160,18 +155,15 @@ func (r *Replayer) ApplyOrderCanceled(cancel events.OrderCanceledEvent) error {
 }
 
 func (r *Replayer) ApplyTradeExecuted(trade events.TradeEvent) error {
-	maker, _ := r.store.GetUserOrder(trade.MakerUserID, trade.MakerOrderID)
-	taker, _ := r.store.GetUserOrder(trade.TakerUserID, trade.TakerOrderID)
-	return r.ApplyTradeExecutedWithOrders(trade, maker, taker)
-}
-
-func (r *Replayer) ApplyTradeExecutedWithOrders(trade events.TradeEvent, maker *types.Order, taker *types.Order) error {
 	if trade.Instrument != nil {
 		r.registry.SetInstrument(trade.Symbol, trade.Instrument)
 	}
-	if maker == nil || taker == nil {
-		return fmt.Errorf("missing orders for trade %d", trade.TradeID)
+	makerSide := int8(constants.ORDER_SIDE_BUY)
+	if trade.TakerSide == constants.ORDER_SIDE_BUY {
+		makerSide = int8(constants.ORDER_SIDE_SELL)
 	}
+	maker := &types.Order{ID: trade.MakerOrderID, UserID: trade.MakerUserID, Symbol: trade.Symbol, Category: trade.Category, Side: makerSide, Type: trade.MakerOrderType, Price: trade.MakerOrderPrice}
+	taker := &types.Order{ID: trade.TakerOrderID, UserID: trade.TakerUserID, Symbol: trade.Symbol, Category: trade.Category, Side: trade.TakerSide, Type: trade.TakerOrderType, Price: trade.TakerOrderPrice}
 	match := types.Match{
 		ID:         trade.TradeID,
 		Symbol:     trade.Symbol,
@@ -218,13 +210,19 @@ func (r *Replayer) ApplyFundingCreated(req *types.FundingRequest) error {
 }
 
 func (r *Replayer) ApplyFundingApproved(evt events.FundingStatusEvent) error {
-	_, _ = r.portfolio.ApproveFunding(evt.FundingID)
-	return nil
+	req := *evt.Request
+	req.Status = types.FundingStatusPending
+	r.portfolio.Fundings[evt.FundingID] = &req
+	_, err := r.portfolio.ApproveFunding(evt.FundingID)
+	return err
 }
 
 func (r *Replayer) ApplyFundingRejected(evt events.FundingStatusEvent) error {
-	_, _ = r.portfolio.RejectFunding(evt.FundingID)
-	return nil
+	req := *evt.Request
+	req.Status = types.FundingStatusPending
+	r.portfolio.Fundings[evt.FundingID] = &req
+	_, err := r.portfolio.RejectFunding(evt.FundingID)
+	return err
 }
 
 func (r *Replayer) ApplyOrderTriggered(evt events.OrderTriggeredEvent) error {
@@ -234,8 +232,10 @@ func (r *Replayer) ApplyOrderTriggered(evt events.OrderTriggeredEvent) error {
 		order.IsConditional = false
 		order.TriggerPrice = types.Price{}
 		remaining := math.Sub(order.Quantity, order.Filled)
-		if math.Sign(remaining) > 0 {
-			_ = r.clearing.Reserve(order.UserID, order.Symbol, order.Category, order.Side, remaining, order.Price)
+		if math.Sign(remaining) > 0 && math.Sign(evt.RemainingReserveAmount) > 0 {
+			if err := r.portfolio.Reserve(order.UserID, evt.RemainingReserveAsset, evt.RemainingReserveAmount); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
