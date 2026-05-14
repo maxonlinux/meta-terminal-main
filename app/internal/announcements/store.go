@@ -38,7 +38,6 @@ func (s *SQLiteStore) ensureSchema() error {
 		);
 		CREATE INDEX IF NOT EXISTS announcements_scope_idx ON announcements (scope, is_active, priority, created_at);
 		CREATE INDEX IF NOT EXISTS announcements_user_idx ON announcements (user_id, is_active, priority, created_at);
-		DROP TABLE IF EXISTS announcement_dismissals;
 	`)
 	return err
 }
