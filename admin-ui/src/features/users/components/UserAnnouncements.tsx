@@ -2,14 +2,23 @@
 
 import { useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import {
   createAnnouncement,
   deleteAnnouncement,
   getAnnouncements,
   updateAnnouncement,
 } from "@/api/admin";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
 
@@ -22,7 +31,7 @@ export function UserAnnouncements({ id }: { id: string }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
-  const { data, isLoading, mutate } = useSWR(
+  const { data, error: loadError, isLoading, mutate } = useSWR(
     ["admin:user-announcements", id],
     () => getAnnouncements("USER", id),
   );
@@ -48,6 +57,7 @@ export function UserAnnouncements({ id }: { id: string }) {
       setBody("");
       setLink("");
       setPriority(0);
+      toast.success("Announcement created");
       await mutate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create announcement");
@@ -73,6 +83,7 @@ export function UserAnnouncements({ id }: { id: string }) {
         startsAt: current.startsAt,
         endsAt: current.endsAt,
       });
+      toast.success("Announcement disabled");
       await mutate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disable announcement");
@@ -93,6 +104,7 @@ export function UserAnnouncements({ id }: { id: string }) {
             : "Failed to delete announcement";
         throw new Error(message);
       }
+      toast.success("Announcement deleted");
       await mutate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete announcement");
@@ -105,11 +117,14 @@ export function UserAnnouncements({ id }: { id: string }) {
     <Card>
       <CardHeader>
         <CardTitle>User Announcements</CardTitle>
+        <CardDescription>Personal announcements for this user only.</CardDescription>
+        <CardAction>
+          <Button intent="outline" onClick={() => void mutate()}>
+            Refresh
+          </Button>
+        </CardAction>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-muted-fg">
-          Personal announcements for this user only.
-        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Input
             placeholder="Title"
@@ -134,16 +149,14 @@ export function UserAnnouncements({ id }: { id: string }) {
             onChange={(e) => setBody(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <ButtonGroup>
           <Button onClick={() => void create()} disabled={isCreating}>
             {isCreating ? <Loader variant="spin" /> : null}
             Create announcement
           </Button>
-          <Button intent="outline" onClick={() => void mutate()}>
-            Refresh
-          </Button>
-        </div>
+        </ButtonGroup>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError.message}</p> : null}
 
         {isLoading && <p>Loading...</p>}
         {!isLoading && (!data || data.length === 0) && <p>No user announcements.</p>}
