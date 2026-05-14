@@ -119,7 +119,7 @@ export function AnnouncementsPanel() {
     });
   };
 
-  const disableItem = async (item: Announcement) => {
+  const toggleItem = async (item: Announcement) => {
     try {
       await updateAnnouncement(item.id, {
         scope: item.scope,
@@ -128,14 +128,14 @@ export function AnnouncementsPanel() {
         body: item.body,
         link: item.link,
         priority: item.priority,
-        isActive: false,
+        isActive: !item.isActive,
         startsAt: item.startsAt,
         endsAt: item.endsAt,
       });
-      toast.success("Announcement disabled");
+      toast.success(item.isActive ? "Announcement disabled" : "Announcement enabled");
       await mutate();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to disable announcement");
+      toast.error(err instanceof Error ? err.message : "Failed to update announcement");
     }
   };
 
@@ -333,11 +333,9 @@ export function AnnouncementsPanel() {
                     <Button intent="outline" onClick={() => editItem(item)}>
                       Edit
                     </Button>
-                    {item.isActive ? (
-                      <Button intent="outline" onClick={() => void disableItem(item)}>
-                        Disable
-                      </Button>
-                    ) : null}
+                    <Button intent="outline" onClick={() => void toggleItem(item)}>
+                      {item.isActive ? "Disable" : "Enable"}
+                    </Button>
                     <Button intent="outline" onClick={() => void removeItem(item)}>
                       Delete
                     </Button>

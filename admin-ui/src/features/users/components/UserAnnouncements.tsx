@@ -19,54 +19,76 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
+import { Separator } from "@/components/ui/separator";
+
+type FormState = {
+  title: string;
+  body: string;
+  link: string;
+  priority: number;
+  isActive: boolean;
+};
+
+const initialForm: FormState = {
+  title: "",
+  body: "",
+  link: "",
+  priority: 0,
+  isActive: true,
+};
 
 export function UserAnnouncements({ id }: { id: string }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [link, setLink] = useState("");
-  const [priority, setPriority] = useState(0);
+  const [form, setForm] = useState<FormState>(initialForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data, error: loadError, isLoading, mutate } = useSWR(
     ["admin:user-announcements", id],
     () => getAnnouncements("USER", id),
   );
 
-  const create = async () => {
+  const submit = async () => {
     setError(null);
-    if (!title.trim() || !body.trim()) {
+    if (!form.title.trim() || !form.body.trim()) {
       setError("Title and body are required");
       return;
     }
     try {
-      setIsCreating(true);
-      await createAnnouncement({
-        scope: "USER",
+      setIsSubmitting(true);
+      const payload = {
+        scope: "USER" as const,
         userId: id,
-        title: title.trim(),
-        body: body.trim(),
-        link: link.trim() || undefined,
-        priority,
-        isActive: true,
-      });
-      setTitle("");
-      setBody("");
-      setLink("");
-      setPriority(0);
-      toast.success("Announcement created");
+        title: form.title.trim(),
+        body: form.body.trim(),
+        link: form.link.trim() || undefined,
+        priority: form.priority,
+        isActive: form.isActive,
+      };
+
+      if (editingId) {
+        await updateAnnouncement(editingId, payload);
+        toast.success("Announcement updated");
+      } else {
+        await createAnnouncement(payload);
+        toast.success("Announcement created");
+      }
+
+      setForm(initialForm);
+      setEditingId(null);
       await mutate();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create announcement");
+      setError(err instanceof Error ? err.message : "Failed to save announcement");
     } finally {
-      setIsCreating(false);
+      setIsSubmitting(false);
     }
   };
 
-  const disable = async (announcementId: string) => {
+  const toggle = async (announcementId: string) => {
     const current = data?.find((x) => x.id === announcementId);
     if (!current) return;
     setError(null);
@@ -79,17 +101,32 @@ export function UserAnnouncements({ id }: { id: string }) {
         body: current.body,
         link: current.link,
         priority: current.priority,
-        isActive: false,
+        isActive: !current.isActive,
         startsAt: current.startsAt,
         endsAt: current.endsAt,
       });
-      toast.success("Announcement disabled");
+      toast.success(current.isActive ? "Announcement disabled" : "Announcement enabled");
       await mutate();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disable announcement");
+      setError(err instanceof Error ? err.message : "Failed to update announcement");
     } finally {
       setBusyId(null);
     }
+  };
+
+  const edit = (announcementId: string) => {
+    const current = data?.find((x) => x.id === announcementId);
+    if (!current) {
+      return;
+    }
+    setEditingId(announcementId);
+    setForm({
+      title: current.title,
+      body: current.body,
+      link: current.link ?? "",
+      priority: current.priority,
+      isActive: current.isActive,
+    });
   };
 
   const remove = async (announcementId: string) => {
@@ -117,7 +154,9 @@ export function UserAnnouncements({ id }: { id: string }) {
     <Card>
       <CardHeader>
         <CardTitle>User Announcements</CardTitle>
-        <CardDescription>Personal announcements for this user only.</CardDescription>
+        <CardDescription>
+          Personal announcements for this user only. Edit, enable, disable, or delete inline.
+        </CardDescription>
         <CardAction>
           <Button intent="outline" onClick={() => void mutate()}>
             Refresh
@@ -125,35 +164,74 @@ export function UserAnnouncements({ id }: { id: string }) {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="grid gap-2 rounded-md border border-border/70 bg-muted/25 p-3 md:grid-cols-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Target user</p>
+            <p className="text-sm font-medium">{id}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Status</p>
+            <p className="text-sm font-medium">{form.isActive ? "Active" : "Inactive"}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Priority</p>
+            <p className="text-sm font-medium">{form.priority}</p>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Input
             placeholder="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            value={form.title}
+            onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
           />
           <Input
             placeholder="Link (optional)"
-            value={link}
-            onChange={(e) => setLink(e.target.value)}
+            value={form.link}
+            onChange={(e) => setForm((prev) => ({ ...prev, link: e.target.value }))}
           />
           <Input
             placeholder="Priority"
             type="number"
-            value={String(priority)}
-            onChange={(e) => setPriority(Number(e.target.value) || 0)}
+            value={String(form.priority)}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, priority: Number(e.target.value) || 0 }))
+            }
           />
+          <Checkbox
+            isSelected={form.isActive}
+            onChange={(isSelected) =>
+              setForm((prev) => ({ ...prev, isActive: Boolean(isSelected) }))
+            }
+          >
+            Active
+          </Checkbox>
           <textarea
-            className="md:col-span-2 min-h-24 rounded-md border bg-transparent px-3 py-2"
+            className="md:col-span-2 min-h-28 rounded-md border bg-transparent px-3 py-2 text-sm"
             placeholder="Body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+            value={form.body}
+            onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
           />
         </div>
+
+        <Separator />
+
         <ButtonGroup>
-          <Button onClick={() => void create()} disabled={isCreating}>
-            {isCreating ? <Loader variant="spin" /> : null}
-            Create announcement
+          <Button onClick={() => void submit()} disabled={isSubmitting}>
+            {isSubmitting ? <Loader variant="spin" /> : null}
+            {editingId ? "Update announcement" : "Create announcement"}
           </Button>
+          {editingId ? (
+            <Button
+              intent="outline"
+              onClick={() => {
+                setEditingId(null);
+                setForm(initialForm);
+              }}
+            >
+              Cancel
+            </Button>
+          ) : null}
         </ButtonGroup>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         {loadError ? <p className="text-sm text-danger">{loadError.message}</p> : null}
@@ -162,24 +240,41 @@ export function UserAnnouncements({ id }: { id: string }) {
         {!isLoading && (!data || data.length === 0) && <p>No user announcements.</p>}
         <div className="space-y-2">
           {data?.map((item) => (
-            <div key={item.id} className="rounded-md border p-3">
+            <div
+              key={item.id}
+              className="rounded-lg border p-3 transition-colors hover:border-primary/40"
+            >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-semibold">{item.title}</p>
-                  <p className="text-xs opacity-70">
-                    priority {item.priority} • {item.isActive ? "active" : "inactive"}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  {item.isActive && (
-                    <Button
-                      intent="outline"
-                      onClick={() => void disable(item.id)}
-                      disabled={busyId === item.id}
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
+                      priority {item.priority}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        item.isActive ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
+                      }`}
                     >
-                      Disable
-                    </Button>
-                  )}
+                      {item.isActive ? "active" : "inactive"}
+                    </span>
+                  </div>
+                  <p className="text-sm font-semibold leading-snug">{item.title}</p>
+                </div>
+                <ButtonGroup>
+                  <Button
+                    intent="outline"
+                    onClick={() => edit(item.id)}
+                    disabled={busyId === item.id}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    intent="outline"
+                    onClick={() => void toggle(item.id)}
+                    disabled={busyId === item.id}
+                  >
+                    {item.isActive ? "Disable" : "Enable"}
+                  </Button>
                   <Button
                     intent="outline"
                     onClick={() => void remove(item.id)}
@@ -187,9 +282,9 @@ export function UserAnnouncements({ id }: { id: string }) {
                   >
                     Delete
                   </Button>
-                </div>
+                </ButtonGroup>
               </div>
-              <p className="text-sm mt-2">{item.body}</p>
+              <p className="mt-2 text-sm leading-snug text-muted-fg">{item.body}</p>
             </div>
           ))}
         </div>
