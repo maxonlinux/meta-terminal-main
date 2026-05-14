@@ -117,17 +117,23 @@ export function AnnouncementForm({
           />
         </TextField>
 
-        <Switch
-          isSelected={value.isActive}
-          onChange={(isSelected) => onChange({ ...value, isActive: Boolean(isSelected) })}
-        >
-          Active
-        </Switch>
+        <div className="pt-1">
+          <Switch
+            className="max-w-fit"
+            isSelected={value.isActive}
+            onChange={(isSelected) =>
+              onChange({ ...value, isActive: Boolean(isSelected) })
+            }
+          >
+            Active
+          </Switch>
+        </div>
       </div>
 
       <TextField>
         <Label>Body</Label>
         <textarea
+          data-slot="control"
           className="w-full min-h-32 rounded-md border bg-transparent px-3 py-2 text-sm"
           value={value.body}
           onChange={(event) => onChange({ ...value, body: event.target.value })}

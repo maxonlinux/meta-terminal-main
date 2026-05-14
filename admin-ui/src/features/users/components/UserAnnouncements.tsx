@@ -219,13 +219,13 @@ export function UserAnnouncements({ id }: { id: string }) {
           {data?.map((item) => (
             <div
               key={item.id}
-              className="rounded-lg border p-3 transition-colors hover:border-primary/40"
+              className="rounded-lg border bg-muted/15 p-4"
             >
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0 space-y-1">
                   <p className="text-sm font-semibold leading-snug break-words">{item.title}</p>
-                  <p className="text-sm leading-snug text-muted-fg break-words">{item.body}</p>
-                  <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs text-muted-fg sm:grid-cols-2">
+                  <p className="pt-1 text-sm leading-snug text-muted-fg break-words">{item.body}</p>
+                  <div className="grid grid-cols-1 gap-x-4 gap-y-1 pt-2 text-xs text-muted-fg sm:grid-cols-2">
                     <span>Status: {item.isActive ? "Active" : "Inactive"}</span>
                     <span>Priority: {item.priority}</span>
                   </div>
