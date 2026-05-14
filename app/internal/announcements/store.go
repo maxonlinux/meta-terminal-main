@@ -38,12 +38,7 @@ func (s *SQLiteStore) ensureSchema() error {
 		);
 		CREATE INDEX IF NOT EXISTS announcements_scope_idx ON announcements (scope, is_active, priority, created_at);
 		CREATE INDEX IF NOT EXISTS announcements_user_idx ON announcements (user_id, is_active, priority, created_at);
-		CREATE TABLE IF NOT EXISTS announcement_dismissals (
-			user_id INTEGER NOT NULL,
-			announcement_id INTEGER NOT NULL,
-			dismissed_at INTEGER NOT NULL,
-			PRIMARY KEY (user_id, announcement_id)
-		);
+		DROP TABLE IF EXISTS announcement_dismissals;
 	`)
 	return err
 }
@@ -130,9 +125,6 @@ func (s *SQLiteStore) ListActiveForUser(userID types.UserID, now uint64) ([]Anno
 }
 
 func (s *SQLiteStore) Delete(id int64) error {
-	if _, err := s.db.Exec(`delete from announcement_dismissals where announcement_id = ?`, id); err != nil {
-		return err
-	}
 	_, err := s.db.Exec(`delete from announcements where id = ?`, id)
 	return err
 }
