@@ -8,7 +8,7 @@ import {
   LifebuoyIcon,
   ShieldCheckIcon,
 } from "@heroicons/react/24/solid";
-import { Fingerprint, HashIcon, UserStar, Users2, Wallet } from "lucide-react";
+import { Bell, Fingerprint, HashIcon, UserStar, Users2, Wallet } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { getPendingCount } from "@/api/admin";
@@ -60,6 +60,12 @@ const menu = [
     label: "KYCs",
     countKey: "kyc",
     icon: Fingerprint,
+  },
+  {
+    href: "/announcements",
+    label: "Announcements",
+    countKey: "announcements",
+    icon: Bell,
   },
 ];
 

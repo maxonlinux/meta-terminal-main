@@ -14,6 +14,7 @@ import (
 	"github.com/grafana/pyroscope-go"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/announcements"
 	apihandlers "github.com/maxonlinux/meta-terminal-go/internal/api/http"
 	wsapi "github.com/maxonlinux/meta-terminal-go/internal/api/ws"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
@@ -383,6 +384,11 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 		log.Fatalf("jwt service: %v", err)
 	}
 	authService := users.NewService(userStore)
+	announcementStore, err := announcements.NewSQLiteStore(userStore.DB())
+	if err != nil {
+		return err
+	}
+	announcementService := announcements.NewService(announcementStore)
 	otpService := otp.NewService(otp.Config{
 		SiteName:       cfg.SiteName,
 		SmsAuthToken:   cfg.SmsAuthToken,
@@ -397,7 +403,7 @@ func runServer(eng *engine.Engine, cfg config.Config, persistenceStore *persiste
 
 	wsHandler := wsapi.NewWsHandler(eng.ReadBook, jwtService, cfg.JwtCookieName)
 	eng.SetPublisher(wsHandler.Publisher())
-	router, err := apihandlers.NewRouter(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler, cfg)
+	router, err := apihandlers.NewRouter(eng, persistenceStore, jwtService, authService, announcementService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler, cfg)
 	if err != nil {
 		return err
 	}

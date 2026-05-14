@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/announcements"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/impersonation"
@@ -19,28 +20,30 @@ import (
 )
 
 type AdminHandler struct {
-	plan        *plan.Service
-	planRepo    *plan.Repository
-	wallets     *wallets.Service
-	users       *users.Service
-	otp         *otp.Service
-	store       *persistence.Store
-	kycRepo     *kyc.Repository
-	engine      *engine.Engine
-	impersonate *impersonation.Service
+	announcements *announcements.Service
+	plan          *plan.Service
+	planRepo      *plan.Repository
+	wallets       *wallets.Service
+	users         *users.Service
+	otp           *otp.Service
+	store         *persistence.Store
+	kycRepo       *kyc.Repository
+	engine        *engine.Engine
+	impersonate   *impersonation.Service
 }
 
-func NewAdminHandler(planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, userService *users.Service, otpService *otp.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
+func NewAdminHandler(announcementService *announcements.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, userService *users.Service, otpService *otp.Service, store *persistence.Store, kycRepo *kyc.Repository, eng *engine.Engine, imp *impersonation.Service) *AdminHandler {
 	return &AdminHandler{
-		plan:        planService,
-		planRepo:    planRepo,
-		wallets:     walletService,
-		users:       userService,
-		otp:         otpService,
-		store:       store,
-		kycRepo:     kycRepo,
-		engine:      eng,
-		impersonate: imp,
+		announcements: announcementService,
+		plan:          planService,
+		planRepo:      planRepo,
+		wallets:       walletService,
+		users:         userService,
+		otp:           otpService,
+		store:         store,
+		kycRepo:       kycRepo,
+		engine:        eng,
+		impersonate:   imp,
 	}
 }
 
@@ -138,6 +141,33 @@ type AdminImpersonateResponse struct {
 	Code string `json:"code"`
 }
 
+type AdminAnnouncement struct {
+	ID        string  `json:"id"`
+	Scope     string  `json:"scope"`
+	UserID    *string `json:"userId,omitempty"`
+	Title     string  `json:"title"`
+	Body      string  `json:"body"`
+	Link      *string `json:"link,omitempty"`
+	Priority  int     `json:"priority"`
+	IsActive  bool    `json:"isActive"`
+	StartsAt  *int64  `json:"startsAt,omitempty"`
+	EndsAt    *int64  `json:"endsAt,omitempty"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+type AdminAnnouncementUpsertRequest struct {
+	Scope    string  `json:"scope"`
+	UserID   *string `json:"userId"`
+	Title    string  `json:"title"`
+	Body     string  `json:"body"`
+	Link     *string `json:"link"`
+	Priority int     `json:"priority"`
+	IsActive *bool   `json:"isActive"`
+	StartsAt *int64  `json:"startsAt"`
+	EndsAt   *int64  `json:"endsAt"`
+}
+
 func (h *AdminHandler) ExistingPlans(c *echo.Context) error {
 	plans := []string{
 		string(plan.PlanLowBase),
@@ -150,6 +180,88 @@ func (h *AdminHandler) ExistingPlans(c *echo.Context) error {
 		string(plan.PlanProfessional),
 	}
 	return c.JSON(http.StatusOK, plans)
+}
+
+func (h *AdminHandler) ListAnnouncements(c *echo.Context) error {
+	scope := strings.ToUpper(strings.TrimSpace(c.QueryParam("scope")))
+	var userID *types.UserID
+	if rawUserID := strings.TrimSpace(c.QueryParam("userId")); rawUserID != "" {
+		parsed, err := parseInt64ID(rawUserID)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+		}
+		u := types.UserID(parsed)
+		userID = &u
+	}
+	var active *bool
+	if rawActive := strings.TrimSpace(c.QueryParam("active")); rawActive != "" {
+		val := rawActive == "1" || strings.EqualFold(rawActive, "true")
+		active = &val
+	}
+	items, err := h.announcements.List(scope, userID, active)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load announcements"})
+	}
+	resp := make([]AdminAnnouncement, 0, len(items))
+	for i := range items {
+		resp = append(resp, toAdminAnnouncement(items[i]))
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+func (h *AdminHandler) CreateAnnouncement(c *echo.Context) error {
+	var req AdminAnnouncementUpsertRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	input, err := announcementUpsertFromRequest(req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	id, err := h.announcements.Create(input)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	items, err := h.announcements.List("", nil, nil)
+	if err != nil {
+		return c.JSON(http.StatusCreated, map[string]string{"id": strconv.FormatInt(id, 10)})
+	}
+	for i := range items {
+		if items[i].ID == id {
+			return c.JSON(http.StatusCreated, toAdminAnnouncement(items[i]))
+		}
+	}
+	return c.JSON(http.StatusCreated, map[string]string{"id": strconv.FormatInt(id, 10)})
+}
+
+func (h *AdminHandler) UpdateAnnouncement(c *echo.Context) error {
+	announcementID, err := parseInt64ID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid announcement id"})
+	}
+	var req AdminAnnouncementUpsertRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	input, err := announcementUpsertFromRequest(req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if err := h.announcements.Update(announcementID, input); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusOK)
+}
+
+func (h *AdminHandler) DeleteAnnouncement(c *echo.Context) error {
+	announcementID, err := parseInt64ID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid announcement id"})
+	}
+	if err := h.announcements.Delete(announcementID); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusOK)
 }
 
 func (h *AdminHandler) Users(c *echo.Context) error {
@@ -658,6 +770,86 @@ func parsePagination(c *echo.Context) (int, int) {
 		}
 	}
 	return limit, offset
+}
+
+func toAdminAnnouncement(a announcements.Announcement) AdminAnnouncement {
+	var userID *string
+	if a.UserID != nil {
+		v := strconv.FormatInt(int64(*a.UserID), 10)
+		userID = &v
+	}
+	return AdminAnnouncement{
+		ID:        strconv.FormatInt(a.ID, 10),
+		Scope:     a.Scope,
+		UserID:    userID,
+		Title:     a.Title,
+		Body:      a.Body,
+		Link:      a.Link,
+		Priority:  a.Priority,
+		IsActive:  a.IsActive,
+		StartsAt:  nanoToMilliPtr(a.StartsAt),
+		EndsAt:    nanoToMilliPtr(a.EndsAt),
+		CreatedAt: shared.UnixMilliFromNano(a.CreatedAt),
+		UpdatedAt: shared.UnixMilliFromNano(a.UpdatedAt),
+	}
+}
+
+func announcementUpsertFromRequest(req AdminAnnouncementUpsertRequest) (announcements.UpsertInput, error) {
+	scope := strings.ToUpper(strings.TrimSpace(req.Scope))
+	var userID *types.UserID
+	if req.UserID != nil && strings.TrimSpace(*req.UserID) != "" {
+		parsed, err := parseInt64ID(*req.UserID)
+		if err != nil {
+			return announcements.UpsertInput{}, err
+		}
+		u := types.UserID(parsed)
+		userID = &u
+	}
+	if scope == announcements.ScopeGlobal {
+		userID = nil
+	}
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	return announcements.UpsertInput{
+		Scope:    scope,
+		UserID:   userID,
+		Title:    strings.TrimSpace(req.Title),
+		Body:     strings.TrimSpace(req.Body),
+		Link:     trimStringPtr(req.Link),
+		Priority: req.Priority,
+		IsActive: isActive,
+		StartsAt: milliToNanoPtr(req.StartsAt),
+		EndsAt:   milliToNanoPtr(req.EndsAt),
+	}, nil
+}
+
+func milliToNanoPtr(v *int64) *uint64 {
+	if v == nil {
+		return nil
+	}
+	n := uint64(*v) * 1_000_000
+	return &n
+}
+
+func nanoToMilliPtr(v *uint64) *int64 {
+	if v == nil {
+		return nil
+	}
+	m := int64(*v / 1_000_000)
+	return &m
+}
+
+func trimStringPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	s := strings.TrimSpace(*v)
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func isValidPlan(name plan.Name) bool {

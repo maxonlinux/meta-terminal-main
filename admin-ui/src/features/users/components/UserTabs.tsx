@@ -14,6 +14,7 @@ import { UserAddressDetails } from "./UserAddressDetails";
 import { UserBasicDetails } from "./UserBasicDetails";
 import { UserKyc } from "./UserKyc";
 import { UserPlanSelector } from "./UserPlanSelector";
+import { UserAnnouncements } from "./UserAnnouncements";
 import { UserTransactionsTable } from "./UserTransactionsTable";
 import { UserWallets } from "./UserWallets";
 
@@ -57,6 +58,7 @@ export function UserTabs({ id }: { id: string }) {
         </Card>
 
         <UserPlanSelector id={id} />
+        <UserAnnouncements id={id} />
         <UserBasicDetails id={id} />
         <UserAddressDetails id={id} />
       </TabPanel>

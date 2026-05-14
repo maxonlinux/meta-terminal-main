@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v5"
+	"github.com/maxonlinux/meta-terminal-go/internal/announcements"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/shared"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
 	"github.com/maxonlinux/meta-terminal-go/internal/persistence"
@@ -13,15 +14,17 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/maxonlinux/meta-terminal-go/pkg/utils"
 	"github.com/robaho/fixed"
 )
 
 type UserHandler struct {
-	users   *users.Service
-	eng     *engine.Engine
-	store   *persistence.Store
-	plan    *plan.Service
-	wallets *wallets.Service
+	announcements *announcements.Service
+	users         *users.Service
+	eng           *engine.Engine
+	store         *persistence.Store
+	plan          *plan.Service
+	wallets       *wallets.Service
 }
 
 type UserProfileResponse struct {
@@ -61,8 +64,58 @@ type UserPlanResponse struct {
 	NetDeposits string      `json:"netDeposits"`
 }
 
-func NewUserHandler(users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service, walletService *wallets.Service) *UserHandler {
-	return &UserHandler{users: users, eng: eng, store: persistenceStore, plan: planService, wallets: walletService}
+type UserAnnouncement struct {
+	ID        string  `json:"id"`
+	Scope     string  `json:"scope"`
+	Title     string  `json:"title"`
+	Body      string  `json:"body"`
+	Link      *string `json:"link,omitempty"`
+	Priority  int     `json:"priority"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
+func NewUserHandler(announcementService *announcements.Service, users *users.Service, eng *engine.Engine, persistenceStore *persistence.Store, planService *plan.Service, walletService *wallets.Service) *UserHandler {
+	return &UserHandler{announcements: announcementService, users: users, eng: eng, store: persistenceStore, plan: planService, wallets: walletService}
+}
+
+func (h *UserHandler) Announcements(c *echo.Context) error {
+	claims := getUser(c)
+	if claims == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+	items, err := h.announcements.ListActiveForUser(claims.UserID, utils.NowNano())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load announcements"})
+	}
+	resp := make([]UserAnnouncement, 0, len(items))
+	for i := range items {
+		rec := items[i]
+		resp = append(resp, UserAnnouncement{
+			ID:        strconv.FormatInt(rec.ID, 10),
+			Scope:     rec.Scope,
+			Title:     rec.Title,
+			Body:      rec.Body,
+			Link:      rec.Link,
+			Priority:  rec.Priority,
+			CreatedAt: shared.UnixMilliFromNano(rec.CreatedAt),
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+func (h *UserHandler) DismissAnnouncement(c *echo.Context) error {
+	claims := getUser(c)
+	if claims == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+	}
+	announcementID, err := parseInt64ID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid announcement id"})
+	}
+	if err := h.announcements.Dismiss(claims.UserID, announcementID, utils.NowNano()); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to dismiss announcement"})
+	}
+	return c.NoContent(http.StatusOK)
 }
 
 func (h *UserHandler) Profile(c *echo.Context) error {

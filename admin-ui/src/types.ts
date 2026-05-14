@@ -105,3 +105,18 @@ export type KycListItem = KycRequest & {
     phone: string;
   };
 };
+
+export type Announcement = {
+  id: string;
+  scope: "USER" | "GLOBAL";
+  userId?: string;
+  title: string;
+  body: string;
+  link?: string;
+  priority: number;
+  isActive: boolean;
+  startsAt?: number;
+  endsAt?: number;
+  createdAt: number;
+  updatedAt: number;
+};

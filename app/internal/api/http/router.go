@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v5"
 	echomw "github.com/labstack/echo/v5/middleware"
+	"github.com/maxonlinux/meta-terminal-go/internal/announcements"
 	"github.com/maxonlinux/meta-terminal-go/internal/api/ws"
 	"github.com/maxonlinux/meta-terminal-go/internal/auth"
 	"github.com/maxonlinux/meta-terminal-go/internal/engine"
@@ -42,21 +43,21 @@ type Router struct {
 	jwtCookieName string
 }
 
-func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler, cfg config.Config) (*Router, error) {
-	if err := validateRouterDeps(eng, persistenceStore, jwtService, authService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler); err != nil {
+func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, announcementService *announcements.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler, cfg config.Config) (*Router, error) {
+	if err := validateRouterDeps(eng, persistenceStore, jwtService, authService, announcementService, otpService, impService, planService, planRepo, walletService, kycRepo, wsHandler); err != nil {
 		return nil, err
 	}
 	return &Router{
 		AuthHandler:      NewAuthHandler(authService, walletService, jwtService, otpService, impService, cfg),
 		OtpHandler:       NewOTPHandler(otpService, authService),
-		UserHandler:      NewUserHandler(authService, eng, persistenceStore, planService, walletService),
+		UserHandler:      NewUserHandler(announcementService, authService, eng, persistenceStore, planService, walletService),
 		OrdersHandler:    NewOrdersHandler(eng),
 		PositionsHandler: NewPositionsHandler(eng),
 		BalancesHandler:  NewBalancesHandler(eng),
 		MarketHandler:    NewMarketHandler(eng),
 		ProfileHandler:   NewProfileHandler(authService),
 		HistoryHandler:   NewHistoryHandler(persistenceStore),
-		AdminHandler:     NewAdminHandler(planService, planRepo, walletService, authService, otpService, persistenceStore, kycRepo, eng, impService),
+		AdminHandler:     NewAdminHandler(announcementService, planService, planRepo, walletService, authService, otpService, persistenceStore, kycRepo, eng, impService),
 		AdminAuthHandler: &AdminAuthHandler{},
 		KYCHandler:       NewKYCHandler(kycRepo, authService),
 		WsHandler:        wsHandler,
@@ -68,7 +69,7 @@ func NewRouter(eng *engine.Engine, persistenceStore *persistence.Store, jwtServi
 	}, nil
 }
 
-func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler) error {
+func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store, jwtService *auth.JWTService, authService *users.Service, announcementService *announcements.Service, otpService *otp.Service, impService *impersonation.Service, planService *plan.Service, planRepo *plan.Repository, walletService *wallets.Service, kycRepo *kyc.Repository, wsHandler *ws.WsHandler) error {
 	missing := make([]string, 0, 8)
 	if eng == nil {
 		missing = append(missing, "engine")
@@ -81,6 +82,9 @@ func validateRouterDeps(eng *engine.Engine, persistenceStore *persistence.Store,
 	}
 	if authService == nil {
 		missing = append(missing, "user service")
+	}
+	if announcementService == nil {
+		missing = append(missing, "announcement service")
 	}
 	if otpService == nil {
 		missing = append(missing, "otp service")
@@ -167,6 +171,8 @@ func (r *Router) Register(e *echo.Echo) {
 	userGroup.GET("/plan", r.UserHandler.Plan)
 	userGroup.GET("/balance", r.UserHandler.Balance)
 	userGroup.GET("/wallets", r.UserHandler.Wallets)
+	userGroup.GET("/announcements", r.UserHandler.Announcements)
+	userGroup.POST("/announcements/:id/dismiss", r.UserHandler.DismissAnnouncement)
 
 	settingsGroup := authenticated.Group("/user/settings")
 	settingsGroup.GET("", r.UserHandler.Settings)
@@ -237,6 +243,10 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.GET("/wallets", r.AdminHandler.ListWallets)
 	adminGroup.POST("/wallets", r.AdminHandler.CreateWallet)
 	adminGroup.PATCH("/wallets/:id", r.AdminHandler.UpdateWallet)
+	adminGroup.GET("/announcements", r.AdminHandler.ListAnnouncements)
+	adminGroup.POST("/announcements", r.AdminHandler.CreateAnnouncement)
+	adminGroup.PATCH("/announcements/:id", r.AdminHandler.UpdateAnnouncement)
+	adminGroup.DELETE("/announcements/:id", r.AdminHandler.DeleteAnnouncement)
 	adminGroup.GET("/users/:id/wallets", r.AdminHandler.ListUserWallets)
 	adminGroup.PATCH("/users/:id/wallets", r.AdminHandler.AssignUserWallet)
 }

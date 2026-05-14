@@ -1,4 +1,5 @@
 import type {
+  Announcement,
   KycListItem,
   KycRequest,
   Transaction,
@@ -9,7 +10,7 @@ import type {
   UserWallet,
   Wallet,
 } from "@/types";
-import { API_BASE, getJson, patchJson, postJson } from "./client";
+import { API_BASE, getJson, patchJson, postJson, requestJson } from "./client";
 
 const ADMIN_BASE = `${API_BASE}/api/v1/admin`;
 
@@ -161,4 +162,44 @@ export function updateKycRequest(id: string, payload: KycUpdatePayload) {
 
 export function getKycFileUrl(kycId: string, fileId: string) {
   return `${API_BASE}/api/v1/admin/kyc/${kycId}/files/${fileId}`;
+}
+
+export type AnnouncementPayload = {
+  scope: "USER" | "GLOBAL";
+  userId?: string;
+  title: string;
+  body: string;
+  link?: string;
+  priority: number;
+  isActive: boolean;
+  startsAt?: number;
+  endsAt?: number;
+};
+
+export function getAnnouncements(scope?: "USER" | "GLOBAL", userId?: string) {
+  const query = new URLSearchParams();
+  if (scope) {
+    query.set("scope", scope);
+  }
+  if (userId) {
+    query.set("userId", userId);
+  }
+  const suffix = query.toString();
+  return getJson<Announcement[]>(
+    `${ADMIN_BASE}/announcements${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+export function createAnnouncement(payload: AnnouncementPayload) {
+  return postJson<Announcement>(`${ADMIN_BASE}/announcements`, payload);
+}
+
+export function updateAnnouncement(id: string, payload: AnnouncementPayload) {
+  return patchJson(`${ADMIN_BASE}/announcements/${id}`, payload);
+}
+
+export function deleteAnnouncement(id: string) {
+  return requestJson<null>(`${ADMIN_BASE}/announcements/${id}`, {
+    method: "DELETE",
+  });
 }
