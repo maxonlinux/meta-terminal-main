@@ -65,6 +65,8 @@ type Engine struct {
 	locks      map[bookLockKey]*sync.Mutex // symbol & category -> mutex
 	liqMu      sync.Mutex
 	liqNext    map[liqKey]time.Time
+	writerMu   sync.Mutex
+	writerCtx  outbox.Writer
 }
 
 type outboxRecorder struct {
@@ -132,12 +134,7 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 	e.portfolio = portfolioService
 	portfolioService.OnBalanceUpdate(e.onBalanceUpdated)
 	portfolioService.OnRealizedPnL(func(event types.RealizedPnL) {
-		// Persist realized PnL as an outbox event for history.
-		recorder := newOutboxRecorder(nil)
-		if e.outbox != nil {
-			recorder = newOutboxRecorder(e.outbox.Begin())
-		}
-		_ = recorder.Record(events.EncodeRPNL(events.RPNLEvent{
+		ev := events.EncodeRPNL(events.RPNLEvent{
 			UserID:    event.UserID,
 			OrderID:   event.OrderID,
 			Symbol:    event.Symbol,
@@ -147,7 +144,20 @@ func NewEngine(ob *outbox.Outbox, reg *registry.Registry, cb OrderCallback) (*En
 			Quantity:  event.Quantity,
 			Realized:  event.Realized,
 			Timestamp: event.Timestamp,
-		}))
+		})
+		// Keep RPNL in the same outbox tx when called during command trade execution.
+		e.writerMu.Lock()
+		writer := e.writerCtx
+		e.writerMu.Unlock()
+		if writer != nil {
+			_ = writer.Record(ev)
+			return
+		}
+		recorder := newOutboxRecorder(nil)
+		if e.outbox != nil {
+			recorder = newOutboxRecorder(e.outbox.Begin())
+		}
+		_ = recorder.Record(ev)
 		recorder.finalize(nil)
 	})
 

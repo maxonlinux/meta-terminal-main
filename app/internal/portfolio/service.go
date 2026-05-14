@@ -126,13 +126,14 @@ func (s *Service) executeLinearTrade(match *types.Match) error {
 		return constants.ErrInstrumentNotFound
 	}
 	quoteAsset := inst.QuoteAsset
-	tradeNotional := types.Quantity(math.Mul(match.Price, match.Quantity))
 
 	takerLeverage := s.positionLeverage(match.TakerOrder.UserID, match.Symbol)
 	makerLeverage := s.positionLeverage(match.MakerOrder.UserID, match.Symbol)
+	takerOpenQty, takerCloseQty := s.linearTradeSplit(match.TakerOrder.UserID, match.Symbol, match.TakerOrder.Side, match.Quantity)
+	makerOpenQty, makerCloseQty := s.linearTradeSplit(match.MakerOrder.UserID, match.Symbol, match.MakerOrder.Side, match.Quantity)
 
-	s.applyLinearLeg(match.TakerOrder.UserID, quoteAsset, tradeNotional, takerLeverage)
-	s.applyLinearLeg(match.MakerOrder.UserID, quoteAsset, tradeNotional, makerLeverage)
+	s.applyLinearLeg(match.TakerOrder.UserID, quoteAsset, match.Price, takerLeverage, takerOpenQty, takerCloseQty)
+	s.applyLinearLeg(match.MakerOrder.UserID, quoteAsset, match.Price, makerLeverage, makerOpenQty, makerCloseQty)
 
 	if err := s.updatePosition(match.TakerOrder.UserID, match, match.TakerOrder); err != nil {
 		return err
@@ -148,10 +149,40 @@ func (s *Service) applySpotLeg(userID types.UserID, getsAsset string, paysAsset 
 	s.adjustLocked(userID, paysAsset, math.Neg(paysQty))
 }
 
-func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, tradeNotional types.Quantity, leverage types.Leverage) {
-	margin := types.Quantity(math.Div(tradeNotional, leverage))
-	s.adjustLocked(userID, quoteAsset, math.Neg(margin))
-	s.adjustMargin(userID, quoteAsset, margin)
+func (s *Service) applyLinearLeg(userID types.UserID, quoteAsset string, price types.Price, leverage types.Leverage, openingQty types.Quantity, closingQty types.Quantity) {
+	// Opening quantity moves collateral to margin; closing quantity only releases locked reserve.
+	if math.Sign(openingQty) > 0 {
+		openNotional := types.Quantity(math.Mul(price, openingQty))
+		openMargin := types.Quantity(math.Div(openNotional, leverage))
+		s.adjustLocked(userID, quoteAsset, math.Neg(openMargin))
+		s.adjustMargin(userID, quoteAsset, openMargin)
+	}
+	if math.Sign(closingQty) > 0 {
+		closeNotional := types.Quantity(math.Mul(price, closingQty))
+		closeReserve := types.Quantity(math.Div(closeNotional, leverage))
+		s.releaseLocked(userID, quoteAsset, closeReserve)
+	}
+}
+
+func (s *Service) linearTradeSplit(userID types.UserID, symbol string, side int8, tradeQty types.Quantity) (types.Quantity, types.Quantity) {
+	if math.Sign(tradeQty) <= 0 {
+		return types.Quantity(math.Zero), types.Quantity(math.Zero)
+	}
+	pos := s.positionFor(userID, symbol)
+	if pos == nil || math.Sign(pos.Size) == 0 {
+		return tradeQty, types.Quantity(math.Zero)
+	}
+	tradeSigned := sideSignedQty(side, tradeQty)
+	if math.Sign(tradeSigned) == math.Sign(pos.Size) {
+		return tradeQty, types.Quantity(math.Zero)
+	}
+	prevQty := types.Quantity(math.AbsFixed(pos.Size))
+	closing := tradeQty
+	if math.Cmp(closing, prevQty) > 0 {
+		closing = prevQty
+	}
+	opening := types.Quantity(math.Sub(tradeQty, closing))
+	return opening, closing
 }
 
 func (s *Service) GetPositions(userID types.UserID) []*types.Position {

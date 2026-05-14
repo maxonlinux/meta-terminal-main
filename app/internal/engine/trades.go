@@ -35,6 +35,15 @@ func (e *Engine) applyTrade(book *orderbook.OrderBook, match types.Match, writer
 	if inst == nil {
 		return constants.ErrInstrumentNotFound
 	}
+	// Expose command writer to synchronous portfolio callbacks during trade execution.
+	e.writerMu.Lock()
+	e.writerCtx = writer
+	e.writerMu.Unlock()
+	defer func() {
+		e.writerMu.Lock()
+		e.writerCtx = nil
+		e.writerMu.Unlock()
+	}()
 	if err := e.clearing.ExecuteTrade(&match); err != nil {
 		return err
 	}

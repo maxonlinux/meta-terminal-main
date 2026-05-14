@@ -95,7 +95,26 @@ func (s *Service) updatePosition(userID types.UserID, match *types.Match, order 
 	if math.Cmp(closedQty, prevQty) > 0 {
 		closedQty = prevQty
 	}
+	prevLeverage := normalizeLeverage(pos.Leverage)
 	rpnl := realizedPnL(pos.EntryPrice, match.Price, closedQty, prevSize)
+	if math.Sign(closedQty) > 0 {
+		// On reduction, release proportional isolated margin using entry notional.
+		releaseNotional := types.Quantity(math.Mul(pos.EntryPrice, closedQty))
+		releaseMargin := types.Quantity(math.Div(releaseNotional, prevLeverage))
+		inst := s.registry.GetInstrument(match.Symbol)
+		if inst == nil {
+			return constants.ErrInstrumentNotFound
+		}
+		quote := inst.QuoteAsset
+		balance := s.balanceForLocked(userID, quote)
+		if math.Cmp(releaseMargin, balance.Margin) > 0 {
+			releaseMargin = balance.Margin
+		}
+		if math.Sign(releaseMargin) > 0 {
+			s.adjustMargin(userID, quote, math.Neg(releaseMargin))
+			s.adjustAvailable(userID, quote, releaseMargin)
+		}
+	}
 
 	pos.Size = newSize
 	if math.Sign(newSize) == 0 {
