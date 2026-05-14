@@ -103,21 +103,6 @@ func (h *UserHandler) Announcements(c *echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (h *UserHandler) DismissAnnouncement(c *echo.Context) error {
-	claims := getUser(c)
-	if claims == nil {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-	}
-	announcementID, err := parseInt64ID(c.Param("id"))
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid announcement id"})
-	}
-	if err := h.announcements.Dismiss(claims.UserID, announcementID, utils.NowNano()); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to dismiss announcement"})
-	}
-	return c.NoContent(http.StatusOK)
-}
-
 func (h *UserHandler) Profile(c *echo.Context) error {
 	claims := getUser(c)
 	if claims == nil {

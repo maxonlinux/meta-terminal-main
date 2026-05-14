@@ -116,24 +116,17 @@ func (s *SQLiteStore) ListActiveForUser(userID types.UserID, now uint64) ([]Anno
 	rows, err := s.db.Query(`
 		select a.id, a.scope, a.user_id, a.title, a.body, a.link, a.priority, a.is_active, a.starts_at, a.ends_at, a.created_at, a.updated_at
 		from announcements a
-		left join announcement_dismissals d on d.announcement_id = a.id and d.user_id = ?
 		where a.is_active = 1
-		  and d.announcement_id is null
 		  and (a.scope = ? or (a.scope = ? and a.user_id = ?))
 		  and (a.starts_at is null or a.starts_at <= ?)
 		  and (a.ends_at is null or a.ends_at >= ?)
 		order by case when a.scope = ? then 0 else 1 end, a.priority desc, a.created_at desc
-	`, userID, ScopeGlobal, ScopeUser, userID, now, now, ScopeUser)
+	`, ScopeGlobal, ScopeUser, userID, now, now, ScopeUser)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	return scanAnnouncements(rows)
-}
-
-func (s *SQLiteStore) Dismiss(userID types.UserID, announcementID int64, dismissedAt uint64) error {
-	_, err := s.db.Exec(`insert or replace into announcement_dismissals (user_id, announcement_id, dismissed_at) values (?, ?, ?)`, userID, announcementID, dismissedAt)
-	return err
 }
 
 func (s *SQLiteStore) Delete(id int64) error {

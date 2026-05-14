@@ -42,13 +42,6 @@ func (s *Service) ListActiveForUser(userID types.UserID, now uint64) ([]Announce
 	return s.store.ListActiveForUser(userID, now)
 }
 
-func (s *Service) Dismiss(userID types.UserID, announcementID int64, dismissedAt uint64) error {
-	if announcementID <= 0 {
-		return errors.New("invalid announcement id")
-	}
-	return s.store.Dismiss(userID, announcementID, dismissedAt)
-}
-
 func (s *Service) Delete(id int64) error {
 	if id <= 0 {
 		return errors.New("invalid announcement id")

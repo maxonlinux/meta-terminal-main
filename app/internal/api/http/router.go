@@ -172,7 +172,6 @@ func (r *Router) Register(e *echo.Echo) {
 	userGroup.GET("/balance", r.UserHandler.Balance)
 	userGroup.GET("/wallets", r.UserHandler.Wallets)
 	userGroup.GET("/announcements", r.UserHandler.Announcements)
-	userGroup.POST("/announcements/:id/dismiss", r.UserHandler.DismissAnnouncement)
 
 	settingsGroup := authenticated.Group("/user/settings")
 	settingsGroup.GET("", r.UserHandler.Settings)
