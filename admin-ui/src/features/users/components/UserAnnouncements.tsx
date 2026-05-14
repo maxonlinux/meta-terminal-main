@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus, RotateCw } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -9,8 +10,8 @@ import {
   getAnnouncements,
   updateAnnouncement,
 } from "@/api/admin";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Card,
   CardAction,
@@ -19,20 +20,24 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
-import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetBody,
+  SheetClose,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  AnnouncementForm,
+  type AnnouncementFormState,
+} from "@/features/announcements/components/AnnouncementForm";
 
-type FormState = {
-  title: string;
-  body: string;
-  link: string;
-  priority: number;
-  isActive: boolean;
-};
-
-const initialForm: FormState = {
+const initialForm: AnnouncementFormState = {
+  scope: "USER",
+  userId: "",
   title: "",
   body: "",
   link: "",
@@ -41,7 +46,7 @@ const initialForm: FormState = {
 };
 
 export function UserAnnouncements({ id }: { id: string }) {
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<AnnouncementFormState>(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -52,12 +57,18 @@ export function UserAnnouncements({ id }: { id: string }) {
     () => getAnnouncements("USER", id),
   );
 
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(initialForm);
+  };
+
   const submit = async () => {
     setError(null);
     if (!form.title.trim() || !form.body.trim()) {
       setError("Title and body are required");
       return;
     }
+
     try {
       setIsSubmitting(true);
       const payload = {
@@ -78,14 +89,28 @@ export function UserAnnouncements({ id }: { id: string }) {
         toast.success("Announcement created");
       }
 
-      setForm(initialForm);
-      setEditingId(null);
+      resetForm();
       await mutate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save announcement");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const edit = (announcementId: string) => {
+    const current = data?.find((x) => x.id === announcementId);
+    if (!current) return;
+    setEditingId(announcementId);
+    setForm({
+      scope: "USER",
+      userId: id,
+      title: current.title,
+      body: current.body,
+      link: current.link ?? "",
+      priority: current.priority,
+      isActive: current.isActive,
+    });
   };
 
   const toggle = async (announcementId: string) => {
@@ -114,21 +139,6 @@ export function UserAnnouncements({ id }: { id: string }) {
     }
   };
 
-  const edit = (announcementId: string) => {
-    const current = data?.find((x) => x.id === announcementId);
-    if (!current) {
-      return;
-    }
-    setEditingId(announcementId);
-    setForm({
-      title: current.title,
-      body: current.body,
-      link: current.link ?? "",
-      priority: current.priority,
-      isActive: current.isActive,
-    });
-  };
-
   const remove = async (announcementId: string) => {
     setError(null);
     try {
@@ -154,137 +164,119 @@ export function UserAnnouncements({ id }: { id: string }) {
     <Card>
       <CardHeader>
         <CardTitle>User Announcements</CardTitle>
-        <CardDescription>
-          Personal announcements for this user only. Edit, enable, disable, or delete inline.
-        </CardDescription>
+        <CardDescription>Manage this user's personal announcements.</CardDescription>
         <CardAction>
-          <Button intent="outline" onClick={() => void mutate()}>
-            Refresh
-          </Button>
+          <ButtonGroup>
+            <Sheet>
+              <Button intent="primary" onPress={resetForm}>
+                <Plus data-slot="icon" />
+                New announcement
+              </Button>
+              <SheetContent>
+                <SheetHeader>
+                  <SheetTitle>Create user announcement</SheetTitle>
+                </SheetHeader>
+                <SheetBody>
+                  <AnnouncementForm
+                    value={form}
+                    onChange={setForm}
+                    includeScope={false}
+                    isSubmitting={isSubmitting}
+                    submitLabel="Create"
+                    onSubmit={submit}
+                  />
+                </SheetBody>
+                <SheetFooter>
+                  <SheetClose>Close</SheetClose>
+                </SheetFooter>
+              </SheetContent>
+            </Sheet>
+            <Button intent="outline" onClick={() => void mutate()}>
+              <RotateCw data-slot="icon" />
+              Refresh
+            </Button>
+          </ButtonGroup>
         </CardAction>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-2 rounded-md border border-border/70 bg-muted/25 p-3 md:grid-cols-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Target user</p>
-            <p className="text-sm font-medium">{id}</p>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Status</p>
-            <p className="text-sm font-medium">{form.isActive ? "Active" : "Inactive"}</p>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-fg">Priority</p>
-            <p className="text-sm font-medium">{form.priority}</p>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Input
-            placeholder="Title"
-            value={form.title}
-            onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-          />
-          <Input
-            placeholder="Link (optional)"
-            value={form.link}
-            onChange={(e) => setForm((prev) => ({ ...prev, link: e.target.value }))}
-          />
-          <Input
-            placeholder="Priority"
-            type="number"
-            value={String(form.priority)}
-            onChange={(e) =>
-              setForm((prev) => ({ ...prev, priority: Number(e.target.value) || 0 }))
-            }
-          />
-          <Checkbox
-            isSelected={form.isActive}
-            onChange={(isSelected) =>
-              setForm((prev) => ({ ...prev, isActive: Boolean(isSelected) }))
-            }
-          >
-            Active
-          </Checkbox>
-          <textarea
-            className="md:col-span-2 min-h-28 rounded-md border bg-transparent px-3 py-2 text-sm"
-            placeholder="Body"
-            value={form.body}
-            onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
-          />
-        </div>
-
-        <Separator />
-
-        <ButtonGroup>
-          <Button onClick={() => void submit()} disabled={isSubmitting}>
-            {isSubmitting ? <Loader variant="spin" /> : null}
-            {editingId ? "Update announcement" : "Create announcement"}
-          </Button>
-          {editingId ? (
-            <Button
-              intent="outline"
-              onClick={() => {
-                setEditingId(null);
-                setForm(initialForm);
-              }}
-            >
-              Cancel
-            </Button>
-          ) : null}
-        </ButtonGroup>
+      <CardContent className="space-y-3">
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         {loadError ? <p className="text-sm text-danger">{loadError.message}</p> : null}
 
-        {isLoading && <p>Loading...</p>}
-        {!isLoading && (!data || data.length === 0) && <p>No user announcements.</p>}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader variant="spin" />
+          </div>
+        ) : null}
+
+        {!isLoading && (!data || data.length === 0) ? (
+          <div className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-fg">
+            No user announcements.
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           {data?.map((item) => (
             <div
               key={item.id}
               className="rounded-lg border p-3 transition-colors hover:border-primary/40"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
-                      priority {item.priority}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        item.isActive ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
-                      }`}
-                    >
-                      {item.isActive ? "active" : "inactive"}
-                    </span>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-semibold leading-snug break-words">{item.title}</p>
+                  <p className="text-sm leading-snug text-muted-fg break-words">{item.body}</p>
+                  <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs text-muted-fg sm:grid-cols-2">
+                    <span>Status: {item.isActive ? "Active" : "Inactive"}</span>
+                    <span>Priority: {item.priority}</span>
                   </div>
-                  <p className="text-sm font-semibold leading-snug">{item.title}</p>
                 </div>
-                <ButtonGroup>
-                  <Button
-                    intent="outline"
-                    onClick={() => edit(item.id)}
-                    disabled={busyId === item.id}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    intent="outline"
-                    onClick={() => void toggle(item.id)}
-                    disabled={busyId === item.id}
-                  >
-                    {item.isActive ? "Disable" : "Enable"}
-                  </Button>
-                  <Button
-                    intent="outline"
-                    onClick={() => void remove(item.id)}
-                    disabled={busyId === item.id}
-                  >
-                    Delete
-                  </Button>
-                </ButtonGroup>
+
+                <div className="w-full md:w-auto">
+                  <ButtonGroup className="w-full md:w-auto">
+                    <Sheet>
+                      <Button
+                        intent="outline"
+                        onPress={() => edit(item.id)}
+                        disabled={busyId === item.id}
+                      >
+                        Edit
+                      </Button>
+                      <SheetContent>
+                        <SheetHeader>
+                          <SheetTitle>Edit user announcement</SheetTitle>
+                        </SheetHeader>
+                        <SheetBody>
+                          <AnnouncementForm
+                            value={form}
+                            onChange={setForm}
+                            includeScope={false}
+                            isSubmitting={isSubmitting}
+                            submitLabel="Save"
+                            onSubmit={submit}
+                          />
+                        </SheetBody>
+                        <SheetFooter>
+                          <SheetClose>Close</SheetClose>
+                        </SheetFooter>
+                      </SheetContent>
+                    </Sheet>
+                    <Button
+                      intent="outline"
+                      onClick={() => void toggle(item.id)}
+                      disabled={busyId === item.id}
+                    >
+                      {item.isActive ? "Disable" : "Enable"}
+                    </Button>
+                    <Button
+                      intent="outline"
+                      onClick={() => void remove(item.id)}
+                      disabled={busyId === item.id}
+                    >
+                      Delete
+                    </Button>
+                  </ButtonGroup>
+                </div>
               </div>
-              <p className="mt-2 text-sm leading-snug text-muted-fg">{item.body}</p>
             </div>
           ))}
         </div>

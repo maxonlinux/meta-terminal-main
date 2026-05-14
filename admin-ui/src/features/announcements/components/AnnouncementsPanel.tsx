@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus, RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -9,8 +10,8 @@ import {
   getAnnouncements,
   updateAnnouncement,
 } from "@/api/admin";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Card,
   CardAction,
@@ -19,24 +20,30 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
+import { Loader } from "@/components/ui/loader";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetBody,
+  SheetClose,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import type { Announcement } from "@/types";
+import {
+  AnnouncementForm,
+  type AnnouncementFormState,
+  type AnnouncementScope,
+} from "./AnnouncementForm";
 
-type Scope = "GLOBAL" | "USER";
-
-type FormState = {
-  scope: Scope;
-  userId: string;
-  title: string;
-  body: string;
-  link: string;
-  priority: number;
-  isActive: boolean;
-};
-
-const initialForm: FormState = {
+const initialForm: AnnouncementFormState = {
   scope: "GLOBAL",
   userId: "",
   title: "",
@@ -46,21 +53,27 @@ const initialForm: FormState = {
   isActive: true,
 };
 
-function toPayload(form: FormState) {
+const filterOptions = [
+  { id: "ALL", title: "All scopes" },
+  { id: "GLOBAL", title: "GLOBAL" },
+  { id: "USER", title: "USER" },
+];
+
+function toPayload(form: AnnouncementFormState) {
   return {
     scope: form.scope,
     userId: form.scope === "USER" ? form.userId || undefined : undefined,
-    title: form.title,
-    body: form.body,
-    link: form.link || undefined,
+    title: form.title.trim(),
+    body: form.body.trim(),
+    link: form.link.trim() || undefined,
     priority: Number(form.priority) || 0,
     isActive: form.isActive,
   };
 }
 
 export function AnnouncementsPanel() {
-  const [scopeFilter, setScopeFilter] = useState<"" | Scope>("");
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [scopeFilter, setScopeFilter] = useState<"ALL" | AnnouncementScope>("ALL");
+  const [form, setForm] = useState<AnnouncementFormState>(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -71,10 +84,13 @@ export function AnnouncementsPanel() {
 
   const { data, error, isLoading, mutate } = useSWR(
     swrKey,
-    async ([, scope]) => {
-      return getAnnouncements(scope || undefined);
-    },
+    async ([, scope]) => getAnnouncements(scope === "ALL" ? undefined : scope),
   );
+
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(initialForm);
+  };
 
   const submit = async () => {
     if (!form.title.trim() || !form.body.trim()) {
@@ -86,9 +102,9 @@ export function AnnouncementsPanel() {
       return;
     }
 
-    const payload = toPayload(form);
     try {
       setIsSubmitting(true);
+      const payload = toPayload(form);
       if (editingId) {
         await updateAnnouncement(editingId, payload);
         toast.success("Announcement updated");
@@ -96,8 +112,7 @@ export function AnnouncementsPanel() {
         await createAnnouncement(payload);
         toast.success("Announcement created");
       }
-      setEditingId(null);
-      setForm(initialForm);
+      resetForm();
       await mutate();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save announcement");
@@ -158,190 +173,137 @@ export function AnnouncementsPanel() {
 
   return (
     <div className="space-y-4">
-      <Card className="overflow-hidden border-primary/20 bg-linear-to-br from-primary/5 via-transparent to-transparent">
+      <Card>
         <CardHeader>
-          <CardTitle>Compose announcement</CardTitle>
-          <CardDescription>
-            Publish a global system message or target a specific user.
-          </CardDescription>
+          <CardTitle>Announcements</CardTitle>
+          <CardDescription>Manage global and targeted announcements.</CardDescription>
           <CardAction>
             <ButtonGroup>
+              <Sheet>
+                <Button intent="primary" onPress={resetForm}>
+                  <Plus data-slot="icon" />
+                  New announcement
+                </Button>
+                <SheetContent>
+                  <SheetHeader>
+                    <SheetTitle>Create announcement</SheetTitle>
+                  </SheetHeader>
+                  <SheetBody>
+                    <AnnouncementForm
+                      value={form}
+                      onChange={setForm}
+                      includeScope
+                      isSubmitting={isSubmitting}
+                      submitLabel="Create"
+                      onSubmit={submit}
+                    />
+                  </SheetBody>
+                  <SheetFooter>
+                    <SheetClose>Close</SheetClose>
+                  </SheetFooter>
+                </SheetContent>
+              </Sheet>
               <Button intent="outline" onClick={() => void mutate()}>
+                <RotateCw data-slot="icon" />
                 Refresh
               </Button>
             </ButtonGroup>
           </CardAction>
         </CardHeader>
 
-        <CardContent className="space-y-4">
-          <div className="grid gap-2 rounded-md border border-border/70 bg-muted/25 p-3 md:grid-cols-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Scope</p>
-              <p className="text-sm font-medium">{form.scope}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Status</p>
-              <p className="text-sm font-medium">{form.isActive ? "Active" : "Inactive"}</p>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Priority</p>
-              <p className="text-sm font-medium">{form.priority}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <select
-              className="h-9 rounded-md border bg-transparent px-3 text-sm"
-              value={form.scope}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, scope: e.target.value as Scope }))
-              }
-            >
-              <option value="GLOBAL">GLOBAL</option>
-              <option value="USER">USER</option>
-            </select>
-            {form.scope === "USER" && (
-              <Input
-                placeholder="User ID"
-                value={form.userId}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, userId: e.target.value }))
-                }
-              />
-            )}
-            <Input
-              placeholder="Title"
-              value={form.title}
-              onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-            />
-            <Input
-              placeholder="Link (optional)"
-              value={form.link}
-              onChange={(e) => setForm((prev) => ({ ...prev, link: e.target.value }))}
-            />
-            <Input
-              placeholder="Priority"
-              type="number"
-              value={String(form.priority)}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, priority: Number(e.target.value) || 0 }))
-              }
-            />
-            <Checkbox
-              isSelected={form.isActive}
-              onChange={(isSelected) =>
-                setForm((prev) => ({ ...prev, isActive: Boolean(isSelected) }))
-              }
-            >
-              Active
-            </Checkbox>
-            <textarea
-              className="md:col-span-2 min-h-28 rounded-md border bg-transparent px-3 py-2 text-sm"
-              placeholder="Body"
-              value={form.body}
-              onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
-            />
-          </div>
-
-          <Separator />
-
-          <ButtonGroup>
-            <Button onClick={submit} disabled={isSubmitting}>
-              {editingId ? "Update" : "Create"}
-            </Button>
-            {editingId && (
-              <Button
-                intent="outline"
-                onClick={() => {
-                  setEditingId(null);
-                  setForm(initialForm);
-                }}
-              >
-                Cancel
-              </Button>
-            )}
-          </ButtonGroup>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Existing announcements</CardTitle>
-          <CardDescription>
-            Live records from backend. Use filters to inspect what users can see.
-          </CardDescription>
-        </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="h-9 rounded-md border bg-transparent px-3 text-sm"
+            <Select
               value={scopeFilter}
-              onChange={(e) => setScopeFilter(e.target.value as "" | Scope)}
+              onChange={(value) =>
+                setScopeFilter((value as "ALL" | AnnouncementScope | null) ?? "ALL")
+              }
+              placeholder="Filter scope"
             >
-              <option value="">ALL</option>
-              <option value="GLOBAL">GLOBAL</option>
-              <option value="USER">USER</option>
-            </select>
+              <SelectTrigger className="w-full md:w-56" />
+              <SelectContent items={filterOptions}>
+                {(item) => (
+                  <SelectItem id={item.id} textValue={item.title}>
+                    {item.title}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-fg">
               {data?.length ?? 0} item{(data?.length ?? 0) === 1 ? "" : "s"}
             </p>
           </div>
+
           {error ? (
             <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
               {error.message}
             </div>
           ) : null}
-          {isLoading && <p>Loading...</p>}
-          {!isLoading && data && data.length === 0 && (
-            <div className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-fg">
-              No announcements yet. Create your first one above.
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader variant="spin" />
             </div>
-          )}
+          ) : null}
+
+          {!isLoading && data && data.length === 0 ? (
+            <div className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-fg">
+              No announcements yet.
+            </div>
+          ) : null}
+
           <div className="space-y-2">
             {data?.map((item) => (
               <div
                 key={item.id}
                 className="rounded-lg border p-3 transition-colors hover:border-primary/40"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
-                        {item.scope}
-                      </span>
-                      {item.userId ? (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
-                          user {item.userId}
-                        </span>
-                      ) : null}
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
-                        priority {item.priority}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          item.isActive
-                            ? "bg-success/15 text-success"
-                            : "bg-danger/15 text-danger"
-                        }`}
-                      >
-                        {item.isActive ? "active" : "inactive"}
-                      </span>
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-semibold leading-snug break-words">{item.title}</p>
+                    <p className="text-sm leading-snug text-muted-fg break-words">{item.body}</p>
+                    <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs text-muted-fg sm:grid-cols-2">
+                      <span>Scope: {item.scope}</span>
+                      <span>Status: {item.isActive ? "Active" : "Inactive"}</span>
+                      <span>Priority: {item.priority}</span>
+                      {item.userId ? <span className="truncate">User: {item.userId}</span> : null}
                     </div>
-                    <p className="text-sm font-semibold leading-snug">{item.title}</p>
                   </div>
-                  <ButtonGroup>
-                    <Button intent="outline" onClick={() => editItem(item)}>
-                      Edit
-                    </Button>
-                    <Button intent="outline" onClick={() => void toggleItem(item)}>
-                      {item.isActive ? "Disable" : "Enable"}
-                    </Button>
-                    <Button intent="outline" onClick={() => void removeItem(item)}>
-                      Delete
-                    </Button>
-                  </ButtonGroup>
+
+                  <div className="w-full md:w-auto">
+                    <ButtonGroup className="w-full md:w-auto">
+                      <Sheet>
+                        <Button intent="outline" onPress={() => editItem(item)}>
+                          Edit
+                        </Button>
+                        <SheetContent>
+                          <SheetHeader>
+                            <SheetTitle>Edit announcement</SheetTitle>
+                          </SheetHeader>
+                          <SheetBody>
+                            <AnnouncementForm
+                              value={form}
+                              onChange={setForm}
+                              includeScope
+                              isSubmitting={isSubmitting}
+                              submitLabel="Save"
+                              onSubmit={submit}
+                            />
+                          </SheetBody>
+                          <SheetFooter>
+                            <SheetClose>Close</SheetClose>
+                          </SheetFooter>
+                        </SheetContent>
+                      </Sheet>
+                      <Button intent="outline" onClick={() => void toggleItem(item)}>
+                        {item.isActive ? "Disable" : "Enable"}
+                      </Button>
+                      <Button intent="outline" onClick={() => void removeItem(item)}>
+                        Delete
+                      </Button>
+                    </ButtonGroup>
+                  </div>
                 </div>
-                <p className="mt-2 text-sm leading-snug text-muted-fg">{item.body}</p>
               </div>
             ))}
           </div>
