@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import type { Announcement } from "@/types";
 
 type Scope = "GLOBAL" | "USER";
@@ -157,11 +158,11 @@ export function AnnouncementsPanel() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="overflow-hidden border-primary/20 bg-linear-to-br from-primary/5 via-transparent to-transparent">
         <CardHeader>
-          <CardTitle>Announcements</CardTitle>
+          <CardTitle>Compose announcement</CardTitle>
           <CardDescription>
-            Manage global announcements and create targeted USER entries.
+            Publish a global system message or target a specific user.
           </CardDescription>
           <CardAction>
             <ButtonGroup>
@@ -171,7 +172,23 @@ export function AnnouncementsPanel() {
             </ButtonGroup>
           </CardAction>
         </CardHeader>
+
         <CardContent className="space-y-4">
+          <div className="grid gap-2 rounded-md border border-border/70 bg-muted/25 p-3 md:grid-cols-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Scope</p>
+              <p className="text-sm font-medium">{form.scope}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Status</p>
+              <p className="text-sm font-medium">{form.isActive ? "Active" : "Inactive"}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-fg">Priority</p>
+              <p className="text-sm font-medium">{form.priority}</p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <select
               className="h-9 rounded-md border bg-transparent px-3 text-sm"
@@ -219,12 +236,15 @@ export function AnnouncementsPanel() {
               Active
             </Checkbox>
             <textarea
-              className="md:col-span-2 min-h-24 rounded-md border bg-transparent px-3 py-2 text-sm"
+              className="md:col-span-2 min-h-28 rounded-md border bg-transparent px-3 py-2 text-sm"
               placeholder="Body"
               value={form.body}
               onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
             />
           </div>
+
+          <Separator />
+
           <ButtonGroup>
             <Button onClick={submit} disabled={isSubmitting}>
               {editingId ? "Update" : "Create"}
@@ -248,11 +268,11 @@ export function AnnouncementsPanel() {
         <CardHeader>
           <CardTitle>Existing announcements</CardTitle>
           <CardDescription>
-            Verify what is currently visible and active in production.
+            Live records from backend. Use filters to inspect what users can see.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
               className="h-9 rounded-md border bg-transparent px-3 text-sm"
               value={scopeFilter}
@@ -262,23 +282,52 @@ export function AnnouncementsPanel() {
               <option value="GLOBAL">GLOBAL</option>
               <option value="USER">USER</option>
             </select>
+            <p className="text-xs text-muted-fg">
+              {data?.length ?? 0} item{(data?.length ?? 0) === 1 ? "" : "s"}
+            </p>
           </div>
           {error ? (
-            <p className="text-sm text-danger">{error.message}</p>
+            <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {error.message}
+            </div>
           ) : null}
           {isLoading && <p>Loading...</p>}
-          {!isLoading && data && data.length === 0 && <p>No announcements.</p>}
+          {!isLoading && data && data.length === 0 && (
+            <div className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-fg">
+              No announcements yet. Create your first one above.
+            </div>
+          )}
           <div className="space-y-2">
             {data?.map((item) => (
-              <div key={item.id} className="rounded-md border p-3">
-                <div className="flex items-center justify-between gap-2">
+              <div
+                key={item.id}
+                className="rounded-lg border p-3 transition-colors hover:border-primary/40"
+              >
+                <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-sm font-semibold">{item.title}</p>
-                    <p className="text-xs opacity-70">
-                      {item.scope}
-                      {item.userId ? ` • user ${item.userId}` : ""} • priority {item.priority} • {" "}
-                      {item.isActive ? "active" : "inactive"}
-                    </p>
+                    <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
+                        {item.scope}
+                      </span>
+                      {item.userId ? (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
+                          user {item.userId}
+                        </span>
+                      ) : null}
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
+                        priority {item.priority}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          item.isActive
+                            ? "bg-success/15 text-success"
+                            : "bg-danger/15 text-danger"
+                        }`}
+                      >
+                        {item.isActive ? "active" : "inactive"}
+                      </span>
+                    </div>
+                    <p className="text-sm font-semibold leading-snug">{item.title}</p>
                   </div>
                   <ButtonGroup>
                     <Button intent="outline" onClick={() => editItem(item)}>
@@ -294,7 +343,7 @@ export function AnnouncementsPanel() {
                     </Button>
                   </ButtonGroup>
                 </div>
-                <p className="text-sm mt-2">{item.body}</p>
+                <p className="mt-2 text-sm leading-snug text-muted-fg">{item.body}</p>
               </div>
             ))}
           </div>
