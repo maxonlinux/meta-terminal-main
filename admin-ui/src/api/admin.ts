@@ -56,6 +56,18 @@ export function getUserTransactions(id: string) {
   return getJson<UserTransaction[]>(`${ADMIN_BASE}/users/${id}/transactions`);
 }
 
+export type UserTransactionPayload = {
+  type: "DEPOSIT" | "WITHDRAWAL";
+  asset: string;
+  amount: string;
+  destination: string;
+  message?: string;
+};
+
+export function createUserTransaction(id: string, payload: UserTransactionPayload) {
+  return postJson(`${ADMIN_BASE}/users/${id}/transactions`, payload);
+}
+
 export function getUserImpersonation(id: string) {
   return getJson<{ code: string }>(`${ADMIN_BASE}/users/${id}/impersonate`);
 }

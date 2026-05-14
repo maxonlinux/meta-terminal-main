@@ -17,6 +17,7 @@ import (
 	"github.com/maxonlinux/meta-terminal-go/internal/users"
 	"github.com/maxonlinux/meta-terminal-go/internal/wallets"
 	"github.com/maxonlinux/meta-terminal-go/pkg/types"
+	"github.com/robaho/fixed"
 )
 
 type AdminHandler struct {
@@ -128,6 +129,14 @@ type AdminFunding struct {
 	CreatedAt   int64            `json:"createdAt"`
 	UpdatedAt   int64            `json:"updatedAt"`
 	User        AdminFundingUser `json:"User"`
+}
+
+type AdminCreateUserTransactionRequest struct {
+	Type        string `json:"type"`
+	Asset       string `json:"asset"`
+	Amount      string `json:"amount"`
+	Destination string `json:"destination"`
+	Message     string `json:"message"`
 }
 
 type AdminPendingCount struct {
@@ -534,6 +543,49 @@ func (h *AdminHandler) CancelFunding(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
 	}
 	return c.NoContent(http.StatusOK)
+}
+
+func (h *AdminHandler) CreateUserTransaction(c *echo.Context) error {
+	parsedUserID, err := parseInt64ID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+	}
+	userID := types.UserID(parsedUserID)
+
+	var req AdminCreateUserTransactionRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	requestType := strings.ToUpper(strings.TrimSpace(req.Type))
+	asset := strings.TrimSpace(req.Asset)
+	destination := strings.TrimSpace(req.Destination)
+	message := strings.TrimSpace(req.Message)
+	if requestType == "" || asset == "" || destination == "" || strings.TrimSpace(req.Amount) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "type, asset, amount and destination are required"})
+	}
+
+	amount, err := fixed.Parse(strings.TrimSpace(req.Amount))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid amount"})
+	}
+
+	switch requestType {
+	case string(types.FundingTypeDeposit):
+		res := h.engine.Cmd(&engine.CreateDepositCmd{UserID: userID, Asset: asset, Amount: types.Quantity(amount), Destination: destination, CreatedBy: types.FundingCreatedByAdmin, Message: message})
+		if res.Err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
+		}
+	case string(types.FundingTypeWithdrawal):
+		res := h.engine.Cmd(&engine.CreateWithdrawalCmd{UserID: userID, Asset: asset, Amount: types.Quantity(amount), Destination: destination, CreatedBy: types.FundingCreatedByAdmin, Message: message})
+		if res.Err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": res.Err.Error()})
+		}
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid type"})
+	}
+
+	return c.NoContent(http.StatusCreated)
 }
 
 func (h *AdminHandler) PendingCount(c *echo.Context) error {

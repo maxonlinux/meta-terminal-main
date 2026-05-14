@@ -231,6 +231,7 @@ func (r *Router) Register(e *echo.Echo) {
 	adminGroup.GET("/users/:id/address", r.AdminHandler.UserAddress)
 	adminGroup.PATCH("/users/:id/address", r.AdminHandler.UpdateUserAddress)
 	adminGroup.GET("/users/:id/transactions", r.AdminHandler.UserTransactions)
+	adminGroup.POST("/users/:id/transactions", r.AdminHandler.CreateUserTransaction)
 	adminGroup.GET("/users/:id/impersonate", r.AdminHandler.Impersonate)
 	adminGroup.GET("/funding", r.AdminHandler.Funding)
 	adminGroup.PATCH("/funding/:id/approve", r.AdminHandler.ApproveFunding)
