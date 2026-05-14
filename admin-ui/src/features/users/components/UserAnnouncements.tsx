@@ -224,22 +224,15 @@ export function UserAnnouncements({ id }: { id: string }) {
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0 space-y-1">
                   <p className="text-sm font-semibold leading-snug break-words">{item.title}</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-fg">
-                      priority {item.priority}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 font-medium ${
-                        item.isActive ? "bg-success/15 text-success" : "bg-danger/15 text-danger"
-                      }`}
-                    >
-                      {item.isActive ? "active" : "inactive"}
-                    </span>
-                  </div>
                   <div className="mt-2 border-t border-border/70 pt-2" />
                   <p className="text-sm leading-snug text-muted-fg break-words">{item.body}</p>
                   <div className="grid grid-cols-1 gap-x-4 gap-y-1 pt-2 text-xs text-muted-fg sm:grid-cols-2">
-                    <span>Status: {item.isActive ? "Active" : "Inactive"}</span>
+                    <span>
+                      Status:{" "}
+                      <span className={item.isActive ? "text-success" : "text-danger"}>
+                        {item.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </span>
                     <span>Priority: {item.priority}</span>
                   </div>
                 </div>
