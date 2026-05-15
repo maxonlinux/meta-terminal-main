@@ -98,6 +98,7 @@ var upgrader = websocket.Upgrader{
 type wsHub struct {
 	mu        sync.RWMutex
 	userSubs  map[types.UserID]map[*wsConn]struct{}
+	orderSeen map[types.UserID]map[types.OrderID]string
 	topicSubs map[string]map[*wsConn]*topicSub
 	seq       map[string]uint64
 	bookCache map[string]map[int]bookSnapshot
@@ -126,6 +127,7 @@ func newWsConn(conn *websocket.Conn) *wsConn {
 func newWsHub(readBook func(category int8, symbol string) *orderbook.OrderBook) *wsHub {
 	h := &wsHub{
 		userSubs:  make(map[types.UserID]map[*wsConn]struct{}),
+		orderSeen: make(map[types.UserID]map[types.OrderID]string),
 		topicSubs: make(map[string]map[*wsConn]*topicSub),
 		seq:       make(map[string]uint64),
 		bookCache: make(map[string]map[int]bookSnapshot),
@@ -174,7 +176,23 @@ func (h *wsHub) unsubscribeUser(userID types.UserID, conn *wsConn) {
 	delete(set, conn)
 	if len(set) == 0 {
 		delete(h.userSubs, userID)
+		delete(h.orderSeen, userID)
 	}
+}
+
+func (h *wsHub) shouldSendOrderUpdate(userID types.UserID, orderID types.OrderID, status string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	seen := h.orderSeen[userID]
+	if seen == nil {
+		seen = make(map[types.OrderID]string)
+		h.orderSeen[userID] = seen
+	}
+	if prev, ok := seen[orderID]; ok && prev == status {
+		return false
+	}
+	seen[orderID] = status
+	return true
 }
 
 func (h *wsHub) subscribeTopic(topic string, conn *wsConn, depth int) {
@@ -524,12 +542,16 @@ func (h *wsHub) OnOrderUpdated(order *types.Order) {
 	if order == nil || order.Origin == constants.ORDER_ORIGIN_SYSTEM {
 		return
 	}
+	status := shared.OrderStatusToString(order.Status)
+	if !h.shouldSendOrderUpdate(order.UserID, order.ID, status) {
+		return
+	}
 	payload := map[string]interface{}{
 		"event": "orders",
 		"data": map[string]interface{}{
 			"orders": []map[string]interface{}{{
 				"orderId": strconv.FormatInt(order.ID, 10),
-				"status":  shared.OrderStatusToString(order.Status),
+				"status":  status,
 			}},
 		},
 	}
