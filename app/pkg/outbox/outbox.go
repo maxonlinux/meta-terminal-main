@@ -47,7 +47,6 @@ type EventSink interface {
 type Outbox struct {
 	log      *appendLog
 	worker   *worker
-	tailPath string
 	seq      uint64
 	sink     EventSink
 	stats    *stats
@@ -113,6 +112,12 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 		_ = log.Close()
 		return nil, fmt.Errorf("outbox replay: %w", err)
 	}
+	if newTail > 0 {
+		if _, err := log.CompactApplied(newTail); err != nil {
+			_ = log.Close()
+			return nil, fmt.Errorf("outbox startup compact: %w", err)
+		}
+	}
 	atomic.StoreUint64(&stats.appliedSeq, newTail)
 	atomic.StoreUint64(&stats.replayAppliedSeq, newTail)
 
@@ -122,7 +127,6 @@ func OpenWithOptions(dir string, opts Options) (*Outbox, error) {
 	return &Outbox{
 		log:      log,
 		worker:   worker,
-		tailPath: tailPath,
 		seq:      uint64(time.Now().UnixNano()),
 		sink:     opts.EventSink,
 		stats:    stats,
@@ -843,18 +847,7 @@ func (w *worker) run() {
 		delete(pendingOffsets, txID)
 		lastCommitted = offset
 		if w.log != nil {
-			cutoff := lastCommitted
-			if len(pendingOffsets) > 0 {
-				minPending := cutoff
-				for _, off := range pendingOffsets {
-					if off < minPending {
-						minPending = off
-					}
-				}
-				if minPending > 0 && minPending-1 < cutoff {
-					cutoff = minPending - 1
-				}
-			}
+			cutoff := compactionCutoff(lastCommitted, pendingOffsets)
 			if cutoff > 0 {
 				if newOffset, err := w.log.CompactApplied(cutoff); err != nil {
 					logging.Log().Error().Err(err).Uint64("cutoff", cutoff).Msg("outbox: compact failed")
@@ -881,18 +874,7 @@ func (w *worker) run() {
 		}
 		lastCommitted = txs[len(txs)-1].endSeq
 		if w.log != nil {
-			cutoff := lastCommitted
-			if len(pendingOffsets) > 0 {
-				minPending := cutoff
-				for _, off := range pendingOffsets {
-					if off < minPending {
-						minPending = off
-					}
-				}
-				if minPending > 0 && minPending-1 < cutoff {
-					cutoff = minPending - 1
-				}
-			}
+			cutoff := compactionCutoff(lastCommitted, pendingOffsets)
 			if cutoff > 0 {
 				if newOffset, err := w.log.CompactApplied(cutoff); err != nil {
 					logging.Log().Error().Err(err).Uint64("cutoff", cutoff).Msg("outbox: compact failed")
@@ -1140,8 +1122,9 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, a
 		return appliedOffset, err
 	}
 
-	if len(pending) == 0 {
-		if newOffset, err := log.CompactApplied(appliedOffset); err == nil {
+	cutoff := compactionCutoff(appliedOffset, pendingReplayOffsets(pending))
+	if cutoff > 0 {
+		if newOffset, err := log.CompactApplied(cutoff); err == nil {
 			appliedOffset = newOffset
 		}
 	}
@@ -1149,6 +1132,45 @@ func replayLog(log *appendLog, offset uint64, sink EventSink, tailPath string, a
 		return appliedOffset, err
 	}
 	return appliedOffset, nil
+}
+
+func pendingReplayOffsets(pending map[uint64][]logRecord) map[uint64]uint64 {
+	if len(pending) == 0 {
+		return nil
+	}
+	offsets := make(map[uint64]uint64, len(pending))
+	for txID, records := range pending {
+		if len(records) == 0 {
+			continue
+		}
+		minSeq := records[0].seq
+		for i := 1; i < len(records); i++ {
+			if records[i].seq < minSeq {
+				minSeq = records[i].seq
+			}
+		}
+		offsets[txID] = minSeq
+	}
+	return offsets
+}
+
+func compactionCutoff(lastCommitted uint64, pendingOffsets map[uint64]uint64) uint64 {
+	if lastCommitted == 0 {
+		return 0
+	}
+	cutoff := lastCommitted
+	for _, off := range pendingOffsets {
+		if off == 0 {
+			continue
+		}
+		if off <= cutoff {
+			if off == 1 {
+				return 0
+			}
+			cutoff = off - 1
+		}
+	}
+	return cutoff
 }
 
 func readLogRecord(r *bufio.Reader) (logRecord, int, error) {
