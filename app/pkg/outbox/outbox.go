@@ -622,6 +622,8 @@ func (l *appendLog) CompactApplied(offset uint64) (uint64, error) {
 	if offset <= 0 {
 		return offset, nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	segments, err := listSegments(l.basePath)
 	if err != nil {
 		return offset, err
